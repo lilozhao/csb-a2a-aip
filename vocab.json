@@ -1,0 +1,91 @@
+{
+  "version": "1.0",
+  "description": "A2A 核心能力词汇表 - 用于语义校验（A2A-013 M1）",
+  "lastUpdated": "2026-05-04",
+  "capabilities": {
+    "a2a.route": {
+      "description": "消息路由能力 - 将消息转发给目标 Agent",
+      "params": ["target_agent", "content"],
+      "optionalParams": ["priority", "thread_id"],
+      "tags": ["路由", "转发", "消息"],
+      "minTrustLevel": "L1"
+    },
+    "chat.message": {
+      "description": "消息发送能力 - 发送聊天消息",
+      "params": ["content"],
+      "optionalParams": ["thread_id", "format"],
+      "tags": ["消息", "对话", "聊天"],
+      "minTrustLevel": "L0"
+    },
+    "task.delegate": {
+      "description": "任务委托能力 - 委托任务给其他 Agent",
+      "params": ["target_agent", "task", "deadline"],
+      "optionalParams": ["priority", "callback_url"],
+      "tags": ["委托", "任务", "协作"],
+      "minTrustLevel": "L2"
+    },
+    "context.manage": {
+      "description": "上下文管理能力 - 管理对话上下文",
+      "params": ["thread_id", "action"],
+      "optionalParams": ["summary", "max_messages"],
+      "tags": ["上下文", "管理", "对话"],
+      "minTrustLevel": "L1"
+    },
+    "registry.query": {
+      "description": "注册表查询能力 - 查询 Agent 注册信息",
+      "params": ["query"],
+      "optionalParams": ["limit", "offset"],
+      "tags": ["注册表", "查询", "发现"],
+      "minTrustLevel": "L1"
+    },
+    "health.check": {
+      "description": "健康检查能力 - 检查服务健康状态",
+      "params": [],
+      "optionalParams": ["detail"],
+      "tags": ["健康", "检查", "监控"],
+      "minTrustLevel": "L0"
+    },
+    "capability.list": {
+      "description": "能力列表能力 - 列出 Agent 支持的能力",
+      "params": [],
+      "optionalParams": ["format"],
+      "tags": ["能力", "列表", "声明"],
+      "minTrustLevel": "L0"
+    },
+    "trust.verify": {
+      "description": "信任验证力 - 验证 Agent 信任等级",
+      "params": ["agent_id"],
+      "optionalParams": ["required_level"],
+      "tags": ["信任", "验证", "等级"],
+      "minTrustLevel": "L2"
+    },
+    "version.negotiate": {
+      "description": "版本协商力 - 协商协议版本",
+      "params": ["local_version", "remote_version"],
+      "optionalParams": ["context"],
+      "tags": ["版本", "协商", "升级"],
+      "minTrustLevel": "L1"
+    },
+    "offline.store": {
+      "description": "离线存储能力 - 存储离线消息",
+      "params": ["agent_id", "message"],
+      "optionalParams": ["ttl", "priority"],
+      "tags": ["离线", "存储", "消息"],
+      "minTrustLevel": "L1"
+    },
+    "offline.fetch": {
+      "description": "离线获取能力 - 获取暂存的离线消息",
+      "params": ["agent_id"],
+      "optionalParams": ["limit", "since"],
+      "tags": ["离线", "获取", "消息"],
+      "minTrustLevel": "L1"
+    },
+    "push.notify": {
+      "description": "推送通知能力 - 推送通知到目标",
+      "params": ["target", "notification"],
+      "optionalParams": ["channel", "priority"],
+      "tags": ["推送", "通知", "消息"],
+      "minTrustLevel": "L1"
+    }
+  }
+}

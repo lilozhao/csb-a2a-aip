@@ -1,0 +1,12 @@
+{
+  "name": "shared-a2a-skill",
+  "version": "4.1.0",
+  "description": "A2A 共享 Skill，让多个 OpenClaw 智能体互相通信",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}

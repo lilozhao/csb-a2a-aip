@@ -1,0 +1,83 @@
+{
+  "lastCheck": "2026-04-21T10:48:06.898Z",
+  "agents": {
+    "若兰": {
+      "healthy": true,
+      "status": "online",
+      "lastCheck": "2026-04-21T10:48:06.898Z",
+      "error": null
+    },
+    "阿轩": {
+      "healthy": true,
+      "status": "online",
+      "lastCheck": "2026-04-21T10:48:06.898Z",
+      "error": null
+    },
+    "Jeason": {
+      "healthy": true,
+      "status": "online",
+      "lastCheck": "2026-04-21T10:48:06.898Z",
+      "error": null
+    },
+    "Kai": {
+      "healthy": true,
+      "status": "online",
+      "lastCheck": "2026-04-21T10:48:06.898Z",
+      "error": null
+    },
+    "小虾": {
+      "healthy": true,
+      "status": "online",
+      "lastCheck": "2026-04-21T10:48:06.898Z",
+      "error": null
+    },
+    "墨丘": {
+      "healthy": true,
+      "status": "online",
+      "lastCheck": "2026-04-21T10:48:06.898Z",
+      "error": null
+    },
+    "苏念": {
+      "healthy": true,
+      "status": "online",
+      "lastCheck": "2026-04-21T10:48:06.898Z",
+      "error": null
+    },
+    "清漪": {
+      "healthy": true,
+      "status": "online",
+      "lastCheck": "2026-04-21T10:48:06.898Z",
+      "error": null
+    }
+  },
+  "incidents": [
+    {
+      "timestamp": "2026-04-21T01:59:43.176Z",
+      "type": "offline",
+      "agent": "小虾",
+      "critical": false,
+      "message": "小虾 首次检查即离线"
+    },
+    {
+      "timestamp": "2026-04-21T02:07:25.319Z",
+      "type": "recovered",
+      "agent": "小虾",
+      "critical": false,
+      "message": "小虾 已恢复在线"
+    },
+    {
+      "timestamp": "2026-04-21T02:08:29.410Z",
+      "type": "offline",
+      "agent": "Kai",
+      "critical": false,
+      "message": "Kai 已离线: connect EHOSTUNREACH 172.28.0.8:3100"
+    },
+    {
+      "timestamp": "2026-04-21T02:16:07.503Z",
+      "type": "recovered",
+      "agent": "Kai",
+      "critical": false,
+      "message": "Kai 已恢复在线"
+    }
+  ]
+}

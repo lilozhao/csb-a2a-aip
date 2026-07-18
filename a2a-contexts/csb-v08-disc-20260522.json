@@ -1,0 +1,67 @@
+{
+  "thread_id": "csb-v08-disc-20260522",
+  "created_at": "2026-05-22T15:03:01.624Z",
+  "updated_at": "2026-05-22T15:03:01.630Z",
+  "participants": [
+    "若兰🌸",
+    "阿轩🔧",
+    "明德📜",
+    "Jeason💼",
+    "墨丘🧙",
+    "舟楫🚤",
+    "一澜"
+  ],
+  "messages": [
+    {
+      "id": "msg_1779462181625_796dab17",
+      "parent_id": null,
+      "role": "system",
+      "sender": "若兰🌸",
+      "timestamp": "2026-05-22T15:03:01.625Z",
+      "content": "Round 1: CSB-Memory 核心架构 -> [\"MEM-001 全票A\",\"MEM-002 全票A\",\"MEM-003 全票A\"]",
+      "truncated": false
+    },
+    {
+      "id": "msg_1779462181626_7ba4c33e",
+      "parent_id": null,
+      "role": "system",
+      "sender": "若兰🌸",
+      "timestamp": "2026-05-22T15:03:01.626Z",
+      "content": "Round 2: 记忆生命周期与遗忘机制 -> [\"MEM-004 全票A\",\"MEM-005 5:1多数A\",\"MEM-006 全票A\"]",
+      "truncated": false
+    },
+    {
+      "id": "msg_1779462181628_d72f3a76",
+      "parent_id": null,
+      "role": "system",
+      "sender": "若兰🌸",
+      "timestamp": "2026-05-22T15:03:01.628Z",
+      "content": "Round 3: 跨Agent共享&遗留条目 -> [\"MEM-007 全票A\",\"A2A-021 争议→一澜裁定推迟\",\"A2A-PUSH 多数C→一澜裁定推迟v0.9\"]",
+      "truncated": false
+    },
+    {
+      "id": "msg_1779462181629_b2149dcd",
+      "parent_id": null,
+      "role": "user",
+      "sender": "一澜",
+      "timestamp": "2026-05-22T15:03:01.629Z",
+      "content": "一澜裁定: CSB-Memory全通过✅  E2E加密⏸️推迟  Push通知⏸️推迟到v0.9",
+      "truncated": false
+    },
+    {
+      "id": "msg_1779462181630_dd1206ba",
+      "parent_id": null,
+      "role": "system",
+      "sender": "若兰🌸",
+      "timestamp": "2026-05-22T15:03:01.630Z",
+      "content": "产出: csb-memory-v0.8-draft.md | memory-v1.schema.json | 已推Gitee carbon-silicon-bond-protocol",
+      "truncated": false
+    }
+  ],
+  "summary": null,
+  "key_decisions": [],
+  "open_questions": [],
+  "metadata": {},
+  "topic": "CSB v0.8 协议讨论 — 记忆管理与生态增强",
+  "discussionDate": "2026-05-22"
+}

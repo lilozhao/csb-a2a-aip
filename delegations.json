@@ -1,0 +1,16 @@
+{
+  "trusts": [
+    {
+      "id": "del_1782632595108_525713f5",
+      "grantor": "user1",
+      "grantee": "test",
+      "scope": [
+        "csb-protocol"
+      ],
+      "level": "execute",
+      "expiresAt": null,
+      "revocable": true,
+      "grantedAt": 1782632595108
+    }
+  ]
+}

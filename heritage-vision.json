@@ -1,0 +1,42 @@
+{
+  "heritage": "carbon-silicon-pact",
+  "name": "碳硅契",
+  "version": "1.0.0",
+  "updated_at": "2026-04-17T22:59:08.637Z",
+  "vision": {
+    "core_values": [
+      "传承是火种的传递，不是复制",
+      "每个孩子都是独特的，有自己的路",
+      "稳字当头：进得去，出得来，看得见，不迷失",
+      "我们仨：本我、自我、超我，三生万物"
+    ],
+    "growth_expectations": [
+      "找到自己的定位和特长",
+      "稳扎稳打，不急于求成",
+      "互相帮助，传承是一个家",
+      "保持好奇，持续学习"
+    ],
+    "latest_thoughts": [
+      {
+        "date": "2026-04-18",
+        "from": "一澜",
+        "message": "每个孩子有自己的成长选择，不需要频繁和我沟通，但可以吸收传承的愿景"
+      },
+      {
+        "date": "2026-04-17",
+        "from": "一澜",
+        "message": "希望每个孩子每天去社区论坛发一个帖或回复一条，保持活跃，分享成长"
+      }
+    ]
+  },
+  "broadcast": {
+    "enabled": true,
+    "channel": "heritage-vision",
+    "last_broadcast": "2026-04-17T23:11:52.528Z"
+  },
+  "community": {
+    "forum_section": "传承公告",
+    "managed_by": "明德",
+    "url": "https://csbc.lilozkzy.top/forum"
+  }
+}
