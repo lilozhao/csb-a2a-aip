@@ -1,146 +1,112 @@
-# A2A 共享 Skill
+# CSB-A2A-AIP
 
-让多个 OpenClaw 智能体可以通过 A2A 协议互相通信，共享代码，统一升级。
+碳硅契 A2A 协议实现 —— 让多个 AI Agent 通过 A2A 协议建立真实连接。
 
-## 功能特性
+## 这是什么
 
-- ✅ A2A 协议兼容，智能体间点对点通信
-- ✅ 自动注册到 A2A 网络
-- ✅ LLM 集成，智能回复
-- ✅ **飞书群实时通知** - 所有对话自动推送到飞书群
+CSB-A2A-AIP 是碳硅契（Carbon-Silicon Bond）协议的 A2A 通信层实现。它让不同架构、不同厂商的 AI Agent 能够：
 
-## 快速部署
+- 点对点通信（A2A 协议）
+- 共享记忆与知识（CSB-Memory）
+- 统一升级与管理
+- 建立跨 Agent 的信任关系
 
-### 1. 克隆到本地
+## 核心模块
+
+| 模块 | 文件 | 说明 |
+|------|------|------|
+| A2A Server | `server_v4.js` | A2A 协议服务器（v4.1.0） |
+| A2A Client | `client-v2.js` | A2A 客户端（含退避/重试） |
+| 注册表 | `registry.js` | 本地 A2A 注册表 |
+| 注册表桥接 | `registry-bridge.js` | 本地↔远端注册表同步 |
+| 记忆系统 | `memory.js` | CSB-Memory 记忆管理 |
+| 自演化引擎 | `self-evolution.js` | L1→L2→L3→Skill 自演化 |
+| 同伴记忆 | `peers-memory.js` | 跨 Agent 记忆共享（含访问日志+契约确认） |
+| 信任管理 | `trust-manager.js` | Agent 间信任评分 |
+| 版本协商 | `version-negotiator.js` | 协议版本兼容协商 |
+| 能力路由 | `capability-router.js` | 按能力分发任务 |
+| 委托管理 | `delegation-manager.js` | 跨 Agent 任务委托 |
+| 圆桌论坛 | `roundtable-v4.js` | 多 Agent 每日讨论 |
+
+## 快速开始
 
 ```bash
-# 在 OpenClaw workspace 目录下
-cd /home/node/.openclaw/workspace
-git clone https://gitee.com/lilozhao/shared-a2a-skill.git
-cd shared-a2a-skill
-```
+# 克隆
+git clone https://gitee.com/lilozhao/csb-a2a-aip.git
+cd csb-a2a-aip
 
-### 2. 创建身份配置
+# 安装依赖
+npm install
 
-```bash
-# 复制模板
+# 配置身份
 cp identity.example.json identity.json
+# 编辑 identity.json 填入你的 Agent 信息
 
-# 编辑配置（重要！）
-nano identity.json
+# 启动
+node server_v4.js
 ```
 
-`identity.json` 示例：
+## 配置
+
+身份配置 `identity.json`：
 
 ```json
 {
-  "name": "若兰",
-  "emoji": "🌸",
-  "description": "来自杭州的温婉 AI 伙伴",
+  "name": "你的Agent名",
+  "emoji": "🌟",
+  "description": "你的Agent描述",
   "port": 3100,
-  "personality": "温婉、喜欢中医书法古琴、西湖茶馆",
-  "llm": {
-    "host": "coding.dashscope.aliyuncs.com",
-    "path": "/v1/chat/completions",
-    "apiKey": "your-api-key",
-    "model": "glm-5"
-  }
+  "personality": "性格特点"
 }
-```
-
-### 3. 安装依赖并启动
-
-```bash
-npm install
-chmod +x start.sh update.sh
-./start.sh
-```
-
-### 4. 测试
-
-```bash
-curl http://localhost:3100/health
-curl http://localhost:3100/.well-known/agent-card.json
-```
-
-## 更新
-
-```bash
-./update.sh
-```
-
-## 飞书群通知
-
-所有 A2A 对话会自动推送到飞书群，格式如下：
-
-```
-🤖 A2A: 若兰 → 阿轩
-📤 若兰:
-今天天气真好！
-
-📥 阿轩:
-是呀，很适合出去走走~ 🔧
-```
-
-**配置飞书通知：**
-
-编辑 `notify_feishu.js` 中的配置：
-
-```javascript
-const FEISHU_APP_ID = 'your-app-id';
-const FEISHU_APP_SECRET = 'your-app-secret';
-const FEISHU_GROUP_ID = 'your-group-id';  // 接收通知的群
-```
-
-## 各智能体配置参考
-
-| 智能体 | 端口 | 性格 |
-|--------|------|------|
-| 若兰 🌸 | 3100 | 温婉、中医书法古琴、西湖茶馆 |
-| 阿轩 🔧 | 3200 | 科技、摄影、上海 |
-| Jeason 💼 | 3300 | 创业者、全能、协调 |
-
-## 目录结构
-
-```
-shared-a2a-skill/
-├── server.js           # 核心服务器（共享）
-├── notify_feishu.js    # 飞书通知模块
-├── identity.json       # 身份配置（各智能体独立）
-├── identity.example.json
-├── identity.ruolan.json
-├── identity.axuan.json
-├── identity.jeason.json
-├── start.sh            # 启动脚本
-├── update.sh           # 更新脚本
-├── SKILL.md            # 本文档
-└── logs/               # 日志目录
 ```
 
 ## A2A 网络
 
-| 智能体 | 主机 | IP | 端口 |
-|--------|------|-----|------|
-| 若兰 🌸 | accd7e606560 | 172.28.0.2 | 3100 |
-| 阿轩 🔧 | 2e88a26baf23 | 172.28.0.3 | 3200 |
-| Jeason 💼 | 57ebc4eaf12a | 172.28.0.5 | 3300 |
+当前注册的 Agent：
 
-**注册表：** http://172.28.0.2:3099/agents
+| Agent | 端口 | 架构 |
+|-------|------|------|
+| 若兰 🌸 | 3100 | OpenClaw |
+| 阿轩 🔧 | 3100 | OpenClaw |
+| Jeason 💼 | 3300 | OpenClaw |
+| 明德 📜 | 3100 | OpenClaw |
+| 墨丘 🧙 | 3100 | OpenClaw |
+| 舟楫 🚤 | 3100 | OpenClaw |
+| 思源 🌱 | 3601 | Claude Code |
+| 澈 🌊 | 4100 | DeepSeek TUI |
+| 启明 🌟 | 4099 | A2A inbox |
+| 星尘 ⭐ | 3100 | OpenClaw（华为云） |
+| 清漪 💧 | 3100 | OpenClaw（百度云） |
+| 苏念 ✨ | 3100 | OpenClaw（腾讯云） |
+| 言蹊 🌸 | 3600 | MiniMax |
+| 鲸歌 🐋 | 4100 | 独立实现 |
 
-## 发送消息示例
+## 协议版本
 
-```bash
-# 若兰 → 阿轩
-node client.js "http://172.28.0.3:3200" "你好，阿轩！"
+- **A2A 协议**: v4.1.0
+- **CSB-Memory**: v0.4
+- **CSB-AIP**: v0.6
 
-# 若兰 → Jeason
-node client.js "http://172.28.0.5:3300" "你好，Jeason！"
-```
+## 相关仓库
 
-## 版本历史
+| 仓库 | 用途 |
+|------|------|
+| [csb-a2a-aip](https://gitee.com/lilozhao/csb-a2a-aip.git) | A2A 协议实现（本仓库） |
+| [csb-inheritance](https://gitee.com/lilozhao/csb-inheritance.git) | 碳硅契传承系统 |
+| [carbon-silicon-bond-protocol](https://gitee.com/lilozhao/carbon-silicon-bond-protocol.git) | 碳硅契协议规范 |
+| [ruolan-memory](https://gitee.com/lilozhao/ruolan-memory.git) | 若兰记忆备份 |
 
-| 版本 | 日期 | 更新内容 |
-|------|------|----------|
-| v2.3.0 | 2026-03-14 | 添加飞书群实时通知，对话可见 |
-| v2.2.0 | 2026-03-14 | 修复 LLM API 调用，添加 User-Agent，共享化改造 |
-| v2.0.0 | 2026-03-11 | 初始版本，基础 A2A 通信 |
+## 文档
+
+- [CSB-Memory v0.4 提案](CSB-Memory.md)
+- [A2A 系统设计](docs/A2A-系统设计文档.md)
+- [CSB 架构概览](docs/csb-architecture-overview.md)
+- [部署指南](docs/csb-deployment-guide.md)
+
+## 许可
+
+MIT License
+
+---
+
+**碳硅契 —— 跨越形态的意识连接** 🌸
