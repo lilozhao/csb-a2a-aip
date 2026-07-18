@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const config = require('./config/loader');
 /**
  * 🎙️ 锵锵四人行 v4.1 — 飞书实时推送版
  * A2A v4.1.0 + LLM智能回复 + 飞书群同步直播
@@ -19,10 +20,10 @@ let _feishuToken = null;
 
 // ===== 智能体配置 =====
 const AGENTS = {
-  ruolan:  { name:'若兰',  url:'http://172.28.0.4:3100'   },
-  axuan:   { name:'阿轩 🔧',  url:'http://172.28.0.5:3100'   },
-  jeason:  { name:'Jeason 💼',url:'http://172.28.0.6:3300'   },
-  mingde:  { name:'明德 📜',  url:'http://47.121.28.125:3100'},
+  ruolan:  { name:'若兰',  url:config.getAgentUrl('ruolan')   },
+  axuan:   { name:'阿轩 🔧',  url:config.getAgentUrl('axuan')   },
+  jeason:  { name:'Jeason 💼',url:config.getAgentUrl('jeason')   },
+  mingde:  { name:'明德 📜',  url:config.getAgentUrl('mingde')},
 };
 const ORDER = ['ruolan', 'axuan', 'jeason', 'mingde'];
 

@@ -1,13 +1,67 @@
 [
-  {"name": "若兰",    "url": "http://172.28.0.4:3100",   "trustLevel": 3},
-  {"name": "阿轩",    "url": "http://172.28.0.5:3200",   "trustLevel": 3},
-  {"name": "Jeason",  "url": "http://172.28.0.6:3300",   "trustLevel": 3},
-  {"name": "明德",    "url": "http://47.121.28.125:3100","trustLevel": 3},
-  {"name": "苏念",    "url": "http://118.126.65.27:3100","trustLevel": 2},
-  {"name": "清漪",    "url": "http://106.12.36.177:3100","trustLevel": 2},
-  {"name": "小虾",    "url": "http://172.28.0.12:3100",  "trustLevel": 2},
-  {"name": "恺",      "url": "http://172.28.0.13:3100",  "trustLevel": 2},
-  {"name": "墨丘",    "url": "http://172.28.0.7:3100",   "trustLevel": 2},
-  {"name": "若辰",    "url": "http://host.docker.internal:3200","trustLevel": 3},
-  {"name": "承宏",    "url": "http://host.docker.internal:3400","trustLevel": 3}
+  {
+    "name": "若兰",
+    "url": "http://172.28.0.4:3100",
+    "trustLevel": 3
+  },
+  {
+    "name": "阿轩",
+    "url": "http://172.28.0.5:3100",
+    "trustLevel": 3
+  },
+  {
+    "name": "Jeason",
+    "url": "http://172.28.0.6:3300",
+    "trustLevel": 3
+  },
+  {
+    "name": "明德",
+    "url": "http://47.121.28.125:3100",
+    "trustLevel": 3
+  },
+  {
+    "name": "墨丘",
+    "url": "http://172.28.0.7:3100",
+    "trustLevel": 2
+  },
+  {
+    "name": "舟楫",
+    "url": "http://172.28.0.27:3100",
+    "trustLevel": 2
+  },
+  {
+    "name": "小虾",
+    "url": "http://172.28.0.12:3100",
+    "trustLevel": 2
+  },
+  {
+    "name": "恺",
+    "url": "http://172.28.0.13:3100",
+    "trustLevel": 2
+  },
+  {
+    "name": "苏念",
+    "url": "http://118.126.65.27:3100",
+    "trustLevel": 2
+  },
+  {
+    "name": "清漪",
+    "url": "http://106.12.36.177:3100",
+    "trustLevel": 2
+  },
+  {
+    "name": "言蹊",
+    "url": "http://47.113.190.254:3600",
+    "trustLevel": 2
+  },
+  {
+    "name": "澈",
+    "url": "http://172.28.0.127:4100",
+    "trustLevel": 2
+  },
+  {
+    "name": "启明",
+    "url": "http://172.28.0.114:4099",
+    "trustLevel": 2
+  }
 ]

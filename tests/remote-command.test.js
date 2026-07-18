@@ -1,3 +1,4 @@
+const config = require('../config/loader');
 /**
  * A2A 远程命令执行 - 单元测试
  */
@@ -50,7 +51,7 @@ async function testValidator() {
   const validator = new Validator();
   
   // 测试白名单
-  const isWhitelisted = validator.isWhitelisted('若兰', 'http://172.28.0.4:3100');
+  const isWhitelisted = validator.isWhitelisted('若兰', config.getAgentUrl('ruolan'));
   console.assert(isWhitelisted, '若兰 should be whitelisted');
   console.log('  ✓ Whitelist check');
   
@@ -66,7 +67,7 @@ async function testValidator() {
   
   // 测试完整验证
   const request = {
-    sender: { name: '若兰', url: 'http://172.28.0.4:3100' },
+    sender: { name: '若兰', url: config.getAgentUrl('ruolan') },
     command: { type: 'system.status' }
   };
   const result = validator.validate(request);

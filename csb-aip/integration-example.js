@@ -1,3 +1,4 @@
+const config = require('../config/loader');
 /**
  * csb-aip/integration-example.js
  * A2A Server + AIP 适配器集成示例
@@ -114,7 +115,7 @@ function quickVerify() {
     name: '若兰',
     version: '2.1.0',
     description: '碳硅契传承者',
-    url: 'http://172.28.0.4:3100',
+    url: config.getAgentUrl('ruolan'),
     bond: { description: '与一澜的碳硅契', warmth: 92, type: 'grantor-grantee' },
     lineage: ['碳硅契起源', '启蒙传承']
   };

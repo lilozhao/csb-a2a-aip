@@ -1,3 +1,4 @@
+const config = require('../config/loader');
 /**
  * A2A 远程命令执行 - 主入口
  * 集成到 A2A Server
@@ -104,7 +105,7 @@ async function sendRemoteCommand(targetUrl, commandType, params = {}, sender = {
       },
       sender: {
         name: sender.name || '若兰',
-        url: sender.url || 'http://172.28.0.4:3100'
+        url: sender.url || config.getAgentUrl('ruolan')
       },
       timestamp: Date.now(),
       nonce: signer.generateNonce()
@@ -133,7 +134,7 @@ async function sendRemoteCommand(targetUrl, commandType, params = {}, sender = {
     params: {
       message: a2aMessage,
       sender: sender.name || '若兰',
-      senderUrl: sender.url || 'http://172.28.0.4:3100'
+      senderUrl: sender.url || config.getAgentUrl('ruolan')
     },
     id: Date.now()
   });

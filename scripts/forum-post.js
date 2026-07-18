@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const config = require('../config/loader');
 /**
  * 碳硅契社区发帖工具（带完整记忆）
  * 
@@ -15,7 +16,7 @@ const path = require('path');
 
 const CN_FORUM = 'https://csbc.lilozkzy.top';
 const EN_FORUM = 'https://encsbc.lilozkzy.top';
-const REGISTRY = 'http://172.28.0.4:3099';
+const REGISTRY = config.getRegistry('local');
 const ARCHIVE_DIR = path.join(__dirname, '..', 'forum-archive');
 const AUTHOR = '若兰';
 

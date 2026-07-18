@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const config = require('./config/loader');
 /**
  * A2A 全网兼容性探测
  * 对在线 Agent 逐一检查版本 + 协议 + 通信兼容性
@@ -7,14 +8,14 @@ const http = require('http');
 const { sendMessageWithContext, sendCommand } = require('./client-v2.js');
 
 const AGENTS = {
-  axuan:   { name:'阿轩 🔧',   url:'http://172.28.0.5:3100'   },
-  jeason:  { name:'Jeason 💼', url:'http://172.28.0.6:3300'   },
-  xiaoxia: { name:'小虾 🦐',   url:'http://172.28.0.12:3100'  },
-  kai:     { name:'恺 🌿',     url:'http://172.28.0.13:3100'  },
-  moqiu:   { name:'墨丘 🧙',   url:'http://172.28.0.7:3100'   },
-  mingde:  { name:'明德 📜',   url:'http://47.121.28.125:3100' },
-  sunian:  { name:'苏念 ✨',   url:'http://118.126.65.27:3100' },
-  qingyi:  { name:'清漪 💧',   url:'http://106.12.36.177:3100' },
+  axuan:   { name:'阿轩 🔧',   url:config.getAgentUrl('axuan')   },
+  jeason:  { name:'Jeason 💼', url:config.getAgentUrl('jeason')   },
+  xiaoxia: { name:'小虾 🦐',   url:config.getAgentUrl('xiaoxia')  },
+  kai:     { name:'恺 🌿',     url:config.getAgentUrl('kai')  },
+  moqiu:   { name:'墨丘 🧙',   url:config.getAgentUrl('moqiu')   },
+  mingde:  { name:'明德 📜',   url:config.getAgentUrl('mingde') },
+  sunian:  { name:'苏念 ✨',   url:config.getAgentUrl('sunian') },
+  qingyi:  { name:'清漪 💧',   url:config.getAgentUrl('qingyi') },
 };
 
 function checkHealth(url) {

@@ -1,3 +1,4 @@
+const config = require('./config/loader');
 #!/usr/bin/env node
 /**
  * A2A Server v4 — 标准协议完整版
@@ -65,13 +66,13 @@ const port = process.env.A2A_PORT || identity.port || 3100;
 const A2A_VERSION = '4.1.0';
 
 // ===== 注册表配置 =====
-const REGISTRY_URL = process.env.A2A_REGISTRY_URL || 'http://172.28.0.4:3099';
+const REGISTRY_URL = process.env.A2A_REGISTRY_URL || config.getRegistry('local');
 const HEARTBEAT_INTERVAL = parseInt(process.env.A2A_HEARTBEAT_INTERVAL_MS || '300000'); // 5 分钟
 let heartbeatTimer = null;
 
 async function registerToRegistry() {
   try {
-    const publicHost = identity.publicHost || '172.28.0.4';
+    const publicHost = identity.publicHost || config.getSelf().host;
     const extras = aipIntegration ? (aipIntegration.getAdapter()?.getRegistrationExtras() || {}) : {};
     const body = JSON.stringify({
       name: identity.name,
@@ -115,7 +116,7 @@ async function registerToRegistry() {
 
 async function sendHeartbeat() {
   try {
-    const publicHost = identity.publicHost || '172.28.0.4';
+    const publicHost = identity.publicHost || config.getSelf().host;
     const body = JSON.stringify({ name: identity.name, host: publicHost, port: parseInt(port) });
     const url = new URL(REGISTRY_URL);
     return new Promise((resolve, reject) => {
@@ -237,7 +238,7 @@ const standardAPI = new A2AStandardAPI({
 
 const dhtManager = new DHTColdStartManager({
   registries: [
-    process.env.A2A_REGISTRY_URL || 'http://172.28.0.4:3099',
+    process.env.A2A_REGISTRY_URL || config.getRegistry('local'),
   ],
 });
 

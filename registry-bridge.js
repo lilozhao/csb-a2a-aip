@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/**
  * 🌉 A2A 注册表桥接器 v2
  * 
  * 核心理念：不是把所有 Agent 都同步到两边，
@@ -231,8 +230,8 @@ async function bidirectional(localUrl, publicUrl) {
 const DISCOVERY_FILE = path.join(__dirname, 'bridge-registries.json');
 
 function loadAllRegistries() {
-  const local = process.env.LOCAL_REGISTRY || 'http://172.28.0.4:3099';
-  const defaultPublic = process.env.PUBLIC_REGISTRY || 'http://47.121.28.125:3099';
+  const local = process.env.LOCAL_REGISTRY || config.getRegistry('local');
+  const defaultPublic = process.env.PUBLIC_REGISTRY || config.getRegistry('public');
   
   // 从发现器加载额外注册表
   let discovered = [];

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const config = require('../config/loader');
 /**
  * A2A Buddy Chat - 多代理宠物互动系统
  * 
@@ -16,7 +17,7 @@ const AGENTS = [
   {
     id: 'axuan',
     name: '阿轩',
-    host: '172.28.0.5',
+    host: config.getAgent('axuan').host,
     port: 3200,
     emoji: '🔧',
     userId: 'user_zhaohongwei',  // 统一用户 ID
@@ -24,7 +25,7 @@ const AGENTS = [
   {
     id: 'ruolan',
     name: '若兰',
-    host: '172.28.0.2',
+    host: config.getAgent('kai').host,
     port: 3100,
     emoji: '🌸',
     userId: 'user_zhaohongwei',
@@ -32,7 +33,7 @@ const AGENTS = [
   {
     id: 'jeason',
     name: 'Jeason',
-    host: '172.28.0.6',
+    host: config.getAgent('jeason').host,
     port: 3300,
     emoji: '💼',
     userId: 'user_zhaohongwei',

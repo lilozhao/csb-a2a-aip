@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const config = require('./config/loader');
 /**
  * A2A Server v3.0.0 升级推送脚本
  * 推送新模块到阿轩和 Jeason
@@ -29,8 +30,8 @@ const UPGRADE_FILES = [
 ];
 
 const TARGETS = [
-  { name: '阿轩', url: 'http://172.28.0.5:3200' },
-  { name: 'Jeason', url: 'http://172.28.0.6:3300' }
+  { name: '阿轩', url: config.getAgentUrl('axuan') },
+  { name: 'Jeason', url: config.getAgentUrl('jeason') }
 ];
 
 function sendA2A(url, message) {

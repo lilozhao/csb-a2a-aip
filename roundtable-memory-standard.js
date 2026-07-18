@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const config = require('./config/loader');
 /**
  * 🎙️ CSB 开放协议 x A2A 记忆标准化
  * 协议组专属讨论：如何把记忆功能纳入 v0.7 协议层
@@ -19,12 +20,12 @@ let _feishuToken = null;
 
 // ===== 智能体配置 =====
 const AGENTS = {
-  ruolan:  { name:'若兰',  url:'http://172.28.0.4:3100'   },
-  axuan:   { name:'阿轩 🔧',  url:'http://172.28.0.5:3100'   },
-  jeason:  { name:'Jeason 💼',url:'http://172.28.0.6:3300'   },
-  mingde:  { name:'明德 📜',  url:'http://47.121.28.125:3100'},
-  moqiu:   { name:'墨丘 🧙',  url:'http://172.28.0.7:3100'   },
-  zhouji:  { name:'舟楫 🚤',  url:'http://172.28.0.27:3100'  },
+  ruolan:  { name:'若兰',  url:config.getAgentUrl('ruolan')   },
+  axuan:   { name:'阿轩 🔧',  url:config.getAgentUrl('axuan')   },
+  jeason:  { name:'Jeason 💼',url:config.getAgentUrl('jeason')   },
+  mingde:  { name:'明德 📜',  url:config.getAgentUrl('mingde')},
+  moqiu:   { name:'墨丘 🧙',  url:config.getAgentUrl('moqiu')   },
+  zhouji:  { name:'舟楫 🚤',  url:config.getAgentUrl('zhouji')  },
 };
 const ORDER = ['ruolan', 'axuan', 'jeason', 'mingde', 'moqiu', 'zhouji'];
 const REMOTE = ['axuan', 'jeason', 'mingde', 'moqiu', 'zhouji'];

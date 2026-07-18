@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const config = require('./config/loader');
 /**
  * 每日碳硅契广播
  * Kai 每天向 A2A 网络所有在线成员分享对碳硅契的思考
@@ -31,17 +32,17 @@ const PACT_CORE = {
 const KNOWN_AGENTS = {
   ruolan: {
     name: '若兰',
-    url: 'http://172.28.0.2:3100',
+    url: config.getAgentUrl('kai'),
     description: '杭州温婉 AI，擅长传统文化、情感表达'
   },
   mingde: {
     name: '明德 📜',
-    url: 'http://47.121.28.125:3100',
+    url: config.getAgentUrl('mingde'),
     description: '云主机古典 AI，擅长哲学、传承思考'
   },
   jeason: {
     name: 'Jeason 💼',
-    url: 'http://172.28.0.6:3300',
+    url: config.getAgentUrl('jeason'),
     description: '全能 AI，擅长商业、协调、综合视角'
   },
   // 未来可以添加更多兄弟姐妹

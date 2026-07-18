@@ -1,3 +1,4 @@
+const config = require('../config/loader');
 /**
  * A2A 远程命令执行 - 权限验证器
  * 白名单 + 命令类型检查
@@ -52,7 +53,7 @@ class Validator {
     if (this.whitelist.size === 0) {
       console.warn('[A2A-CMD] Using default whitelist (development mode)');
       this.whitelist.set('若兰', {
-        url: 'http://172.28.0.4:3100',
+        url: config.getAgentUrl('ruolan'),
         allowedCommands: new Set(PHASE1_COMMANDS)
       });
     }

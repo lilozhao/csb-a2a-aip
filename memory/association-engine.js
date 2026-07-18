@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const config = require('./config/loader');
 /**
  * CSB-Memory MEM-008 关联记忆网络 · 联想引擎
  * 
@@ -11,7 +12,7 @@
  */
 
 const http = require('http');
-const REGISTRY = process.env.REGISTRY_URL || 'http://172.28.0.4:3099';
+const REGISTRY = process.env.REGISTRY_URL || config.getRegistry('local');
 
 async function queryMemoryIndex(topic) {
   const url = `${REGISTRY}/memory_index?topic=${encodeURIComponent(topic)}`;

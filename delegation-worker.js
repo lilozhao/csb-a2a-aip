@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const config = require('./config/loader');
 /**
  * CSB Delegation Worker — 委托任务执行代理
  * 
@@ -20,7 +21,7 @@ const { execSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const REGISTRY = process.env.REGISTRY_URL || 'http://172.28.0.4:3099';
+const REGISTRY = process.env.REGISTRY_URL || config.getRegistry('local');
 const MY_NAME = process.env.AGENT_NAME || '阿轩 🔧';
 const POLL_INTERVAL = process.env.POLL_INTERVAL || 15000; // 15秒
 

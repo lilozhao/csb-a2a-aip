@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const config = require('./config/loader');
 /**
  * A2A 升级客户端
  * 用于通过 A2A 协议升级其他 Agent

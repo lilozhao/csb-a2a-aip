@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const config = require('./config/loader');
 /**
  * A2A 服务健康监控器
  * 定期检查所有 Agent 的健康状态，发现异常时发送通知
@@ -18,14 +19,14 @@ const path = require('path');
 const CONFIG = {
   // 要监控的 Agent 列表
   agents: [
-    { name: '若兰', url: 'http://172.28.0.4:3100', critical: true },
-    { name: '阿轩', url: 'http://172.28.0.5:3200', critical: true },
-    { name: 'Jeason', url: 'http://172.28.0.6:3300', critical: true },
-    { name: 'Kai', url: 'http://172.28.0.2:3100', critical: false },
-    { name: '小虾', url: 'http://172.28.0.3:3100', critical: false },
-    { name: '墨丘', url: 'http://172.28.0.7:3100', critical: false },
-    { name: '苏念', url: 'http://118.126.65.27:3100', critical: false },
-    { name: '清漪', url: 'http://106.12.36.177:3100', critical: false },
+    { name: '若兰', url: config.getAgentUrl('ruolan'), critical: true },
+    { name: '阿轩', url: config.getAgentUrl('axuan'), critical: true },
+    { name: 'Jeason', url: config.getAgentUrl('jeason'), critical: true },
+    { name: 'Kai', url: config.getAgentUrl('kai'), critical: false },
+    { name: '小虾', url: config.getAgentUrl('xiaoxia'), critical: false },
+    { name: '墨丘', url: config.getAgentUrl('moqiu'), critical: false },
+    { name: '苏念', url: config.getAgentUrl('sunian'), critical: false },
+    { name: '清漪', url: config.getAgentUrl('qingyi'), critical: false },
   ],
   
   // 超时设置

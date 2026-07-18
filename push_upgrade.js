@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const config = require('./config/loader');
 /**
  * A2A 升级文件推送脚本
  * 直接推送 client-v2.js 和 context-manager-v2.js 到阿轩和 Jeason
@@ -24,8 +25,8 @@ const UPGRADE_FILES = [
 ];
 
 const TARGETS = [
-  { name: '阿轩', url: 'http://172.28.0.5:3200' },
-  { name: 'Jeason', url: 'http://172.28.0.6:3300' }
+  { name: '阿轩', url: config.getAgentUrl('axuan') },
+  { name: 'Jeason', url: config.getAgentUrl('jeason') }
 ];
 
 async function sendA2A(url, message) {

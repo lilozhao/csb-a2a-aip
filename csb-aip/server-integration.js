@@ -1,3 +1,4 @@
+const config = require('../config/loader');
 /**
  * csb-aip/server-integration.js
  * A2A Server v4 AIP 集成模块
@@ -15,7 +16,7 @@ const aip = require('./src');
 let adapter = null;
 let persistenceTimer = null;
 const DEFAULT_WARMTH_FILE = path.join(__dirname, 'logs', 'aip-warmth.json');
-const DEFAULT_REGISTRY_URL = 'http://172.28.0.4:3099';
+const DEFAULT_REGISTRY_URL = config.getRegistry('local');
 
 /**
  * 初始化 AIP 集成

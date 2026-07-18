@@ -1,3 +1,4 @@
+const config = require('./config/loader');
 #!/usr/bin/env node
 /**
  * A2A Server v3
@@ -806,7 +807,7 @@ async function handleA2ARequest(request) {
 async function sendHeartbeat() {
   const data = JSON.stringify({ name: identity.name || 'Agent' });
   const options = {
-    hostname: '47.121.28.125',
+    hostname: config.getAgent('mingde').host,
     port: 3099,
     path: '/heartbeat',
     method: 'POST',
@@ -841,7 +842,7 @@ async function fetchPendingMessages() {
   
   return new Promise((resolve) => {
     const options = {
-      hostname: '47.121.28.125',
+      hostname: config.getAgent('mingde').host,
       port: 3099,
       path: `/messages/pending/${encodeURIComponent(agentName)}`,
       method: 'GET',
@@ -910,7 +911,7 @@ async function sendAck(messageId) {
   return new Promise((resolve) => {
     const data = JSON.stringify({ messageId });
     const options = {
-      hostname: '47.121.28.125',
+      hostname: config.getAgent('mingde').host,
       port: 3099,
       path: '/messages/ack',
       method: 'POST',
@@ -934,7 +935,7 @@ async function reportDeliveryFailed(messageId) {
   return new Promise((resolve) => {
     const data = JSON.stringify({ messageId });
     const options = {
-      hostname: '47.121.28.125',
+      hostname: config.getAgent('mingde').host,
       port: 3099,
       path: '/messages/fail',
       method: 'POST',
@@ -975,7 +976,7 @@ async function registerToRegistry() {
     // 优先查找 openclaw-net 网络的 IP (172.28.0.x)
     for (const iface of Object.values(ifaces)) {
       for (const alias of iface) {
-        if (alias.family === 'IPv4' && !alias.internal && alias.address.startsWith('172.28.0.')) {
+        if (alias.family === 'IPv4' && !alias.internal && alias.address.startsWith(config.getSelf().host.split('.').slice(0, 3).join('.') + '.')) {
           registerHost = alias.address;
           found = true;
           break;
@@ -1008,7 +1009,7 @@ async function registerToRegistry() {
     // 优先查找 openclaw-net 网络的 IP (172.28.0.x)
     for (const iface of Object.values(ifaces)) {
       for (const alias of iface) {
-        if (alias.family === 'IPv4' && !alias.internal && alias.address.startsWith('172.28.0.')) {
+        if (alias.family === 'IPv4' && !alias.internal && alias.address.startsWith(config.getSelf().host.split('.').slice(0, 3).join('.') + '.')) {
           registerHost = alias.address;
           found = true;
           break;
@@ -1043,7 +1044,7 @@ async function registerToRegistry() {
   });
 
   const options = {
-    hostname: '47.121.28.125',
+    hostname: config.getAgent('mingde').host,
     port: 3099,
     path: '/register',
     method: 'POST',

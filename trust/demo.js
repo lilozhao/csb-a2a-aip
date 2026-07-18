@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const config = require('../config/loader');
 /**
  * CSB v1.1 Demo — Agent 信任评分查询与 Agent Card 互访
  * 
@@ -12,7 +13,7 @@
 const http = require('http');
 const path = require('path');
 
-const REGISTRY_URL = 'http://172.28.0.4:3099';
+const REGISTRY_URL = config.getRegistry('local');
 const trust = require('./score');
 const card = require('../agent-card/schema');
 

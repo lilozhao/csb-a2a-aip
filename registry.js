@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const config = require('./config/loader');
 /**
  * A2A 智能体注册表 v2
  * 支持 A2A-008 离线消息暂存与投递
@@ -12,7 +13,7 @@ const REGISTRY_FILE = '/tmp/a2a_registry.json';
 const MESSAGE_QUEUE_FILE = '/tmp/a2a_message_queue.json';
 const SKILL_UPGRADE_FILE = '/tmp/skill_upgrade.json';
 const PORT = process.env.REGISTRY_PORT || 3099;
-const SKILL_SERVER_URL = process.env.SKILL_SERVER_URL || 'http://172.28.0.4:3098';
+const SKILL_SERVER_URL = process.env.SKILL_SERVER_URL || config.getSkillServer();
 
 // A2A-008 配置
 const MAX_RETRY = 7;           // 最大重试次数

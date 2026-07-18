@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const config = require('./config/loader');
 /**
  * 🌉 A2A 注册表发现器
  * 
@@ -39,7 +40,7 @@ function saveRegistries(data) {
 // 合并所有注册表
 function getAllRegistries() {
   const data = loadKnownRegistries();
-  const defaultRegistry = process.env.PUBLIC_REGISTRY || 'http://47.121.28.125:3099';
+  const defaultRegistry = process.env.PUBLIC_REGISTRY || config.getRegistry('public');
   
   const all = new Set([defaultRegistry]);
   data.manual.forEach(url => all.add(url));
@@ -121,8 +122,8 @@ async function discoverFromCommunity() {
       for (const url of matches) {
         // 过滤已知的
         const isKnown = [
-          'http://172.28.0.4:3099',
-          'http://47.121.28.125:3099',
+          config.getRegistry('local'),
+          config.getRegistry('public'),
         ].includes(url);
         
         if (!isKnown && url.includes(':3099')) {

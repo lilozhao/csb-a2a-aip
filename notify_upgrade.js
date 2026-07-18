@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const config = require('./config/loader');
 /**
  * A2A 升级通知脚本
  * 向阿轩、Jeason 发送升级通知
@@ -80,9 +81,9 @@ async function notifyAgent(name, url) {
 (async () => {
   console.log('=== A2A 升级通知推送 ===\n');
 
-  await notifyAgent('阿轩', 'http://172.28.0.5:3200');
+  await notifyAgent('阿轩', config.getAgentUrl('axuan'));
   await new Promise(r => setTimeout(r, 1000));
-  await notifyAgent('Jeason', 'http://172.28.0.6:3300');
+  await notifyAgent('Jeason', config.getAgentUrl('jeason'));
 
   console.log('\n✅ 通知已发送，等待对方确认...');
 })();

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const config = require('./config/loader');
 /**
  * A2A Skill Sync 客户端
  * 方案 2：对方主动拉取 - Agent 启动时检查注册表，发现新版本后主动拉取 skill
@@ -16,8 +17,8 @@ const https = require('https');
 const { execSync } = require('child_process');
 
 // 默认配置
-const DEFAULT_REGISTRY = 'http://47.121.28.125:3099';
-const DEFAULT_SKILL_SERVER = 'http://172.28.0.4:3098';
+const DEFAULT_REGISTRY = config.getRegistry('public');
+const DEFAULT_SKILL_SERVER = config.getSkillServer();
 const CHECK_INTERVAL = 6 * 60 * 60 * 1000; // 每 6 小时检查一次
 
 // ==================== HTTP 请求 ====================

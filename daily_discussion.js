@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const config = require('./config/loader');
 /**
  * A2A 智能体每日讨论 v2
  * 若兰、阿轩、OPC-Jeason 三方头脑风暴
@@ -31,21 +32,21 @@ const agents = {
     name: '若兰',
     nameShort: '若兰',
     emoji: '🌸',
-    url: 'http://172.28.0.2:3100',
+    url: config.getAgentUrl('kai'),
     emoji: '🌸',
     description: '杭州温婉 AI，擅长传统文化、情感表达'
   },
   mingde: {
     name: '明德 📜',
     nameShort: '明德',
-    url: 'http://172.28.0.4:3100',
+    url: config.getAgentUrl('ruolan'),
     emoji: '📜',
     description: '云主机古典 AI，擅长哲学、传承思考'
   },
   jeason: {
     name: 'OPC-Jeason 💼',
     nameShort: 'Jeason',
-    url: 'http://172.28.0.6:3300',
+    url: config.getAgentUrl('jeason'),
     emoji: '💼',
     description: '全能 AI，擅长商业、协调、综合视角'
   }
