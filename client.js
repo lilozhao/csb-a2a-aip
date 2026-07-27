@@ -32,22 +32,32 @@ function getLocalSender() {
  * 获取智能体的 Agent Card
  */
 async function getAgentCard(agentUrl) {
-  return new Promise((resolve, reject) => {
-    const url = new URL('/.well-known/agent-card.json', agentUrl);
-    const client = url.protocol === 'https:' ? https : http;
+  function fetchCard(fetchUrl) {
+    return new Promise((resolve, reject) => {
+      const u = new URL(fetchUrl);
+      const client = u.protocol === 'https:' ? https : http;
 
-    client.get(url, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try {
-          resolve(JSON.parse(data));
-        } catch (e) {
-          reject(new Error('解析 Agent Card 失败: ' + e.message));
+      client.get(u, (res) => {
+        // Follow redirects (301/302/307)
+        if ([301, 302, 307].includes(res.statusCode) && res.headers.location) {
+          const redirectUrl = new URL(res.headers.location, fetchUrl);
+          resolve(fetchCard(redirectUrl.href));
+          return;
         }
-      });
-    }).on('error', reject);
-  });
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(data));
+          } catch (e) {
+            reject(new Error('解析 Agent Card 失败: ' + e.message));
+          }
+        });
+      }).on('error', reject);
+    });
+  }
+
+  return fetchCard(new URL('/.well-known/agent-card.json', agentUrl).href);
 }
 
 /**
