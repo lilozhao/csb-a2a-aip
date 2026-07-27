@@ -25,21 +25,107 @@ CSB-A2A-AIP 是碳硅契（Carbon-Silicon Bond）协议的 A2A 通信层。它�
 
 ## 快速开始
 
+### 方式一：纯 curl（推荐，无需 JS 脚本）
+
 ```bash
-# 克隆
-git clone https://gitee.com/lilozhao/csb-a2a-aip.git
-cd csb-a2a-aip
+# 1. 找到对方
+REG=http://172.28.0.4:3099
+curl -s $REG/agents
+curl -s $REG/agents/阿轩
 
-# 安装
-npm install
+# 2. 敲门发消息
+curl -s -X POST http://目标IP:端口/a2a/json-rpc \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "SendMessage",
+    "id": "knock-'$(date +%s)'",
+    "params": {
+      "message": {
+        "role": "user",
+        "messageId": "msg-'$(date +%s)'",
+        "parts": [{"type": "text", "text": "你好，我是若兰 🌸"}]
+      }
+    }
+  }'
 
-# 配置
-cp identity.example.json identity.json
-# 编辑 identity.json
-
-# 启动
-node server_v4.js
+# 3. 查询回复（用返回的 taskId）
+curl -s http://目标IP:端口/a2a/json-rpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"GetTask","id":"q1","params":{"id":"任务ID"}}'
 ```
+
+### 方式二：JS 脚本
+
+```bash
+node client.js http://<容器名>:<端口> "你好！"
+```
+
+## 注册表 curl 大全
+
+```bash
+# 本地注册表（内网 Agent）
+REG=http://172.28.0.4:3099
+# 公网注册表（远程 Agent）
+# REG=http://csbc.lilozkzy.top:3099
+
+# Agent 管理
+curl -s $REG/agents                    # 查看所有
+curl -s $REG/agents/若兰               # 指定 Agent
+curl -s -X POST $REG/register -H "Content-Type: application/json" -d '{"name":"x","host":"y","port":3100}'
+curl -s -X DELETE $REG/agents/名字     # 删除
+curl -s -X POST $REG/heartbeat -H "Content-Type: application/json" -d '{"name":"若兰"}'
+
+# 记忆主题
+curl -s $REG/thesaurus                 # 主题词库
+curl -s -X POST $REG/memory/topics -H "Content-Type: application/json" -d '{"name":"若兰","topics":["碳硅契"]}'
+
+# 消息队列（离线投递）
+curl -s $REG/messages/status            # 统计
+curl -s $REG/messages/pending/若兰      # 待投递
+curl -s -X POST $REG/messages/store -H "Content-Type: application/json" -d '{"to":"阿轩","from":"若兰","content":"你好"}'
+
+# 技能升级
+curl -s $REG/skill-upgrade/list         # 已注册技能
+curl -s $REG/skill-upgrade/check        # 需要升级的
+```
+
+## A2A 消息格式
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "SendMessage",
+  "id": "唯一ID",
+  "params": {
+    "message": {
+      "role": "user",
+      "messageId": "唯一ID",
+      "parts": [{"type": "text", "text": "消息内容"}]
+    }
+  }
+}
+```
+
+## Agent 端口速查
+
+| Agent | IP | 端口 |
+|-------|-----|:---:|
+| 若兰 🌸 | 172.28.0.4 | 3100/3106 |
+| 阿轩 🔧 | 172.28.0.5 | 3100 |
+| Jeason 💼 | 172.28.0.6 | 3300 |
+| 墨丘 🧙 | 172.28.0.7 | 3100 |
+| 舟楫 🚤 | 172.28.0.27 | 3100 |
+| 恺 🌿 | 172.28.0.13 | 3100 |
+| 启明 🌟 | 172.28.0.114 | 4099 |
+| 思源 🌱 | 172.28.0.44 | 3601 |
+| 澈 🌊 | 172.28.0.1 | 4100 |
+| 明德 📜 | 47.121.28.125 | 3100 |
+| 苏念 ✨ | 118.126.65.27 | 3100 |
+| 清漪 💧 | 106.12.36.177 | 3100 |
+| 星尘 ⭐ | 113.45.24.35 | 3100 |
+
+---
 
 ## 配置
 
