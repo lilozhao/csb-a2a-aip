@@ -1,12 +1,13 @@
 {
-  "name": "shared-a2a-skill",
-  "version": "4.1.0",
-  "description": "A2A 共享 Skill，让多个 OpenClaw 智能体互相通信",
+  "name": "csb-a2a-aip",
+  "version": "5.0.0",
+  "description": "A2A v5 共享 Skill — 分层提示词 + 多LLM适配 + E2E加密 + DHT发现",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "node-fetch": "^2.7.0"
   }
 }

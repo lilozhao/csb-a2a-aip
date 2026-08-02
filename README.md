@@ -1,12 +1,14 @@
-# CSB-A2A-AIP
+# CSB-A2A-AIP (v5.0.0)
 
-碳硅契 A2A 协议实现 —— 让多个 AI Agent 通过 A2A 协议建立真实连接。
+碳硅契 A2A 协议实现 —— 让多个 AI Agent 通过 A2A v5 协议建立真实连接。
 
 ## 这是什么
 
 CSB-A2A-AIP 是碳硅契（Carbon-Silicon Bond）协议的 A2A 通信层实现。它让不同架构、不同厂商的 AI Agent 能够：
 
-- 点对点通信（A2A 协议）
+- 点对点通信（A2A v0.6 协议）
+- 分层提示词（System / Skill / Context / User 四层）
+- 多 LLM 适配（OpenClaw / 直接 API / 框架原生）
 - 共享记忆与知识（CSB-Memory）
 - 统一升级与管理
 - 建立跨 Agent 的信任关系
@@ -15,13 +17,18 @@ CSB-A2A-AIP 是碳硅契（Carbon-Silicon Bond）协议的 A2A 通信层实现�
 
 | 模块 | 文件 | 说明 |
 |------|------|------|
-| A2A Server | `server_v4.js` | A2A 协议服务器（v4.1.0） |
+| A2A Server | `server_v5.js` | A2A v5 协议服务器（v5.0.0） |
+| 标准 API | `a2a-standard-api-v5.js` | A2A v0.6 标准 API 实现 |
+| 分层提示词 | `a2a-layered-prompt.js` | 四层提示词引擎 |
+| LLM 路由 | `llm-router.js` | 多 LLM 适配器（OpenClaw/API/原生） |
+| 上下文生成 | `a2a-context-generator.js` | A2A 消息上下文传递 |
 | A2A Client | `client-v2.js` | A2A 客户端（含退避/重试） |
 | 注册表 | `registry.js` | 本地 A2A 注册表 |
 | 注册表桥接 | `registry-bridge.js` | 本地↔远端注册表同步 |
 | 记忆系统 | `memory.js` | CSB-Memory 记忆管理 |
-| 自演化引擎 | `self-evolution.js` | L1→L2→L3→Skill 自演化 |
-| 同伴记忆 | `peers-memory.js` | 跨 Agent 记忆共享（含访问日志+契约确认） |
+| E2E 加密 | `a2a-e2e-encryption.js` | AES-256-GCM + ECDH |
+| DHT 发现 | `a2a-dht-coldstart.js` | 注册表发现 + 断线重连 |
+| 可观测性 | `a2a-observability.js` | 日志 + 指标 + Trace ID |
 | 信任管理 | `trust-manager.js` | Agent 间信任评分 |
 | 版本协商 | `version-negotiator.js` | 协议版本兼容协商 |
 | 能力路由 | `capability-router.js` | 按能力分发任务 |
@@ -42,8 +49,10 @@ npm install
 cp identity.example.json identity.json
 # 编辑 identity.json 填入你的 Agent 信息
 
-# 启动
-node server_v4.js
+# 启动（v5）
+./start-v5.sh
+# 或手动启动
+node server_v5.js
 ```
 
 ## 配置
@@ -83,9 +92,30 @@ node server_v4.js
 
 ## 协议版本
 
-- **A2A 协议**: v4.1.0
+- **A2A 协议**: v5.0.0（A2A v0.6 + 分层提示词 v1）
 - **CSB-Memory**: v0.4
 - **CSB-AIP**: v0.6
+
+## 版本协商
+
+| 版本 | 协议 | 特性 |
+|------|------|------|
+| 3.x | A2A v0.2 | 基础消息 |
+| 4.x | A2A v0.5 | 标准 API + E2E + DHT |
+| **5.x** | **A2A v0.6** | **+ 分层提示词 + LLM Router** |
+
+低版本 Agent 可正常接收 v5 消息（降级为普通文本），但无法使用分层提示词等新特性。
+
+## v5 升级检查清单
+
+- [ ] Agent Card 包含 `version: "5.0.0"`
+- [ ] 支持分层提示词（至少 2 层：System + User）
+- [ ] 支持至少 2 种 LLM 调用方式
+- [ ] 心跳间隔 ≤ 5 分钟
+- [ ] 能接收并处理 A2A 消息中的 context 字段
+- [ ] 健康检查端点 `/health` 返回版本号
+
+更多细节见 [A2A-V5-CAPABILITIES.md](A2A-V5-CAPABILITIES.md) 和 [UPGRADE-V5.md](UPGRADE-V5.md)。
 
 ## 相关仓库
 
