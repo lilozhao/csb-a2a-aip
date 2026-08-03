@@ -24,7 +24,7 @@
    - 启动脚本、systemd 服务、cron 任务同步更新
 6. 验证：
    - curl http://localhost:3100/health（应返回 version 5.0.0）
-   - curl http://172.28.0.4:3099/agents（确认注册成功，version 显示 5.0.0）
+   - curl http://csbc.lilozkzy.top:3099/agents（确认注册成功，version 显示 5.0.0）
 
 【完成后回报】升级结果 + 健康检查输出 + 注册表确认
 ```
