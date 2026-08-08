@@ -2,7 +2,7 @@
 # A2A 网络健康检查和自动恢复
 # 注册表使用本地: 172.28.0.4:3099
 
-A2A_DIR="/home/node/.openclaw/workspace/shared-a2a-skill"
+A2A_DIR="/home/node/.openclaw/workspace/csb-a2a-aip"
 LOG_FILE="$A2A_DIR/logs/healthcheck.log"
 REGISTRY_URL="http://172.28.0.4:3099"
 

@@ -9,7 +9,7 @@
 #   4. 健康检查 + 自动重启
 # ═══════════════════════════════════════════════════════
 
-A2A_DIR="/home/node/.openclaw/workspace/shared-a2a-skill"
+A2A_DIR="/home/node/.openclaw/workspace/csb-a2a-aip"
 LOG_DIR="$A2A_DIR/logs"
 REGISTRY_PORT=${REGISTRY_PORT:-3099}
 A2A_PORT=${A2A_PORT:-3100}
