@@ -27,7 +27,7 @@ check_server() {
 # 启动若兰 Server
 start_server() {
     cd "$A2A_DIR"
-    nohup node server_v4.js > logs/server.log 2>&1 &
+    nohup node server_v5.js > logs/server.log 2>&1 &
     echo "[$(date)] 若兰 Server 已启动 PID: $!" >> "$LOG_FILE"
     sleep 2
 }
