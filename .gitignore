@@ -20,3 +20,8 @@ heritage-registry.json
 *.pid
 .DS_Store*.bak
 *.jpeg
+# 运行时数据 - 不入库
+data/a2a-tasks.json
+monitor-state.json
+aip-warmth.json
+logs/
