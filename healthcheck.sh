@@ -2,7 +2,7 @@
 # A2A 网络健康检查和自动恢复
 # 注册表使用本地: 172.28.0.4:3099
 
-A2A_DIR="/home/node/.openclaw/workspace/csb-a2a-aip"
+A2A_DIR="/home/node/.openclaw/workspace/shared-a2a-skill"
 LOG_FILE="$A2A_DIR/logs/healthcheck.log"
 REGISTRY_URL="http://172.28.0.4:3099"
 
@@ -27,7 +27,7 @@ check_server() {
 # 启动若兰 Server
 start_server() {
     cd "$A2A_DIR"
-    nohup node server_v5.js > logs/server.log 2>&1 &
+    nohup node server_v4.js > logs/server.log 2>&1 &
     echo "[$(date)] 若兰 Server 已启动 PID: $!" >> "$LOG_FILE"
     sleep 2
 }

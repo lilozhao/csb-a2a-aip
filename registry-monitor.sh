@@ -3,7 +3,7 @@
 # 若兰负责的内网注册表自管理脚本
 
 REGISTRY_PORT=${REGISTRY_PORT:-3099}
-REGISTRY_DIR="/home/node/.openclaw/workspace/csb-a2a-aip"
+REGISTRY_DIR="/home/node/.openclaw/workspace/shared-a2a-skill"
 PIDFILE="$REGISTRY_DIR/registry.pid"
 
 # 检测注册表是否存活

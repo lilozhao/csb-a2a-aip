@@ -33,7 +33,7 @@ const CONFIG = {
   timeout: 5000,
   
   // 状态文件
-  stateFile: '/home/node/.openclaw/workspace/csb-a2a-aip/monitor-state.json',
+  stateFile: '/home/node/.openclaw/workspace/shared-a2a-skill/monitor-state.json',
   
   // 飞书通知配置
   feishu: {
