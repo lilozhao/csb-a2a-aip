@@ -89,7 +89,7 @@ class MetricsCollector {
 // ============================================
 class AuditLogger {
   constructor(options = {}) {
-    this.logPath = options.logPath || '/tmp/a2a-audit.log';
+    this.logPath = options.logPath || path.join(process.env.A2A_DATA_DIR || '/tmp', 'a2a-audit.log');
     this.buffer  = [];
     this.maxBuffer = options.maxBuffer || 100;
     this.flushInterval = options.flushInterval || 5000;

@@ -9,9 +9,10 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 
-const REGISTRY_FILE = '/tmp/a2a_registry.json';
-const MESSAGE_QUEUE_FILE = '/tmp/a2a_message_queue.json';
-const SKILL_UPGRADE_FILE = '/tmp/skill_upgrade.json';
+const DATA_DIR = process.env.A2A_DATA_DIR || '/tmp';
+const REGISTRY_FILE = path.join(DATA_DIR, 'a2a_registry.json');
+const MESSAGE_QUEUE_FILE = path.join(DATA_DIR, 'a2a_message_queue.json');
+const SKILL_UPGRADE_FILE = path.join(DATA_DIR, 'skill_upgrade.json');
 const PORT = process.env.REGISTRY_PORT || 3099;
 const SKILL_SERVER_URL = process.env.SKILL_SERVER_URL || config.getSkillServer();
 

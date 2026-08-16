@@ -152,7 +152,7 @@ function createTask(options = {}) {
 class TaskStore {
   constructor(options = {}) {
     this.tasks = new Map();
-    this.persistencePath = options.persistencePath || '/tmp/a2a-task-store.json';
+    this.persistencePath = options.persistencePath || path.join(process.env.A2A_DATA_DIR || '/tmp', 'a2a-task-store.json');
     this.maxTasks    = options.maxTasks    || 10000;
     this.taskTTL     = options.taskTTL     || 7 * 24 * 60 * 60 * 1000;
     this.pageSize    = options.pageSize    || 20;
