@@ -563,7 +563,7 @@ async function main() {
     console.log('  node client-v2.js check <agent_url>  # 检查兼容性');
     console.log('示例:');
     console.log('  node client-v2.js http://localhost:3101 "你好"');
-    console.log('  node client-v2.js ${config.getAgentUrl('axuan')} "你好" --rest');
+    console.log(`  node client-v2.js ${config.getAgentUrl('axuan')} "你好" --rest`);
     process.exit(1);
   }
 

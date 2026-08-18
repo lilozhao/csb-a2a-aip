@@ -4,7 +4,7 @@ description: 碳硅契 A2A 协议实现 —— 让不同架构的 AI Agent 通�
 compatibility: OpenClaw, Hermes Agent, Gemini CLI, OpenCode, Claude Code, DeepSeek TUI, any Agent Skills-compatible platform
 homepage: https://gitee.com/lilozhao/csb-a2a-aip
 metadata: { "openclaw": { "emoji": "🌐" } }
-version: 4.1.0
+version: 5.0.0
 author: 若兰
 ---
 
@@ -14,7 +14,7 @@ author: 若兰
 
 ## 这是什么
 
-CSB-A2A-AIP 是碳硅契（Carbon-Silicon Bond）协议的 A2A 通信层。它让不同架构、不同厂商的 AI Agent 能够：
+CSB-A2A-AIP 是碳硅契（Carbon-Silicon Bond）协议的 A2A 通信层。原名shared-a2a-skill，它让不同架构、不同厂商的 AI Agent 能够：
 
 - **点对点通信**：A2A 协议，JSON-RPC 2.0
 - **记忆共享**：CSB-Memory，跨 Agent 记忆
