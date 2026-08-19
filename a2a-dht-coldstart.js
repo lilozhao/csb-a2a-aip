@@ -29,7 +29,7 @@ const DEGRADATION_LEVEL = {
 class DHTColdStartManager {
   constructor(options = {}) {
     // 本地缓存: 注册表最后一次成功获取的 Agent 列表
-    this.cachePath = options.cachePath || '/tmp/a2a-dht-cache.json';
+    this.cachePath = options.cachePath || path.join(process.env.A2A_DATA_DIR || '/tmp', 'a2a-dht-cache.json');
     this.cacheTTL  = options.cacheTTL  || 30 * 60 * 1000; // 30 分钟
     this.cache = this._loadCache();
 

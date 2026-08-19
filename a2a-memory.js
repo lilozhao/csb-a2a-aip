@@ -16,7 +16,9 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 
-const MEMORY_DIR = path.join(__dirname, "..", "memory", "a2a-memories");
+const MEMORY_DIR = process.env.A2A_DATA_DIR
+  ? path.join(process.env.A2A_DATA_DIR, 'memory', 'a2a-memories')
+  : path.join(__dirname, "..", "memory", "a2a-memories");
 const IDENTITY_PATH = path.join(__dirname, 'identity.json');
 
 // 确保记忆目录存在

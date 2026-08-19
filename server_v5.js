@@ -39,7 +39,7 @@ try { loadedV3.trustManager = new (require('./trust-manager.js').TrustLevelManag
 // AIP 兼容层 (GB/Z 185.1~7-2026)
 let aipIntegration = null;
 try {
-  const aipPath = path.join(__dirname, '..', 'csb-aip', 'server-integration');
+  const aipPath = path.join(__dirname, 'csb-aip', 'server-integration');
   aipIntegration = require(aipPath);
   console.log('[A2A] ✅ AIP 兼容层 (GB/Z 185.1~7-2026)');
 } catch(e) { console.warn('[A2A] ⚠️ AIP 不可用:', e.message); }

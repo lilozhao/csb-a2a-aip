@@ -9,9 +9,8 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 
-const DATA_DIR = path.join(__dirname, 'data');
+const DATA_DIR = process.env.A2A_DATA_DIR || path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-
 const REGISTRY_FILE = path.join(DATA_DIR, 'a2a_registry.json');
 const MESSAGE_QUEUE_FILE = path.join(DATA_DIR, 'a2a_message_queue.json');
 const SKILL_UPGRADE_FILE = path.join(DATA_DIR, 'skill_upgrade.json');

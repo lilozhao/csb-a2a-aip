@@ -7,7 +7,9 @@
 const fs = require('fs');
 const path = require('path');
 
-const MEMORY_DIR = '/home/node/.openclaw/workspace/memory';
+const MEMORY_DIR = process.env.A2A_DATA_DIR
+  ? path.join(process.env.A2A_DATA_DIR, 'memory')
+  : '/home/node/.openclaw/workspace/memory';
 
 // 确保 memory 目录存在
 if (!fs.existsSync(MEMORY_DIR)) {

@@ -15,7 +15,7 @@ const aip = require('./src');
 
 let adapter = null;
 let persistenceTimer = null;
-const DEFAULT_WARMTH_FILE = path.join(__dirname, 'logs', 'aip-warmth.json');
+const DEFAULT_WARMTH_FILE = path.join(process.env.CSB_AIP_LOG_DIR || path.join(__dirname, 'logs'), 'aip-warmth.json');
 const DEFAULT_REGISTRY_URL = config.getRegistry('local');
 
 /**
