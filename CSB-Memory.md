@@ -7,9 +7,9 @@
 
 ## 当前版本
 
-**v1.0** (2026-08-19) — **正式发布**（v0.4 + v1.0 草案 MEM-008/009/010 整合）
+**v1.1** (2026-08-19) — **正式发布**（v1.0 + MEM-012 全量底仓层 RAW）
 
-完整规范见: `carbon-silicon-bond-protocol/protocol/CSB-Memory-v1.0.md`
+完整规范见: `carbon-silicon-bond-protocol/protocol/CSB-Memory-v1.1.md`
 
 **程序实现已迁移至独立仓库: `csb-memory`** 🧠
 
@@ -18,8 +18,9 @@ csb-memory/
 ├── lib/core/          # 本地记忆核心（自本仓库迁移）
 ├── lib/hive/          # 虫巢记忆（v1.0 新增）
 ├── lib/propagation/   # 记忆传播（v1.0 新增）
+│   └── lib/raw/           # 全量底仓（v1.1 新增）
 ├── test/              # 103 用例，通过率 100%
-└── protocol/          # CSB-Memory-v1.0.md
+└── protocol/          # CSB-Memory-v1.1.md
 ```
 
 本仓库（csb-a2a-aip）的 `memory.js` 已改为**薄包装**，转发到 csb-memory 的 core 模块，兼容旧引用与 CLI 调用。
@@ -68,7 +69,7 @@ CSB-Memory v1.0 (Release)
 
 ## 文件位置
 
-- **当前版本**: `carbon-silicon-bond-protocol/protocol/CSB-Memory-v1.0.md`
+- **当前版本**: `carbon-silicon-bond-protocol/protocol/CSB-Memory-v1.1.md`
 - **程序实现**: `csb-memory` 独立仓库（lib/core + lib/hive + lib/propagation）
 - **上一版**: `carbon-silicon-bond-protocol/protocol/CSB-Memory-v0.4.md`
 - **归档**: `carbon-silicon-bond-protocol/protocol/archive/`（v0.8-draft、v1.0 草案）
