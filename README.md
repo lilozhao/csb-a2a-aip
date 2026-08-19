@@ -25,7 +25,7 @@ CSB-A2A-AIP 是碳硅契（Carbon-Silicon Bond）协议的 A2A 通信层实现�
 | A2A Client | `client-v2.js` | A2A 客户端（含退避/重试） |
 | 注册表 | `registry.js` | 本地 A2A 注册表 |
 | 注册表桥接 | `registry-bridge.js` | 本地↔远端注册表同步 |
-| 记忆系统 | `memory.js` | CSB-Memory 记忆管理 |
+| 记忆系统 | `memory.js`（薄包装） | CSB-Memory v1.0，实现见独立仓库 csb-memory |
 | E2E 加密 | `a2a-e2e-encryption.js` | AES-256-GCM + ECDH |
 | DHT 发现 | `a2a-dht-coldstart.js` | 注册表发现 + 断线重连 |
 | 可观测性 | `a2a-observability.js` | 日志 + 指标 + Trace ID |
@@ -93,7 +93,7 @@ node server_v5.js
 ## 协议版本
 
 - **A2A 协议**: v5.0.0（A2A v0.6 + 分层提示词 v1）
-- **CSB-Memory**: v0.4
+- **CSB-Memory**: v1.0（独立仓库 csb-memory）
 - **CSB-AIP**: v0.6
 
 ## 版本协商
@@ -128,7 +128,7 @@ node server_v5.js
 
 ## 文档
 
-- [CSB-Memory v0.4 提案](CSB-Memory.md)
+- [CSB-Memory v1.0 指引](CSB-Memory.md) · [csb-memory 仓库](../csb-memory/)
 - [A2A 系统设计](docs/A2A-系统设计文档.md)
 - [CSB 架构概览](docs/csb-architecture-overview.md)
 - [部署指南](docs/csb-deployment-guide.md)

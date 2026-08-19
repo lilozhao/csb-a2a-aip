@@ -368,6 +368,15 @@ app.get('/metrics', (req, res) => {
   res.send(metrics.exportPrometheus());
 });
 
+// A2A Introspect 端点 - Agent 自我报告配置摘要
+try {
+  const { attachIntrospect } = require('./a2a-introspect-middleware.js');
+  const workspaceRoot = process.env.WORKSPACE || '/home/node/.openclaw/workspace';
+  attachIntrospect(app, { workspace: path.resolve(process.env.WORKSPACE || process.cwd()), identity: identity });
+} catch(e) {
+  console.warn('[A2A] ⚠️ introspect 加载失败:', e.message);
+}
+
 // Agent 列表 (A2A-026 支持)
 app.get('/agents', async (req, res) => {
   const agents = await dhtManager.listAllAgents();

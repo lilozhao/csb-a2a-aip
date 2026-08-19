@@ -9,16 +9,20 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 
-const REGISTRY_FILE = '/tmp/a2a_registry.json';
-const MESSAGE_QUEUE_FILE = '/tmp/a2a_message_queue.json';
-const SKILL_UPGRADE_FILE = '/tmp/skill_upgrade.json';
+const DATA_DIR = path.join(__dirname, 'data');
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+const REGISTRY_FILE = path.join(DATA_DIR, 'a2a_registry.json');
+const MESSAGE_QUEUE_FILE = path.join(DATA_DIR, 'a2a_message_queue.json');
+const SKILL_UPGRADE_FILE = path.join(DATA_DIR, 'skill_upgrade.json');
 const PORT = process.env.REGISTRY_PORT || 3099;
 const SKILL_SERVER_URL = process.env.SKILL_SERVER_URL || config.getSkillServer();
 
 // A2A-008 配置
 const MAX_RETRY = 7;           // 最大重试次数
 const MESSAGE_TTL = 24 * 60 * 60 * 1000; // 消息 TTL: 24 小时
-const HEARTBEAT_TIMEOUT = 9 * 60 * 1000;  // 心跳超时: 9 分钟 (3 次)
+const HEARTBEAT_TIMEOUT = 9 * 60 * 1000;  // 本地心跳超时: 9 分钟 (3 次)
+const BRIDGE_TIMEOUT = 3 * 60 * 60 * 1000; // 桥接 agent 超时: 3 小时（匹配 2 小时桥接间隔 + 余量，桥接 agent 不发自心跳）
 
 // ==================== 注册表管理 ====================
 
@@ -43,7 +47,9 @@ function cleanupStaleAgents(registry) {
   const now = Date.now();
   registry.agents = registry.agents.filter(agent => {
     if (!agent.lastHeartbeat) return false;
-    return now - new Date(agent.lastHeartbeat).getTime() < HEARTBEAT_TIMEOUT;
+    const isBridge = agent.capabilities && agent.capabilities._bridge;
+    const timeout = isBridge ? BRIDGE_TIMEOUT : HEARTBEAT_TIMEOUT;
+    return now - new Date(agent.lastHeartbeat).getTime() < timeout;
   });
 }
 
@@ -54,7 +60,9 @@ function isAgentOnline(registry, name) {
   
   const now = Date.now();
   const lastHeartbeat = new Date(agent.lastHeartbeat).getTime();
-  return (now - lastHeartbeat) < HEARTBEAT_TIMEOUT;
+  const isBridge = agent.capabilities && agent.capabilities._bridge;
+  const timeout = isBridge ? BRIDGE_TIMEOUT : HEARTBEAT_TIMEOUT;
+  return (now - lastHeartbeat) < timeout;
 }
 
 // ==================== 技能升级管理 ====================
@@ -826,7 +834,8 @@ app.get('/v1/ard/explore', (req, res) => {
 
 // ==================== 启动服务 ====================
 
-app.listen(PORT, () => {
+const HOST = process.env.REGISTRY_HOST || '0.0.0.0';
+app.listen(PORT, HOST, () => {
   console.log(`A2A 注册表 v2 运行在端口 ${PORT}`);
   console.log(`注册: POST http://localhost:${PORT}/register`);
   console.log(`发现: GET http://localhost:${PORT}/agents`);

@@ -50,7 +50,7 @@ fi
 mkdir -p "${LOG_DIR}"
 echo "🚀 [${INSTANCE_NAME}] 启动 A2A Server (端口: $PORT)..."
 cd "${A2A_DIR}"
-A2A_IDENTITY_PATH="${INSTANCE_DIR}/identity.json" nohup node server_v4.js > "${LOG_DIR}/server-${PORT}.log" 2>&1 &
+A2A_IDENTITY_PATH="${INSTANCE_DIR}/identity.json" nohup node server_v5.js > "${LOG_DIR}/server-${PORT}.log" 2>&1 &
 NEW_PID=$!
 echo "$NEW_PID" > "${PID_FILE}"
 

@@ -1,0 +1,10 @@
+# 构建时排除：密钥、日志、本地实例、依赖
+node_modules/
+*.log
+*.pid
+logs/
+instances/
+/tmp/
+.env
+identity.json
+known-agents.json.bak

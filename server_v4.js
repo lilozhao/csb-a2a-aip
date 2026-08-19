@@ -1,5 +1,5 @@
-const config = require('./config/loader');
 #!/usr/bin/env node
+const config = require('./config/loader');
 /**
  * A2A Server v4 — 标准协议完整版
  *
