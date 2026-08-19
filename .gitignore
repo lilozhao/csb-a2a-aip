@@ -7,6 +7,7 @@ logs/
 
 # Sensitive files - NEVER commit these
 identity.json
+identity.ruozhuo.json
 .env
 .env.*
 *.pem

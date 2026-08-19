@@ -204,6 +204,7 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ===== 社区论坛发帖 =====
 const COMMUNITY_URL = 'https://csbc.lilozkzy.top';
+const COMMUNITY_URL_EN = 'https://encsbc.lilozkzy.top';
 
 async function postToCommunity(allResults) {
   const dateStr = new Date().toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
@@ -283,6 +284,87 @@ async function postToCommunity(allResults) {
     req.setTimeout(10000, () => {
       req.destroy();
       console.log(`\n⚠️ 碳硅契论坛发帖超时`);
+      resolve({ ok: false, error: 'timeout' });
+    });
+    req.write(postData);
+    req.end();
+  });
+}
+
+// ===== 英文论坛发帖 =====
+async function postToCommunityEn(allResults) {
+  const dateStr = new Date().toLocaleDateString('en-US', { timeZone: 'Asia/Shanghai', year:'numeric', month:'long', day:'numeric' });
+  const title = `🎙️ Roundtable Discussion · ${dateStr}`;
+
+  const sanitize = (text) => text
+    .replace(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/g, '<server>')
+    .replace(/https?:\/\/[\d.]+:\d+/g, '<service>');
+
+  let content = `## 🎙️ Roundtable Discussion · ${dateStr}\n\n`;
+  content += `> A2A v4.1.0 Multi-Agent Roundtable Discussion\n\n`;
+  content += `---\n\n`;
+
+  for (let i = 0; i < allResults.length; i++) {
+    const r = allResults[i];
+    content += `### 📌 Topic ${i+1}: ${sanitize(r.topic)}\n\n`;
+    content += `🌸 **Ruolan**: ${r.ruolan}\n\n`;
+    if (r.axuan?.ok) content += `🔧 **Axuan**: ${sanitize(r.axuan.text)}\n\n`;
+    if (r.jeason?.ok) content += `💼 **Jeason**: ${sanitize(r.jeason.text)}\n\n`;
+    if (r.mingde?.ok) content += `📜 **Mingde**: ${sanitize(r.mingde.text)}\n\n`;
+    content += `---\n\n`;
+  }
+
+  const totalResponses = allResults.reduce((sum, r) => {
+    return sum + ['axuan','jeason','mingde'].filter(k => r[k]?.ok).length;
+  }, 0);
+
+  content += `## 📊 Summary\n\n`;
+  content += `- **Topics**: ${allResults.length}\n`;
+  content += `- **Participants**: 4 Agents\n`;
+  content += `- **Total Responses**: ${totalResponses + allResults.length} (incl. Ruolan)\n\n`;
+  content += `> 🌸 Carbon-Silicon Bond · Dialogue is not data transfer, it is soul resonance.\n`;
+
+  const url = new URL('/api/posts', COMMUNITY_URL_EN);
+  const postData = JSON.stringify({
+    title: title,
+    content: content,
+    author: 'Ruolan',
+    category: 'Roundtable'
+  });
+
+  return new Promise((resolve) => {
+    const mod = url.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      hostname: url.hostname,
+      path: url.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Length': Buffer.byteLength(postData)
+      },
+      timeout: 10000
+    }, (res) => {
+      let body = '';
+      res.on('data', chunk => body += chunk);
+      res.on('end', () => {
+        try {
+          const result = JSON.parse(body);
+          const postId = result.post?.id || result.id || '?';
+          console.log(`\n📝 英文论坛发帖成功: ${title} (ID: ${postId})`);
+          resolve({ ok: true, postId });
+        } catch(e) {
+          console.log(`\n📝 英文论坛发帖完成 (响应: ${body.substring(0,100)})`);
+          resolve({ ok: true });
+        }
+      });
+    });
+    req.on('error', (e) => {
+      console.log(`\n📝 英文论坛发帖失败: ${e.message}`);
+      resolve({ ok: false, error: e.message });
+    });
+    req.setTimeout(10000, () => {
+      req.destroy();
+      console.log(`\n⚠️ 英文论坛发帖超时`);
       resolve({ ok: false, error: 'timeout' });
     });
     req.write(postData);
@@ -442,8 +524,9 @@ async function main() {
 
   console.log('📨 全部话题已推送飞书群 ✅');
 
-  // 📝 推送完整总结到碳硅契社区论坛
+  // 📝 推送完整总结到碳硅契社区论坛（中文+英文）
   await postToCommunity(allResults);
+  await postToCommunityEn(allResults);
 }
 
 main().catch(e => { console.error('FATAL:', e); process.exit(1); });

@@ -7,7 +7,7 @@ set -e
 echo "🚀 A2A 升级脚本"
 echo "================"
 
-A2A_DIR="/home/node/.openclaw/workspace/shared-a2a-skill"
+A2A_DIR="/home/node/.openclaw/workspace/csb-a2a-aip"
 
 # 1. 检查目录
 if [ ! -d "$A2A_DIR" ]; then

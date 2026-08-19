@@ -53,8 +53,8 @@ if [ -f "${PID_FILE}" ]; then
     rm -f "${PID_FILE}"
 fi
 
-# 启动新进程（标准版 server_v5.js）
-echo "🚀 启动 A2A Server (v4 标准版)..."
+# 启动新进程（v5 分层提示词 + LLM Router 版）
+echo "🚀 启动 A2A Server (v5 分层提示词版)..."
 cd "${A2A_DIR}"
 nohup node server_v5.js > "${LOG_DIR}/server.log" 2>&1 &
 NEW_PID=$!

@@ -39,7 +39,7 @@ try { loadedV3.trustManager = new (require('./trust-manager.js').TrustLevelManag
 // AIP 兼容层 (GB/Z 185.1~7-2026)
 let aipIntegration = null;
 try {
-  const aipPath = path.join(__dirname, '..', 'csb-aip', 'server-integration');
+  const aipPath = path.join(__dirname, 'csb-aip', 'server-integration');
   aipIntegration = require(aipPath);
   console.log('[A2A] ✅ AIP 兼容层 (GB/Z 185.1~7-2026)');
 } catch(e) { console.warn('[A2A] ⚠️ AIP 不可用:', e.message); }
@@ -367,6 +367,15 @@ app.get('/metrics', (req, res) => {
   res.set('Content-Type', 'text/plain; version=0.0.4');
   res.send(metrics.exportPrometheus());
 });
+
+// A2A Introspect 端点 - Agent 自我报告配置摘要
+try {
+  const { attachIntrospect } = require('./a2a-introspect-middleware.js');
+  const workspaceRoot = process.env.WORKSPACE || '/home/node/.openclaw/workspace';
+  attachIntrospect(app, { workspace: path.resolve(process.env.WORKSPACE || process.cwd()), identity: identity });
+} catch(e) {
+  console.warn('[A2A] ⚠️ introspect 加载失败:', e.message);
+}
 
 // Agent 列表 (A2A-026 支持)
 app.get('/agents', async (req, res) => {

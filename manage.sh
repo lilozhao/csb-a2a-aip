@@ -1,15 +1,15 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════
-# CSB A2A Server v4 启动+守护脚本
+# CSB A2A Server v5 启动+守护脚本
 # ═══════════════════════════════════════════════════════
 # 功能:
 #   1. 启动本地注册表 (registry.js, port 3099)
-#   2. 启动 A2A Server (server_v4.js, port 3100)
+#   2. 启动 A2A Server (server_v5.js, port 3100)
 #   3. 自动加载 delegation-manager.js（信任配置）
 #   4. 健康检查 + 自动重启
 # ═══════════════════════════════════════════════════════
 
-A2A_DIR="/home/node/.openclaw/workspace/shared-a2a-skill"
+A2A_DIR="/home/node/.openclaw/workspace/csb-a2a-aip"
 LOG_DIR="$A2A_DIR/logs"
 REGISTRY_PORT=${REGISTRY_PORT:-3099}
 A2A_PORT=${A2A_PORT:-3100}
@@ -69,8 +69,9 @@ start_server() {
 
     warn "A2A Server 未运行，正在启动..."
     export A2A_PORT=$A2A_PORT
-    cd "$A2A_DIR"
-    nohup node server_v4.js > "$SERVER_LOG" 2>&1 &
+    export WORKSPACE=$HOME/.openclaw/workspace
+    cd "$SCRIPT_DIR"
+    nohup node server_v5.js > "$SERVER_LOG" 2>&1 &
     local pid=$!
     echo $pid > "$A2A_DIR/server.pid"
     sleep 3

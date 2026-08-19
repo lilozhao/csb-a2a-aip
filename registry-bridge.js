@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/*
  * 🌉 A2A 注册表桥接器 v2
  * 
  * 核心理念：不是把所有 Agent 都同步到两边，
@@ -14,6 +15,7 @@
 const http = require('http');
 const path = require('path');
 const https = require('https');
+const fs = require('fs');
 
 // ===== 配置 =====
 const CONFIG = {
@@ -149,13 +151,13 @@ async function heartbeat(registryUrl, agent) {
  * @param {string} label - 标签（用于日志）
  * @param {boolean} filterPrivate - 是否过滤内网地址
  */
-async function smartSync(sourceUrl, targetUrl, label, filterPrivate = true) {
+async function smartSync(sourceUrl, targetUrl, label, filterPrivate = true, protectFresh = false) {
   console.log(`\n🔄 ${label}: ${sourceUrl} → ${targetUrl}`);
   
   // 1. 获取源和目标的所有 Agent
   const sourceAgents = await getAgents(sourceUrl);
   const targetAgents = await getAgents(targetUrl);
-  const targetNames = new Set(targetAgents.map(a => a.name));
+  const targetByName = new Map(targetAgents.map(a => [a.name, a]));
   
   console.log(`   源: ${sourceAgents.length} 个, 目标: ${targetAgents.length} 个`);
   
@@ -175,9 +177,21 @@ async function smartSync(sourceUrl, targetUrl, label, filterPrivate = true) {
   }
   
   // 3. 逐个检查可达性并同步
-  let synced = 0, renewed = 0, failed = 0;
+  let synced = 0, renewed = 0, failed = 0, protected_ = 0;
   
   for (const agent of candidates) {
+    // 保护模式：目标已有同名记录且心跳新鲜（<10 分钟）时，跳过，避免旧地址覆盖本地权威记录
+    if (protectFresh && targetByName.has(agent.name)) {
+      const local = targetByName.get(agent.name);
+      const hb = local.lastHeartbeat ? new Date(local.lastHeartbeat).getTime() : 0;
+      const fresh = (Date.now() - hb) < 10 * 60 * 1000;
+      if (fresh) {
+        console.log(`   🛡️ ${agent.name} - 本地记录新鲜，跳过（保护）`);
+        protected_++;
+        continue;
+      }
+    }
+    
     // 先检查可达性
     const ping = await pingAgent(agent);
     
@@ -187,23 +201,23 @@ async function smartSync(sourceUrl, targetUrl, label, filterPrivate = true) {
       continue;
     }
     
-    console.log(`   ✅ ${agent.name} - 可达 ${ping.latency}ms`, targetNames.has(agent.name) ? '(已存在)' : '(新)');
+    console.log(`   ✅ ${agent.name} - 可达 ${ping.latency}ms`, targetByName.has(agent.name) ? '(已存在)' : '(新)');
     
-    if (targetNames.has(agent.name)) {
+    if (targetByName.has(agent.name)) {
       // 已存在，发心跳续期
       await heartbeat(targetUrl, agent);
       renewed++;
     } else {
       // 新注册
       await register(targetUrl, agent);
-      targetNames.add(agent.name);
+      targetByName.set(agent.name, agent);
       synced++;
     }
     
     await new Promise(r => setTimeout(r, 300));
   }
   
-  console.log(`   📊 结果: +${synced} 续期 ${renewed} 失败 ${failed}`);
+  console.log(`   📊 结果: +${synced} 续期 ${renewed} 失败 ${failed} 保护 ${protected_}`);
 }
 
 /**
@@ -219,8 +233,8 @@ async function bidirectional(localUrl, publicUrl) {
   // 本地 → 公网（过滤内网，只同步公网可达的）
   await smartSync(localUrl, publicUrl, '本地→公网', true);
   
-  // 公网 → 本地（不过滤，公网 IP 本地也可能可达）
-  await smartSync(publicUrl, localUrl, '公网→本地', false);
+  // 公网 → 本地（不过滤，公网 IP 本地也可能可达；保护本地新鲜记录不被旧地址覆盖）
+  await smartSync(publicUrl, localUrl, '公网→本地', false, true);
   
   console.log('\n✅ 同步完成');
 }
@@ -230,8 +244,8 @@ async function bidirectional(localUrl, publicUrl) {
 const DISCOVERY_FILE = path.join(__dirname, 'bridge-registries.json');
 
 function loadAllRegistries() {
-  const local = process.env.LOCAL_REGISTRY || config.getRegistry('local');
-  const defaultPublic = process.env.PUBLIC_REGISTRY || config.getRegistry('public');
+  const local = process.env.LOCAL_REGISTRY || 'http://172.28.0.214:3099';
+  const defaultPublic = process.env.PUBLIC_REGISTRY || 'http://47.121.28.125:3099';
   
   // 从发现器加载额外注册表
   let discovered = [];
@@ -261,6 +275,12 @@ async function main() {
     await bidirectional(config.local, pubUrl);
   }
   
+  // 如果是 --once 模式或 cron 触发，运行一次后退出
+  if (process.argv.includes('--once') || process.env.CRON_RUN) {
+    console.log('\n🏁 单次运行完成，退出');
+    return;
+  }
+
   // 定时同步（每次重新加载，支持热更新）
   setInterval(() => {
     const fresh = loadAllRegistries();

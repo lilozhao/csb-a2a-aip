@@ -32,7 +32,7 @@ register('openclaw', async (identity, systemPrompt, userMessage, options = {}) =
   const gatewayUrl = process.env.A2A_GATEWAY_URL || 'http://localhost:19089';
   const gatewayToken = process.env.A2A_GATEWAY_TOKEN || 'zhw123456';
   const model = process.env.A2A_MODEL || 'openclaw';
-  const timeout = options.timeout || 25000;
+  const timeout = options.timeout || 8000;
 
   console.log('[LLM-Router] 🚀 OpenClaw:', model);
 
@@ -88,7 +88,7 @@ register('hermes', async (identity, systemPrompt, userMessage, options = {}) => 
   // Hermes 使用标准的 JSON-RPC 格式，通过 HTTP 调用
   const hermesHost = process.env.A2A_HERMES_HOST || 'localhost';
   const hermesPort = parseInt(process.env.A2A_HERMES_PORT || '3100');
-  const timeout = options.timeout || 25000;
+  const timeout = options.timeout || 8000;
 
   console.log('[LLM-Router] 🧙 Hermes:', hermesHost + ':' + hermesPort);
 
@@ -140,7 +140,7 @@ register('openai', async (identity, systemPrompt, userMessage, options = {}) => 
   const baseUrl = process.env.A2A_OPENAI_URL || 'https://api.openai.com/v1';
   const apiKey = process.env.A2A_OPENAI_KEY || '';
   const model = process.env.A2A_OPENAI_MODEL || 'gpt-4o-mini';
-  const timeout = options.timeout || 25000;
+  const timeout = options.timeout || 8000;
 
   console.log('[LLM-Router] 🤖 OpenAI:', model);
 
@@ -196,7 +196,7 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
     return null;
   }
 
-  const timeout = options.timeout || 25000;
+  const timeout = options.timeout || 8000;
   const model = process.env.A2A_DIRECT_MODEL || llmConfig.model || 'default';
   console.log('[LLM-Router] 🔗 Direct:', llmConfig.host, model);
 

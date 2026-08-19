@@ -4,7 +4,7 @@
 # 安装方法：
 #   1. 将此脚本添加到系统 crontab：
 #      crontab -e
-#      添加: 0 * * * * /home/node/.openclaw/workspace/shared-a2a-skill/scripts/monitor-hourly.sh
+#      添加: 0 * * * * /home/node/.openclaw/workspace/csb-a2a-aip/scripts/monitor-hourly.sh
 #   
 #   2. 或使用 OpenClaw 定时任务（推荐）
 
