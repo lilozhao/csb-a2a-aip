@@ -24,7 +24,8 @@ const { logConversation }         = require('./log_conversation');
 const { TaskStore }               = require('./a2a-task-store.js');
 const { A2AStandardAPI }          = require('./a2a-standard-api-v5.js');
 const { RateLimiter }             = require('./a2a-standard-api-v5.js');
-const { E2EEncryption, createEncryptionMiddleware } = require('./a2a-e2e-encryption.js');
+const securityAdapter = require('./security-adapter.js');
+const { E2EEncryption, createEncryptionMiddleware } = securityAdapter;
 const { MetricsCollector, AuditLogger, traceMiddleware, collectSystemMetrics } = require('./a2a-observability.js');
 const { DHTColdStartManager, DEGRADATION_LEVEL } = require('./a2a-dht-coldstart.js');
 
@@ -34,7 +35,7 @@ try { const { ContextManager } = require('./context-manager.js'); loadedV3.conte
 try { loadedV3.envelopeManager = new (require('./envelope.js').EnvelopeManager)({}); console.log('[A2A] ✅ envelope (A2A-007/017)'); } catch(e) { console.warn('envelope:', e.message); }
 try { const { SemanticValidator } = require('./semantic-validator.js'); loadedV3.semanticValidator = new SemanticValidator({ vocabPath: path.join(__dirname, 'vocab.json'), maxWildcardDepth: 3, enableFallback: true }); console.log('[A2A] ✅ semantic (A2A-013)'); } catch(e) { console.warn('semantic-validator:', e.message); }
 try { loadedV3.negotiationEngine = new (require('./version-negotiator.js').NegotiationEngine)({ costThreshold: 0.5, gracePeriodDays: 7 }); console.log('[A2A] ✅ version-negotiation (A2A-011)'); } catch(e) { console.warn('version-negotiator:', e.message); }
-try { loadedV3.trustManager = new (require('./trust-manager.js').TrustLevelManager)({ maxHops: 3, witnessThreshold: 3 }); console.log('[A2A] ✅ trust (A2A-010)'); } catch(e) { console.warn('trust-manager:', e.message); }
+try { loadedV3.trustManager = new securityAdapter.TrustLevelManager({ maxHops: 3, witnessThreshold: 3 }); console.log(`[A2A] ✅ trust (A2A-010, ${securityAdapter.source})`); } catch(e) { console.warn('trust-manager:', e.message); }
 
 // AIP 兼容层 (GB/Z 185.1~7-2026)
 let aipIntegration = null;
