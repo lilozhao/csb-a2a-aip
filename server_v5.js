@@ -278,7 +278,7 @@ if (e2eManager.enabled) {
 // ===== 路由注册 =====
 // AIP 路由注册
 if (aipIntegration) {
-  aipIntegration.init(app, identity);
+  aipIntegration.init(app, identity, [], A2A_VERSION);
   console.log('[A2A] ✅ AIP 路由已注册: /aip/*, /.well-known/aip-agent-card.json');
 }
 
