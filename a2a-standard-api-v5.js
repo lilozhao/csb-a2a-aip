@@ -94,10 +94,17 @@ class A2AStandardAPI {
         return res.json({ jsonrpc: '2.0', error: a2aError('VersionNotSupportedError', { requested: verHeader, supported: this.supportedVersion }), id });
       }
 
-      // 流量控制 — 修复 IP 提取
+      // 流量控制 — 修复 IP 提取（A2A-019）
+      // 双模式: csb-security RateLimiter 有 check({agentId, ip}) → 按 Agent+IP+全局限流
+      //         legacy RateLimiter 只有 allow(clientId) → 按 IP 限流（行为不变）
       if (this.rateLimiter) {
         const clientIp = this._clientIp(req);
-        if (!this.rateLimiter.allow(clientIp)) {
+        if (typeof this.rateLimiter.check === 'function') {
+          const rl = this.rateLimiter.check({ agentId: this._extractAgentId(req), ip: clientIp });
+          if (!rl.allowed) {
+            return res.json({ jsonrpc: '2.0', error: { code: -32010, message: 'Rate limit exceeded', data: { retryAfterMs: rl.retryAfterMs || 0, reason: rl.reason || 'rate_limited' } }, id });
+          }
+        } else if (!this.rateLimiter.allow(clientIp)) {
           return res.json({ jsonrpc: '2.0', error: { code: -32010, message: 'Rate limit exceeded', data: { retryAfterMs: this.rateLimiter.retryAfter(clientIp) } }, id });
         }
       }
@@ -474,6 +481,22 @@ class A2AStandardAPI {
     const xff = req.headers['x-forwarded-for'];
     if (xff) return xff.split(',')[0].trim();
     return req.ip || req.connection?.remoteAddress || 'unknown';
+  }
+
+  /**
+   * 从请求体提取 Agent 标识（用于按 Agent 限流）
+   * 优先级: body.from > params.from > params.sender.name > body.sender.name > params.sender > 'unknown'
+   */
+  _extractAgentId(req) {
+    const body = req.body || {};
+    const params = body.params || {};
+    const from = body.from || params.from;
+    if (typeof from === 'string' && from) return from;
+    if (from && typeof from === 'object' && from.name) return from.name;
+    const sender = params.sender || body.sender;
+    if (sender && typeof sender === 'object' && sender.name) return sender.name;
+    if (typeof sender === 'string' && sender) return sender;
+    return 'unknown';
   }
 
   _isContentTypeSupported(mimeType) {

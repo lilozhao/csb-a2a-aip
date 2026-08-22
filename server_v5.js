@@ -23,10 +23,9 @@ const fs = require('fs');
 const { logConversation }         = require('./log_conversation');
 const { TaskStore }               = require('./a2a-task-store.js');
 const { A2AStandardAPI }          = require('./a2a-standard-api-v5.js');
-const { RateLimiter }             = require('./a2a-standard-api-v5.js');
 const securityAdapter = require('./security-adapter.js');
 const { E2EEncryption, createEncryptionMiddleware } = securityAdapter;
-const { MetricsCollector, AuditLogger, traceMiddleware, collectSystemMetrics } = require('./a2a-observability.js');
+const { MetricsCollector, traceMiddleware, collectSystemMetrics } = require('./a2a-observability.js');
 const { DHTColdStartManager, DEGRADATION_LEVEL } = require('./a2a-dht-coldstart.js');
 
 // v3 模块加载
@@ -166,13 +165,13 @@ const taskStore = new TaskStore({
   debounceMs: 1000,
 });
 
-const rateLimiter = new RateLimiter({
-  maxRequests: parseInt(process.env.A2A_RATE_LIMIT || '60'),
+const rateLimiter = new securityAdapter.RateLimiter({
+  limits: { agent: parseInt(process.env.A2A_RATE_LIMIT || '60') },
   windowMs: 60000,
 });
 
 const metrics = new MetricsCollector();
-const auditLogger = new AuditLogger({ logPath: '/tmp/a2a-audit.log' });
+const auditLogger = securityAdapter.createAuditLogger({ logPath: '/tmp/a2a-audit.log' });
 
 const e2eManager = new E2EEncryption({
   masterKey: process.env.A2A_ENCRYPTION_KEY || null,
