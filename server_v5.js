@@ -171,7 +171,8 @@ const rateLimiter = new securityAdapter.RateLimiter({
 });
 
 const metrics = new MetricsCollector();
-const auditLogger = securityAdapter.createAuditLogger({ logPath: '/tmp/a2a-audit.log' });
+// 不传 logPath：哈希链模式默认 data/audit/，legacy 模式默认 /tmp（各自合理落盘）
+const auditLogger = securityAdapter.createAuditLogger();
 
 // 异常检测（Phase 3）: 限流拒绝→failure / 成功→success，告警→console+可选飞书
 const anomalyDetector = securityAdapter.createAnomalyDetector();
