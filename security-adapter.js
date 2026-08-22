@@ -19,6 +19,9 @@ let source = 'legacy';
 let TrustLevelManager = null;
 let E2EEncryption = null;
 let RateLimiter = null;
+let HandshakeManager = null;
+let SECURITY_LEVEL = null;
+let AnomalyDetector = null;
 let loadError = null;
 
 try {
@@ -26,14 +29,17 @@ try {
   TrustLevelManager = security.TrustLevelManager;
   E2EEncryption = security.E2EEncryption;
   RateLimiter = security.RateLimiter;
-  if (TrustLevelManager && E2EEncryption && RateLimiter) {
+  HandshakeManager = security.HandshakeManager;
+  SECURITY_LEVEL = security.SECURITY_LEVEL;
+  AnomalyDetector = security.AnomalyDetector;
+  if (TrustLevelManager && E2EEncryption && RateLimiter && HandshakeManager && AnomalyDetector) {
     source = 'csb-security';
   } else {
-    throw new Error('csb-security 导出不完整 (TrustLevelManager/E2EEncryption/RateLimiter 缺失)');
+    throw new Error('csb-security 导出不完整 (TrustLevelManager/E2EEncryption/RateLimiter/HandshakeManager/AnomalyDetector 缺失)');
   }
 } catch (e) {
   loadError = e;
-  // 2) 降级 legacy 实现
+  // 2) 降级 legacy 实现（握手/异常检测为 csb-security 独有，legacy 无对应）
   try {
     TrustLevelManager = require('./trust-manager.js').TrustLevelManager;
     E2EEncryption = require('./a2a-e2e-encryption.js').E2EEncryption;
@@ -109,12 +115,49 @@ function createAuditLogger(options = {}) {
   return new (require('./a2a-observability.js').AuditLogger)(options);
 }
 
+/**
+ * createAnomalyDetector — 异常检测工厂（Phase 3）
+ *
+ * 接入点: standard-api 限流拒绝 → recordFailure；成功 → recordSuccess
+ * 告警: onAlert → console + 可选飞书 webhook（A2A_SECURITY_ALERT_WEBHOOK）
+ */
+function createAnomalyDetector(options = {}) {
+  if (source !== 'csb-security') {
+    console.log('[SECURITY] ℹ️ 异常检测需 csb-security（当前 legacy，跳过）');
+    return null;
+  }
+  const webhook = process.env.A2A_SECURITY_ALERT_WEBHOOK || null;
+  const detector = new AnomalyDetector({
+    ...options,
+    onAlert: (alert) => {
+      const line = `[SECURITY-ALERT] [${alert.severity}] ${alert.rule}: ${alert.message}`;
+      console.warn(line);
+      if (webhook) {
+        const http = require('http');
+        const https = require('https');
+        const mod = webhook.startsWith('https') ? https : http;
+        const body = JSON.stringify({ text: line, alert });
+        const req = mod.request(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, (r) => { r.resume(); });
+        req.on('error', () => {});
+        req.write(body); req.end();
+      }
+    }
+  });
+  console.log('[SECURITY] 🛡️ 异常检测已启用（规则: rapid_failures / many_agents_single_ip / rapid_aid_registration / rapid_key_rotation / audit_tamper）');
+  return detector;
+}
+
 module.exports = {
   source,
   TrustLevelManager,
   E2EEncryption,
   RateLimiter,
+  HandshakeManager,
+  SECURITY_LEVEL,
+  AnomalyDetector,
   createAuditLogger,
+  createAnomalyDetector,
+  createHandshakeRouter: require('./security-handshake.js').createHandshakeRouter,
   CompatAuditLogger,
   // middleware 是 A2A HTTP 层概念，保留在本仓库；传入 csb-security 实例即可工作
   createEncryptionMiddleware: require('./a2a-e2e-encryption.js').createEncryptionMiddleware

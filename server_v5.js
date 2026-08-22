@@ -173,6 +173,9 @@ const rateLimiter = new securityAdapter.RateLimiter({
 const metrics = new MetricsCollector();
 const auditLogger = securityAdapter.createAuditLogger({ logPath: '/tmp/a2a-audit.log' });
 
+// 异常检测（Phase 3）: 限流拒绝→failure / 成功→success，告警→console+可选飞书
+const anomalyDetector = securityAdapter.createAnomalyDetector();
+
 const e2eManager = new E2EEncryption({
   masterKey: process.env.A2A_ENCRYPTION_KEY || null,
   keyVersion: parseInt(process.env.A2A_KEY_VERSION || '1'),
@@ -185,6 +188,7 @@ const standardAPI = new A2AStandardAPI({
   semanticValidator: loadedV3.semanticValidator || null,
   negotiationEngine: loadedV3.negotiationEngine || null,
   rateLimiter,
+  anomalyDetector,
   supportedVersion: process.env.A2A_PROTOCOL_VERSION || '0.6',
   commandHandler: async (cmdJson, metadata) => {
     // 优先检查是否是委托消息
@@ -275,6 +279,40 @@ if (e2eManager.enabled) {
 if (aipIntegration) {
   aipIntegration.init(app, identity);
   console.log('[A2A] ✅ AIP 路由已注册: /aip/*, /.well-known/aip-agent-card.json');
+}
+
+// 对等握手端点 (Phase 3, CSB-Security §7) — 密钥就绪才启用
+const handshakeAIDPath = process.env.A2A_SECURITY_HANDSHAKE_AID;
+const handshakeKeyPath = process.env.A2A_SECURITY_HANDSHAKE_KEY;
+if (securityAdapter.source === 'csb-security' && handshakeAIDPath && handshakeKeyPath) {
+  try {
+    const fs2 = require('fs');
+    const calleeAID = JSON.parse(fs2.readFileSync(handshakeAIDPath, 'utf8'));
+    const calleeKey = fs2.readFileSync(handshakeKeyPath, 'utf8');
+    const handshakeManager = new securityAdapter.HandshakeManager({
+      trustManager: loadedV3.trustManager || undefined
+    });
+    app.use('/a2a/handshake', securityAdapter.createHandshakeRouter({
+      handshakeManager,
+      calleeAID,
+      calleePrivateKey: calleeKey,
+      calleeAllowedScopes: (identity.capabilities && Object.keys(identity.capabilities)) || ['a2a:send'],
+      userPublicKey: (() => {
+        const raw = process.env.A2A_SECURITY_HANDSHAKE_USER_PUBKEY;
+        if (!raw) return null;
+        try {
+          if (raw.trim().startsWith('{')) return JSON.parse(raw); // 内联 JWK
+          return JSON.parse(fs2.readFileSync(raw, 'utf8')); // 文件路径
+        } catch (e) { console.warn('[A2A] ⚠️ 用户公钥解析失败:', e.message); return null; }
+      })(),
+      trustManager: loadedV3.trustManager || null
+    }));
+    console.log(`[A2A] ✅ 对等握手端点已启用: /a2a/handshake (${calleeAID.agent_id})`);
+  } catch (e) {
+    console.warn('[A2A] ⚠️ 握手端点启用失败（AID/密钥配置错误）:', e.message);
+  }
+} else {
+  console.log('[A2A] ℹ️  对等握手端点未启用（需 A2A_SECURITY_HANDSHAKE_AID + A2A_SECURITY_HANDSHAKE_KEY）');
 }
 
 // AIP 消息兼容中间件（覆盖 /a2a/json-rpc + /message:send + /message:stream）

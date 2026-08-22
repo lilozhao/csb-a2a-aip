@@ -7,6 +7,12 @@
 #
 # 安全设计：镜像只打包代码，不打包身份。
 # identity.json（含 LLM 密钥）通过 docker-compose 卷挂载注入，永不进镜像。
+#
+# CSB-Security 集成（2026-08-22）:
+#   csb-a2a-aip 通过 file:../csb-security 引用安全库（optionalDependencies，缺失时降级 legacy）
+#   构建时需把 csb-security 一并 COPY 进镜像（从 workspace 根目录构建）:
+#     docker build -f csb-a2a-aip/Dockerfile .
+#   详见 docs/UPGRADE-SECURITY-INTEGRATION.md
 
 FROM node:20-alpine
 
@@ -16,8 +22,9 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev --registry=https://registry.npmmirror.com
 
-# 再复制代码
+# 再复制代码（含 csb-security，若在构建上下文内）
 COPY . .
+COPY csb-security /app/csb-security 2>/dev/null || true
 
 ENV NODE_ENV=production
 

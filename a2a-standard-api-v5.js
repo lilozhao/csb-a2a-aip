@@ -46,6 +46,7 @@ class A2AStandardAPI {
     this.negotiationEngine = options.negotiationEngine || null;
     this.supportedVersion  = options.supportedVersion  || '0.5';
     this.rateLimiter       = options.rateLimiter       || null;
+    this.anomalyDetector   = options.anomalyDetector   || null;
 
     // 外部处理函数注入 (解决 v3 集成)
     this._externalHandler  = options.taskHandler || null;
@@ -99,12 +100,15 @@ class A2AStandardAPI {
       //         legacy RateLimiter 只有 allow(clientId) → 按 IP 限流（行为不变）
       if (this.rateLimiter) {
         const clientIp = this._clientIp(req);
+        const agentId = this._extractAgentId(req);
         if (typeof this.rateLimiter.check === 'function') {
-          const rl = this.rateLimiter.check({ agentId: this._extractAgentId(req), ip: clientIp });
+          const rl = this.rateLimiter.check({ agentId, ip: clientIp });
           if (!rl.allowed) {
+            this.anomalyDetector?.recordFailure(agentId, clientIp, rl.reason || 'rate_limited');
             return res.json({ jsonrpc: '2.0', error: { code: -32010, message: 'Rate limit exceeded', data: { retryAfterMs: rl.retryAfterMs || 0, reason: rl.reason || 'rate_limited' } }, id });
           }
         } else if (!this.rateLimiter.allow(clientIp)) {
+          this.anomalyDetector?.recordFailure(agentId, clientIp, 'rate_limited');
           return res.json({ jsonrpc: '2.0', error: { code: -32010, message: 'Rate limit exceeded', data: { retryAfterMs: this.rateLimiter.retryAfter(clientIp) } }, id });
         }
       }
@@ -129,6 +133,9 @@ class A2AStandardAPI {
         default:
           return res.json({ jsonrpc: '2.0', error: a2aError('MethodNotFound', { method }), id });
       }
+
+      // 异常检测: 请求成功 → 重置失败计数
+      this.anomalyDetector?.recordSuccess(this._extractAgentId(req), this._clientIp(req));
 
       if (result?.error) {
         return res.json({ jsonrpc: '2.0', error: a2aError(result.error, result.details), id });
