@@ -1,0 +1,33 @@
+{
+  "enabled": true,
+  "minTrustLevel": 3,
+  "requireApproval": true,
+  "commandWhitelist": [
+    "status",
+    "health",
+    "memory.list",
+    "memory.get",
+    "task.list",
+    "echo"
+  ],
+  "sensitiveCommands": [
+    "memory.delete",
+    "memory.clear",
+    "task.cancel",
+    "config.update",
+    "restart"
+  ],
+  "forbiddenCommands": [
+    "exec", "eval", "shell", "bash", "cmd",
+    "rm", "del", "rmdir", "format",
+    "curl", "wget", "scp", "ssh",
+    "cat", "type",
+    "write", "kill", "taskkill",
+    "chmod", "chown", "sudo", "runas"
+  ],
+  "sandbox": {
+    "maxOutputLength": 10000,
+    "timeoutMs": 10000,
+    "allowedPaths": []
+  }
+}

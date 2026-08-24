@@ -21,3 +21,6 @@ heritage-registry.json
 *.pid
 .DS_Store*.bak
 *.jpeg
+
+# Audit runtime logs
+data/audit/

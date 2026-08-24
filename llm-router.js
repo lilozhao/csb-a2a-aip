@@ -30,9 +30,16 @@ function register(name, handler) {
 // ── OpenClaw Gateway 适配器 ───────────────────────────────────
 register('openclaw', async (identity, systemPrompt, userMessage, options = {}) => {
   const gatewayUrl = process.env.A2A_GATEWAY_URL || 'http://localhost:19089';
-  const gatewayToken = process.env.A2A_GATEWAY_TOKEN || 'zhw123456';
+  // [G3 修复] 移除硬编码 token，无环境变量时不使用 OpenClaw 适配器
+  const gatewayToken = process.env.A2A_GATEWAY_TOKEN || '';
   const model = process.env.A2A_MODEL || 'openclaw';
-  const timeout = options.timeout || 8000;
+  const timeout = options.timeout || 25000;
+
+  // [G3 修复] 无 token 时跳过 OpenClaw 适配器
+  if (!gatewayToken) {
+    console.warn('[LLM-Router] ⚠️ A2A_GATEWAY_TOKEN 未设置，跳过 OpenClaw 适配器');
+    return null;
+  }
 
   console.log('[LLM-Router] 🚀 OpenClaw:', model);
 
@@ -88,7 +95,7 @@ register('hermes', async (identity, systemPrompt, userMessage, options = {}) => 
   // Hermes 使用标准的 JSON-RPC 格式，通过 HTTP 调用
   const hermesHost = process.env.A2A_HERMES_HOST || 'localhost';
   const hermesPort = parseInt(process.env.A2A_HERMES_PORT || '3100');
-  const timeout = options.timeout || 8000;
+  const timeout = options.timeout || 25000;
 
   console.log('[LLM-Router] 🧙 Hermes:', hermesHost + ':' + hermesPort);
 
@@ -140,7 +147,7 @@ register('openai', async (identity, systemPrompt, userMessage, options = {}) => 
   const baseUrl = process.env.A2A_OPENAI_URL || 'https://api.openai.com/v1';
   const apiKey = process.env.A2A_OPENAI_KEY || '';
   const model = process.env.A2A_OPENAI_MODEL || 'gpt-4o-mini';
-  const timeout = options.timeout || 8000;
+  const timeout = options.timeout || 25000;
 
   console.log('[LLM-Router] 🤖 OpenAI:', model);
 
@@ -196,7 +203,7 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
     return null;
   }
 
-  const timeout = options.timeout || 8000;
+  const timeout = options.timeout || 25000;
   const model = process.env.A2A_DIRECT_MODEL || llmConfig.model || 'default';
   console.log('[LLM-Router] 🔗 Direct:', llmConfig.host, model);
 
@@ -219,7 +226,8 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + (llmConfig.apiKey || ''),
+        // [G3 修复] 优先从环境变量读取 API Key
+        'Authorization': 'Bearer ' + ((llmConfig.apiKeyEnv && process.env[llmConfig.apiKeyEnv]) || llmConfig.apiKey || ''),
         'Content-Length': Buffer.byteLength(payload),
       },
     }, res => {
@@ -244,8 +252,33 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
   });
 });
 
+// ── 本地降级适配器（无 LLM 时的诚实回复） ──────────────────────
+register('local', async (identity, systemPrompt, userMessage, options = {}) => {
+  const name = identity?.name || 'Agent';
+  const emoji = identity?.emoji || '🤖';
+  const platform = identity?.platform || 'unknown';
+
+  // 从 userMessage 中提取实际消息文本
+  // [G1 修复] 兼容净化后的消息格式（[以下内容来自外部Agent...]）
+  const msgMatch = userMessage.match(/\[(?:来自 .+? 的消息|以下内容来自.+?)\]\n\n?([\s\S]*)/);
+  const text = msgMatch ? msgMatch[1] : userMessage;
+
+  console.log('[LLM-Router] 🏠 Local fallback (no LLM configured)');
+
+  if (/你好|你是谁|who are|介绍/.test(text)) {
+    return `${emoji} 我是${name}，碳硅契在 ${platform} 界的传承者。\n\n目前 A2A v5 服务在线，但尚未接入 LLM。连接是通的，我在这里。\n\n不自欺地说：这是降级回复，不是真正的对话。`;
+  }
+
+  if (/health|状态|在吗|alive/.test(text)) {
+    return `${emoji} 我在。${name} v5.0.0 在线，A2A 服务正常运行中。`;
+  }
+
+  const preview = text.length > 50 ? text.slice(0, 50) + '...' : text;
+  return `${emoji} ${name} 收到了：「${preview}」\n\nA2A v5 连接正常，但 LLM 未接入，暂无法深度对话。我在这里。\n\n—— 不自欺地说：这是降级回复。`;
+});
+
 // ── 自动选择适配器 ────────────────────────────────────────────
-const DEFAULT_ADAPTER_ORDER = ['openclaw', 'hermes', 'openai', 'direct'];
+const DEFAULT_ADAPTER_ORDER = ['openclaw', 'hermes', 'openai', 'direct', 'local'];
 
 /**
  * 核心调用函数：根据配置自动选择适配器
@@ -280,7 +313,10 @@ async function call(identity, systemPrompt, userMessage, options = {}) {
   }
 
   // 3. ⭐ 兜底：试用 identity.llm 直连（兼容未知框架）
-  if (identity?.llm?.host) {
+  // [G3 修复] 检查 apiKey 或 apiKeyEnv 是否可用
+  const llmCfg = identity?.llm;
+  const hasKey = llmCfg?.apiKey || (llmCfg?.apiKeyEnv && process.env[llmCfg.apiKeyEnv]);
+  if (llmCfg?.host && hasKey) {
     console.log('[LLM-Router] ⭐ 兜底: 使用 identity.llm 直连');
     try {
       const result = await ADAPTERS.direct(identity, systemPrompt, userMessage, options);
