@@ -601,6 +601,21 @@ class A2AStandardAPI {
     let trustLevel = 0;
     let url = '';
 
+    // [TrustBridge] ① 握手信任优先（签名验证过的信任，无法伪造）
+    try {
+      const { trustBridge } = require('./a2a-trust-bridge.js');
+      const bridge = trustBridge.resolveTrustLevel(senderName, metadata);
+      if (bridge) {
+        return {
+          name: senderName,
+          trustLevel: bridge.trustLevel,
+          url,
+          trustSource: bridge.source,
+          sessionId: bridge.sessionId || null,
+        };
+      }
+    } catch { /* trust-bridge 不可用时回退 */ }
+
     try {
       // 从 config/loader.js 获取已知 Agent 列表
       const configLoader = require('./config/loader.js');

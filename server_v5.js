@@ -288,6 +288,8 @@ const handshakeKeyPath = process.env.A2A_SECURITY_HANDSHAKE_KEY;
 if (securityAdapter.source === 'csb-security' && handshakeAIDPath && handshakeKeyPath) {
   try {
     const fs2 = require('fs');
+    // [TrustBridge] 握手信任桥接：握手完成后注册信任会话
+    const { trustBridge } = require('./a2a-trust-bridge.js');
     const calleeAID = JSON.parse(fs2.readFileSync(handshakeAIDPath, 'utf8'));
     const calleeKey = fs2.readFileSync(handshakeKeyPath, 'utf8');
     const handshakeManager = new securityAdapter.HandshakeManager({
@@ -306,7 +308,9 @@ if (securityAdapter.source === 'csb-security' && handshakeAIDPath && handshakeKe
           return JSON.parse(fs2.readFileSync(raw, 'utf8')); // 文件路径
         } catch (e) { console.warn('[A2A] ⚠️ 用户公钥解析失败:', e.message); return null; }
       })(),
-      trustManager: loadedV3.trustManager || null
+      trustManager: loadedV3.trustManager || null,
+      // [TrustBridge] 握手完成 → 注册信任会话（消息层信任校验优先使用）
+      onSession: (session) => trustBridge.registerHandshakeSession(session),
     }));
     console.log(`[A2A] ✅ 对等握手端点已启用: /a2a/handshake (${calleeAID.agent_id})`);
   } catch (e) {

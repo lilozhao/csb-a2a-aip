@@ -24,3 +24,7 @@ heritage-registry.json
 
 # Audit runtime logs
 data/audit/
+
+# Security keys (NEVER commit)
+config/security/*.pem
+config/security/*.key

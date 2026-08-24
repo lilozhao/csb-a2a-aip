@@ -95,6 +95,14 @@ function createHandshakeRouter({ handshakeManager, calleeAID, calleePrivateKey, 
 
         case 'complete': {
           const result = handshakeManager.processComplete(req.body.approval_msg, message);
+          // [TrustBridge] 握手完成 → 回调（注册信任会话）
+          if (options.onSession && typeof options.onSession === 'function') {
+            try {
+              options.onSession(result.session);
+            } catch (e) {
+              console.warn('[HANDSHAKE] onSession 回调失败:', e.message);
+            }
+          }
           return res.json({ ok: true, session: result.session });
         }
 
