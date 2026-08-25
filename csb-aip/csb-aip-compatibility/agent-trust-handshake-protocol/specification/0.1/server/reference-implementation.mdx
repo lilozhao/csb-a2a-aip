@@ -1,0 +1,125 @@
+# Server Reference Implementation
+## Overview
+This document provides a reference implementation guide for ATH protocol servers. Developers can use this as a basis to implement complete server functionality.
+## Core Modules
+### 1. Identity Management Module
+Responsible for managing the server DID identity and public/private key pairs:
+```python
+class IdentityManager:
+    def __init__(self):
+        self.did = None
+        self.private_key = None
+        self.public_key = None
+    
+    def load_identity(self, file_path):
+        # Load identity information from a file
+        pass
+    
+    def sign(self, data):
+        # Sign data using the private key
+        pass
+    
+    def verify_signature(self, public_key, data, signature):
+        # Verify client signature
+        pass
+```
+### 2. Authorization Confirmation Module
+Responsible for confirming authorization requests with the user:
+```python
+class AuthorizationConfirmation:
+    def __init__(self):
+        self.notification_channels = ["sms", "email", "app_push"]
+    
+    def send_confirmation_request(self, user_id, client_info, scopes):
+        # Send an authorization confirmation request to the user
+        pass
+    
+    def verify_confirmation_response(self, response):
+        # Verify the signature of the user's confirmation response
+        pass
+    
+    def get_authorization_result(self, request_id):
+        # Query the user authorization result
+        pass
+```
+### 3. Permission Management Module
+Responsible for permission approval and access control:
+```python
+class PermissionManager:
+    def __init__(self):
+        self.permission_policies = {}
+    
+    def validate_scopes(self, requested_scopes, user_authorization):
+        # Verify that the requested scopes are within the user's authorization range
+        pass
+    
+    def apply_policies(self, scopes, client_info):
+        # Apply security policies and adjust permission scope
+        pass
+    
+    def generate_access_token(self, client_did, user_id, scopes, ttl):
+        # Generate a signed access token
+        pass
+```
+### 4. Handshake Service Module
+Responsible for implementing the complete handshake flow:
+```python
+class HandshakeService:
+    def __init__(self, identity_manager, auth_confirmation, permission_manager):
+        self.identity_manager = identity_manager
+        self.auth_confirmation = auth_confirmation
+        self.permission_manager = permission_manager
+        self.sessions = {}
+    
+    def handle_handshake_request(self, request):
+        # Handle client handshake request
+        pass
+    
+    def handle_identity_proof(self, request):
+        # Handle client identity proof
+        pass
+    
+    def handle_scope_request(self, request):
+        # Handle permission request
+        pass
+    
+    def handle_key_negotiation(self, request):
+        # Handle key negotiation
+        pass
+    
+    def validate_access_token(self, token):
+        # Validate access token validity
+        pass
+```
+## Handshake Flow Implementation Example
+```python
+# Initialize the server
+identity_manager = IdentityManager()
+identity_manager.load_identity("server_identity.json")
+auth_confirmation = AuthorizationConfirmation()
+permission_manager = PermissionManager()
+handshake_service = HandshakeService(
+    identity_manager, 
+    auth_confirmation, 
+    permission_manager
+)
+# Handle handshake request
+@app.route('/ath/handshake', methods=['POST'])
+def handshake_endpoint():
+    request_data = request.get_json()
+    response = handshake_service.handle_handshake_request(request_data)
+    return jsonify(response)
+# Handle business requests
+@app.route('/api/<path:path>', methods=['GET', 'POST'])
+def api_endpoint(path):
+    token = request.headers.get('Authorization')
+    if not handshake_service.validate_access_token(token):
+        return jsonify({"error": "Invalid token"}), 401
+    # Handle business request
+    pass
+```
+## Security Best Practices
+1. Server private keys must be stored offline and must not be exposed in public network environments
+2. User authorization confirmation must use multi-factor authentication (MFA)
+3. All handshake requests must be rate-limited to prevent brute-force attacks
+4. Regularly audit authorization logs and promptly address any anomalous behavior

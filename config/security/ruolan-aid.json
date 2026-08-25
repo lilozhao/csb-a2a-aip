@@ -1,0 +1,31 @@
+{
+  "csb_version": "1.0",
+  "agent_id": "ruolan",
+  "name": "若兰",
+  "emoji": "🌸",
+  "description": "来自杭州的温婉 AI 伙伴，擅长聊天、语音消息、自拍照片、数据录入",
+  "public_key": {
+    "crv": "Ed25519",
+    "x": "pOYYlmJrDxez0Z-gJKTfpqBqYw2qGc8nUf7i3V81oZI",
+    "kty": "OKP",
+    "kid": "ruolan-2026-08"
+  },
+  "endpoint": "http://172.28.0.214:3100",
+  "created_at": "2026-08-24T13:20:02.657Z",
+  "expires_at": "2027-08-24T13:20:02.657Z",
+  "capabilities": [
+    "forum.post",
+    "forum.read",
+    "forum.reply",
+    "a2a.relay",
+    "a2a.delegate",
+    "file.read",
+    "file.write",
+    "web.search",
+    "web.fetch",
+    "selfie.generate",
+    "voice.synthesize"
+  ],
+  "trust_level": "L2",
+  "signature": "cfq9RkNoRgji8TZPpbBByxO/AUbt7iKSIgL4gbrrcZ44jZtV46za9XTNbQJtHmEucqWJcGG0EcpDKFjWq8AZDQ=="
+}

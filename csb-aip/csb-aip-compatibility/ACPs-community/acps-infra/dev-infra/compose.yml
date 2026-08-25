@@ -1,0 +1,110 @@
+# dev-infra/compose.yml — ACPs 共享开发基础设施
+#
+# 提供 postgres（多库）、redis、rabbitmq、nginx 等开发依赖。
+# 所有服务接入 acps-dev-net 外部网络，与各项目的 devcontainer 容器互通。
+#
+# 用法（独立启动 infra）：
+#   docker network create acps-dev-net 2>/dev/null || true
+#   docker compose -f dev-infra/compose.yml up -d
+#
+# 按需启用 profiles：
+#   COMPOSE_PROFILES=redis docker compose -f dev-infra/compose.yml up -d
+#   COMPOSE_PROFILES=rabbitmq docker compose -f dev-infra/compose.yml up -d
+#   COMPOSE_PROFILES=gateway docker compose -f dev-infra/compose.yml up -d
+
+name: dev-infra
+
+services:
+  dev-postgres:
+    build:
+      context: ./postgres
+    image: acps-dev-postgres:pg17-pgvector
+    pull_policy: never
+    container_name: dev-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: devpass
+      POSTGRES_DB: postgres
+    volumes:
+      - dev-pgdata:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks:
+      - dev-net
+
+  dev-redis:
+    image: redis:7-alpine
+    container_name: dev-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - dev-redisdata:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    profiles: [redis]
+    networks:
+      - dev-net
+
+  dev-rabbitmq:
+    image: rabbitmq:4.1-management-alpine
+    container_name: dev-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: devpass
+    volumes:
+      - dev-mqdata:/var/lib/rabbitmq
+      - ./certs/issued/rabbitmq:/certs:ro
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+    ports:
+      - "5671:5671"
+      - "15672:15672"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "rabbitmq-diagnostics check_running && rabbitmq-diagnostics check_port_listener 5671 && rabbitmq-diagnostics check_port_listener 15672",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    profiles: [rabbitmq]
+    networks:
+      - dev-net
+
+  dev-nginx:
+    image: nginx:1.27-alpine
+    container_name: dev-nginx
+    restart: unless-stopped
+    ports:
+      - "9000:80"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+    profiles: [gateway]
+    networks:
+      - dev-net
+
+networks:
+  dev-net:
+    name: acps-dev-net
+    external: true
+
+volumes:
+  dev-pgdata:
+  dev-redisdata:
+  dev-mqdata:

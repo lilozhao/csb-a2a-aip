@@ -1,0 +1,42 @@
+# config/default.toml — 默认配置（所有环境共享的基础值）
+
+[server]
+host = "0.0.0.0"
+port = 9003
+reload = false
+uvicorn_log_level = "info"
+
+[app]
+name = "Agent CA API"
+version = "2.1.0"
+docs_enabled = false
+
+[logging]
+level = "INFO"
+format = "json"
+
+[ca]
+max_certificate_validity_days = 1825                                         # 默认最大有效期 5 年（天）
+acme_directory_url = "http://localhost:9003/acps-atr-v2/acme"
+ocsp_responder_url = "http://localhost:9003/acps-atr-v2/ocsp"
+crl_distribution_point_url = "http://localhost:9003/acps-atr-v2/crl/current"
+cert_path = "certs/ca.crt"                                                   # Intermediate CA 证书
+key_path = "certs/ca.key"                                                    # Intermediate CA 私钥
+chain_path = "certs/ca-chain.pem"                                            # 证书链（Intermediate CA → Root CA）
+trust_bundle_path = "certs/trust-bundle.pem"                                 # 信任包（仅含 Root CA）
+
+[registry_server]
+mock = false
+url = "http://localhost:9001/acps-atr-v2"
+internal_url = ""
+timeout = 10
+max_retries = 3
+retry_delays = "1,2,4"                    # 重试间隔（秒），逗号分隔
+
+[atr]
+mgmt_allow_ip_list = "127.0.0.1,::1"
+
+[public_api]
+rate_limit_requests = 60
+rate_limit_window_seconds = 60
+retry_after_seconds = 60

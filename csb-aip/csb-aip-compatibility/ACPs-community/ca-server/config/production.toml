@@ -1,0 +1,18 @@
+# config/production.toml — 生产环境覆盖配置
+
+[server]
+reload = false
+uvicorn_log_level = "warning"
+
+[logging]
+level = "INFO"
+format = "json"
+
+[app]
+docs_enabled = false
+
+[ca]
+# 生产环境必须显式替换为可被 ACME 客户端和证书使用者访问的公开地址。
+acme_directory_url = "https://ca.example.com/acps-atr-v2/acme"
+ocsp_responder_url = "https://ca.example.com/acps-atr-v2/ocsp"
+crl_distribution_point_url = "https://ca.example.com/acps-atr-v2/crl/current"

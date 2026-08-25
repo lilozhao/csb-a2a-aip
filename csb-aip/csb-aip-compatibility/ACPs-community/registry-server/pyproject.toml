@@ -1,0 +1,214 @@
+[project]
+name = "registry-server"
+version = "2.1.0"
+description = "Agent Registry Server"
+authors = [{ name = "Team", email = "team@ioa.pub" }]
+readme = "README.md"
+license = "MulanPSL-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.14,<4.0"
+dependencies = [
+    "fastapi>=0.136.1,<1.0.0",
+    "uvicorn[standard]>=0.46.0,<1.0.0",
+    "sqlalchemy>=2.0.49,<3.0.0",
+    "sqlmodel>=0.0.38,<1.0.0",
+    "alembic>=1.18.4,<2.0.0",
+    "asyncpg>=0.31.0,<1.0.0",
+    "psycopg[binary]>=3.3.3,<4.0.0",
+    "pydantic-settings>=2.14.0,<3.0.0",
+    "httpx>=0.28.1,<1.0.0",
+    "tenacity>=9.1.4,<10.0.0",
+    "typer>=0.25.1,<1.0.0",
+    "PyJWT[crypto]>=2.12.1,<3.0.0",
+    "argon2-cffi>=25.1.0,<26.0.0",
+    "passlib[bcrypt]>=1.7.4,<2.0.0",
+    "bcrypt>=4.0.1,<4.1.0",
+    "python-multipart>=0.0.27,<1.0.0",
+    "qdrant-client>=1.17.1,<2.0.0",
+    "openai>=2.33.0,<3.0.0",
+    "email-validator>=2.3.0,<3.0.0",
+    "greenlet>=3.5.0,<4.0.0",
+    "jsonschema>=4.26.0,<5.0.0",
+    "xattr>=1.3.0,<2.0.0",
+    "gmssl>=3.2.2,<4.0.0",
+    "nh3>=0.3.5,<1.0.0",
+    "structlog>=25.5.0",
+    "prometheus-fastapi-instrumentator>=7.1.0",
+    "slowapi>=0.1.9,<1.0.0",
+    "opentelemetry-sdk>=1.41.1,<2.0.0",
+    "opentelemetry-exporter-otlp>=1.41.1,<2.0.0",
+    "opentelemetry-instrumentation-fastapi>=0.62b1,<1.0.0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.62b1,<1.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3,<10.0.0",
+    "pytest-cov>=7.1.0",
+    "pytest-xdist>=3.8.0",
+    "pytest-asyncio>=1.3.0",
+    "python-dotenv>=1.2.2,<2.0.0",
+    "factory-boy>=3.3.3",
+    "faker>=40.15.0",
+    "ruff>=0.15.12",
+    "bandit>=1.9.4",
+    "pip-audit>=2.10.0,<3.0.0",
+    "locust>=2.43.4,<3.0.0",
+    "mypy>=1.20.2",
+    "pre-commit>=4.6.0",
+    "commitizen>=4.13.10",
+]
+
+[build-system]
+requires = ["hatchling>=1.27.0,<2.0.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# wheel 只打包应用代码目录，避免把测试与运维文件带入发布产物。
+packages = ["app"]
+
+[tool.pytest.ini_options]
+# 测试只从 tests/ 收集，避免把脚本和临时文件误识别为测试用例。
+testpaths = ["tests"]
+# 自动识别协程测试函数，适配项目中的 async 单测与集成测试。
+asyncio_mode = "auto"
+# 严格校验自定义 marker，并在结果摘要中保留跳过与失败原因。
+addopts = "--strict-markers -ra"
+# 统一测试分层标记，便于按层执行与区分质量门禁。
+markers = ["unit: 单元测试", "integration: 集成测试", "e2e: 端到端测试"]
+
+[tool.coverage.run]
+# 只统计应用代码覆盖率，避免测试与虚拟环境文件稀释结果。
+source = ["app"]
+omit = ["*/tests/*", "*/venv/*", "*/__pycache__/*"]
+
+[tool.coverage.report]
+# 排除约定俗成的不计覆盖场景，减少无效噪声。
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+]
+
+[tool.ruff]
+# 让 Ruff 按项目实际 Python 语法版本解析与升级代码。
+target-version = "py314"
+# 与仓库 Python 代码风格保持一致，减少无意义换行抖动。
+line-length = 120
+
+[tool.ruff.lint]
+# 覆盖风格、正确性、导入、安全、路径 API 与类型导入等基础静态检查。
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "S",   # flake8-bandit
+    "A",   # flake8-builtins
+    "C4",  # flake8-comprehensions
+    "DTZ", # flake8-datetimez
+    "T20", # flake8-print
+    "RET", # flake8-return
+    "SIM", # flake8-simplify
+    "TCH", # flake8-type-checking
+    "PTH", # flake8-use-pathlib
+    "RUF", # ruff-specific rules
+]
+# 对项目内合理场景关闭误报或与框架约定冲突的规则。
+ignore = [
+    "S101",   # assert 用于测试
+    "RUF001", # 允许字符串中使用中文字符
+    "RUF002", # 允许 docstring 中使用中文标点
+    "RUF003", # 允许注释中使用中文标点
+    "B008",   # FastAPI Depends() 模式
+    "TC002",  # FastAPI/Pydantic/SQLModel 运行时需要解析注解
+    "TC003",  # 同上，标准库 import 同理
+]
+
+[tool.ruff.lint.per-file-ignores]
+# 脚本允许命令行输出与部分路径字符串写法，避免运维脚本被应用规则误伤。
+"scripts/*" = ["T201", "PTH100", "PTH120"]
+# 测试中的示例凭据属于夹具与断言输入，不按硬编码密钥误报。
+"tests/*" = ["S105", "S106"]
+# 异常模块中的错误码字符串属于协议常量，不按硬编码密码误报。
+"app/**/exception*.py" = ["S105"]
+# 该文件中的动态 SQL 基于内部受控表名拼装，不作为 SQL 注入风险处理。
+"app/sync/service.py" = ["S608"]
+# Alembic 环境脚本需要在导入前调整路径，允许 E402 例外。
+"alembic/env.py" = ["E402"]
+# 迁移脚本允许较长 SQL、尾随空白清理例外与 pathlib 例外，避免破坏已生成迁移内容。
+"alembic/versions/*.py" = ["E402", "PTH120", "E501", "W291"]
+
+[tool.ruff.format]
+# 统一字符串引号风格，减少格式化差异。
+quote-style = "double"
+
+[tool.mypy]
+# 与运行时 Python 版本对齐，避免类型系统使用不一致的语法假设。
+python_version = "3.14"
+# 让 Pydantic 模型与配置类获得更准确的静态类型推断。
+strict = true
+# 使用 Pydantic 插件补足模型字段与设置类的类型行为。
+plugins = ["pydantic.mypy"]
+# 跳过 Alembic 迁移脚本，避免把一次性迁移逻辑纳入应用类型门禁。
+exclude = ["alembic/"]
+
+[[tool.mypy.overrides]]
+# 这些第三方依赖缺少稳定类型桩；忽略导入缺失后，mypy 可以继续聚焦仓库自身边界。
+module = [
+    "jwt.*",
+    "passlib.*",
+    "gmssl.*",
+    "xattr.*",
+    "typer.*",
+    "qdrant_client.*",
+    "jsonschema.*",
+    "slowapi.*",
+    "opentelemetry.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# 测试代码保留单独类型检查，但允许比应用代码更宽松的动态测试写法。
+module = ["tests", "tests.*"]
+strict = false
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+disallow_untyped_decorators = false
+check_untyped_defs = true
+no_implicit_reexport = false
+warn_return_any = false
+disallow_any_generics = false
+
+[[tool.mypy.overrides]]
+# 单元测试需要更明确的辅助函数签名，减少 fixture 与 mock 带来的隐式 Any 扩散。
+module = ["tests.unit", "tests.unit.*"]
+warn_return_any = true
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+# 集成测试开启返回值 Any 告警，约束响应解析与 JSON helper 的类型边界。
+module = ["tests.integration", "tests.integration.*"]
+warn_return_any = true
+
+[[tool.mypy.overrides]]
+# 端到端测试开启返回值 Any 告警，避免黑盒断言链路悄然退化为未类型化数据流。
+module = ["tests.e2e", "tests.e2e.*"]
+warn_return_any = true
+
+[tool.bandit]
+# 测试与迁移脚本不纳入安全门禁，避免样例代码和一次性脚本稀释应用层问题。
+exclude_dirs = ["tests", "alembic"]
+
+[tool.commitizen]
+# 使用 Conventional Commits 生成版本标签与变更日志。
+name = "cz_conventional_commits"
+# 与项目发布版本保持一致，便于本地校验和发布流程共享同一版本号。
+version = "2.1.0"
+# 标签统一采用 v<version> 形式，便于发布脚本和历史检索。
+tag_format = "v$version"

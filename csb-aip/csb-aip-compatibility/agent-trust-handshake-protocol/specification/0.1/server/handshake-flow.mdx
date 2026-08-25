@@ -1,0 +1,112 @@
+# Server Handshake Flow Specification
+## Overview
+This document defines the handshake flow implementation specification for ATH protocol servers (applications).
+## Server Responsibilities
+1. Manage its own DID identity and public/private key pairs
+2. Verify the legitimacy of client identities
+3. Confirm authorization requests with the user to ensure user authorization is genuine and valid
+4. Approve permission requests following the principle of least privilege
+5. Issue access tokens and maintain session state
+6. The `GET /ath/agents/{clientId}` endpoint MUST require authentication (e.g., `agent_attestation` or `client_secret`). Agents MUST only be able to query their own registration status. Unauthenticated access to agent registration details enables enumeration attacks
+## Complete Handshake Flow (Server Perspective)
+### Step 1: Receive and Process Handshake Request
+After receiving a client handshake request, the server:
+1. Validates the correctness of the client request format
+2. Checks supported protocol versions and encryption algorithms
+3. Saves the client DID, public key, and nonce A
+### Step 2: Send Handshake Response
+The server generates its own nonce B, signs nonce A using its private key, and sends the response message:
+```json
+{
+  "type": "handshake_response",
+  "server_did": "did:ath:server_yyyyyy",
+  "server_pubkey": "-----BEGIN PUBLIC KEY-----...",
+  "version": "0.1",
+  "capabilities": ["ES256", "TLS1.3"],
+  "nonce": "random_string_b",
+  "signature": "signature_of_nonce_a",
+  "timestamp": 1234567891
+}
+```
+### Step 3: Verify Client Identity Proof
+After receiving the client identity proof, the server:
+1. Verifies the signature of nonce B using the client's public key
+2. Validates client identity credentials (if provided)
+3. Records the identity verification result
+### Step 4: Send Identity Verification Result
+The server returns the identity verification result to the client:
+```json
+{
+  "type": "identity_result",
+  "success": true,
+  "metadata": {
+    "scopes_supported": ["user:read", "data:write"],
+    "token_max_ttl": 3600,
+    "require_user_confirmation": true
+  },
+  "error": null,
+  "timestamp": 1234567893
+}
+```
+### Step 5: Receive Permission Request
+After receiving a client permission request, the server:
+1. Verifies the signature and validity of the user authorization credential
+2. Checks whether the requested permission scope is within the supported range
+3. Extracts the user ID and authorization information
+### Step 6: Confirm Authorization with User
+The server must send an authorization confirmation request to the user:
+```json
+{
+  "type": "authorization_confirmation_request",
+  "request_id": "req_xxxxxx",
+  "client_did": "did:ath:client_xxxxxx",
+  "client_info": {
+    "name": "AI Assistant",
+    "developer": "Example Corp"
+  },
+  "requested_scopes": ["user:read", "data:write"],
+  "expires_at": 1234567890,
+  "timestamp": 1234567895
+}
+```
+### Step 7: Receive User Authorization Confirmation Result
+After receiving the user confirmation result, the server:
+1. Verifies the validity of the user's signature
+2. Records the final permission scope authorized by the user
+3. If the user denies authorization, terminates the handshake flow
+### Step 8: Send Permission Approval Result
+The server combines the user authorization result with its own security policies to make an approval decision:
+```json
+{
+  "type": "scope_result",
+  "scopes_granted": ["user:read"],
+  "scopes_denied": [
+    {
+      "scope": "data:write",
+      "reason": "User has not authorized this operation"
+    }
+  ],
+  "ttl_granted": 1800,
+  "restrictions": {
+    "ip_whitelist": ["192.168.1.0/24"],
+    "rate_limit": "100/second"
+  },
+  "timestamp": 1234567897
+}
+```
+### Step 9: Complete Handshake, Issue Token
+The server and client complete key negotiation, and the server issues an access token:
+1. Generates key exchange parameters and sends them to the client
+2. Generates a shared session key
+3. Signs the access token containing the authorization scope, validity period, and other information
+4. Records the session state; subsequent requests are verified using the token
+## Error Handling
+| Error Code | Description | Handling |
+|--------|------|----------|
+| 401 | Client identity verification failed | Reject the handshake and return an error message |
+| 403 | User denied authorization | Reject the permission request and return the denial reason |
+| 429 | Too many requests | Rate-limit the client's request frequency |
+## Security Requirements
+- User authorization confirmation must be sent through an independent channel and must not be relayed through the client
+- Access tokens must be signed with the server's private key to prevent tampering
+- Token validity period must not exceed 1 hour; tokens automatically expire after timeout

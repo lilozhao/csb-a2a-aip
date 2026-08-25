@@ -1,0 +1,166 @@
+# Basic Handshake Flow Specification
+## Overview
+This document defines the basic handshake flow of the ATH protocol, which is the core specification that all ATH implementations must follow.
+## Core Roles
+The ATH protocol is a three-party protocol involving three independent participating roles:
+| Role | English Name | Responsibility |
+|------|-------------|----------------|
+| User | User | Owner of resources, holds ultimate authorization decision power |
+| Client | Client | The agent that acts on behalf of the user to execute tasks and access service resources |
+| Server | Server | Provider of resources, offering API services and data resources |
+## Core Principles
+### Trusted Handshake Principle
+For a client to successfully access server resources, two conditions must be met simultaneously:
+1. Obtain explicit authorization from the user (User Authorization)
+2. Obtain explicit authorization from the server (Server Authorization)
+Both are indispensable.
+## Handshake Flow
+### Preliminary Step: User Pre-Authorization
+Before using the client, the user pre-grants delegated permissions to the client:
+**User Authorization Credential Structure**:
+```json
+{
+  "user_did": "did:ath:user_xxxxxx",
+  "client_did": "did:ath:client_xxxxxx",
+  "scopes": ["user:read", "data:write"],
+  "expires_at": 1234567890,
+  "signature": "signature_signed_by_user_private_key"
+}
+```
+### Step 1: Client Identity Declaration
+**Message Structure**:
+```json
+{
+  "type": "handshake_request",
+  "client_did": "did:ath:client_xxxxxx",
+  "client_pubkey": "-----BEGIN PUBLIC KEY-----...",
+  "versions": ["0.1", "0.2"],
+  "capabilities": ["ES256", "EdDSA", "TLS1.3"],
+  "nonce": "random_string_a",
+  "timestamp": 1234567890
+}
+```
+### Step 2: Server Identity Response
+**Message Structure**:
+```json
+{
+  "type": "handshake_response",
+  "server_did": "did:ath:server_yyyyyy",
+  "server_pubkey": "-----BEGIN PUBLIC KEY-----...",
+  "version": "0.1",
+  "capabilities": ["ES256", "TLS1.3"],
+  "nonce": "random_string_b",
+  "signature": "signature_of_nonce_a",
+  "timestamp": 1234567891
+}
+```
+### Step 3: Client Identity Proof
+**Message Structure**:
+```json
+{
+  "type": "identity_proof",
+  "signature": "signature_of_nonce_b",
+  "credentials": [/* Optional identity credentials */],
+  "timestamp": 1234567892
+}
+```
+### Step 4: Identity Verification Result
+**Message Structure**:
+```json
+{
+  "type": "identity_result",
+  "success": true,
+  "metadata": {
+    "scopes_supported": ["user:read", "data:write"],
+    "token_max_ttl": 3600,
+    "require_user_confirmation": false
+  },
+  "error": null,
+  "timestamp": 1234567893
+}
+```
+### Step 5: Permission Request
+**Message Structure**:
+```json
+{
+  "type": "scope_request",
+  "scopes": ["user:read", "data:write"],
+  "ttl": 1800,
+  "user_authorization": {
+    "credential": "jwt_token_signed_by_user",
+    "signature": "signature_by_client"
+  },
+  "context": "For generating user monthly reports",
+  "timestamp": 1234567894
+}
+```
+### Step 6: Server Requests Authorization Confirmation from User
+
+**Message Structure (Server → User)**:
+```json
+{
+  "type": "authorization_confirmation_request",
+  "request_id": "req_xxxxxx",
+  "client_did": "did:ath:client_xxxxxx",
+  "client_info": {
+    "name": "AI Assistant",
+    "developer": "Example Company"
+  },
+  "requested_scopes": ["user:read", "data:write"],
+  "expires_at": 1234567890,
+  "timestamp": 1234567895
+}
+```
+### Step 7: User Returns Authorization Confirmation Result
+**Message Structure (User → Server)**:
+```json
+{
+  "type": "authorization_confirmation_response",
+  "request_id": "req_xxxxxx",
+  "approved": true,
+  "approved_scopes": ["user:read"],
+  "expires_at": 1234567890,
+  "signature": "signature_signed_by_user",
+  "timestamp": 1234567896
+}
+```
+### Step 8: Permission Approval Result
+**Message Structure**:
+```json
+{
+  "type": "scope_result",
+  "scopes_granted": ["user:read"],
+  "scopes_denied": [
+    {
+      "scope": "data:write",
+      "reason": "User has not authorized this operation"
+    }
+  ],
+  "ttl_granted": 1800,
+  "restrictions": {
+    "ip_whitelist": ["192.168.1.0/24"],
+    "rate_limit": "100/second"
+  },
+  "timestamp": 1234567897
+}
+```
+### Step 9: Handshake Complete
+**Message Structure**:
+```json
+{
+  "type": "handshake_complete",
+  "key_exchange_alg": "ECDH-P256",
+  "key_exchange_params": "ecdh_public_key",
+  "cipher_suite": "AES-256-GCM",
+  "access_token": "jwt_token_signed_by_server",
+  "timestamp": 1234567898
+}
+```
+## Error Handling
+For detailed error code definitions, please refer to the Error Specification document.
+## Security Requirements
+- All messages must be transmitted using TLS 1.3 encryption
+- All signatures must use algorithms with at least 256-bit security strength
+- Nonces must be generated using cryptographically secure random generators
+- Timestamp drift must not exceed 5 minutes to prevent replay attacks
+- User authorization credentials must be signed by the user's private key and cannot be forged
