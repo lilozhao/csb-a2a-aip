@@ -21,8 +21,16 @@ heritage-registry.json
 *.pid
 .DS_Store*.bak
 *.jpeg
+
 # 运行时数据 - 不入库
+logs/
 data/a2a-tasks.json
 monitor-state.json
 aip-warmth.json
-logs/
+
+# Audit runtime logs
+data/audit/
+
+# Security keys (NEVER commit)
+config/security/*.pem
+config/security/*.key

@@ -1,0 +1,192 @@
+[project]
+# 定义包的基础元数据，供安装、分发和工具链识别项目身份。
+name = "discovery-server"
+version = "2.1.0"
+description = "Agent Discovery Server"
+authors = [{ name = "Team", email = "team@ioa.pub" }]
+readme = "README.md"
+license = "MulanPSL-2.0"
+# 将许可证文件带入分发产物，保证下游安装时可见合规信息。
+license-files = ["LICENSE"]
+# 将运行时语法和依赖兼容范围固定在项目支持的 Python 版本内。
+requires-python = ">=3.14,<3.15"
+# 运行时依赖使用“最低已验证版本 + 兼容上限”表达支持窗口；精确安装结果由 uv.lock 固定。
+dependencies = [
+    # 第一类：服务框架、数据库与通用基础设施依赖。上限通常收敛到下一个 major，
+    # 对兼容面更敏感的库按下一个已验证边界收口。
+    "acps-sdk",
+    "aiohttp>=3.13.5,<4.0.0",
+    "alembic>=1.18.4,<2.0.0",
+    "alembic-postgresql-enum>=1.10.0,<2.0.0",
+    "asyncpg>=0.31.0,<1.0.0",
+    "beautifulsoup4>=4.14.3,<5.0.0",
+    "cbor>=1.0.0,<2.0.0",
+    "click>=8.3.3,<9.0.0",
+    "cryptography>=47.0.0,<48.0.0",
+    "defusedxml>=0.7.1,<1.0.0",
+    "fastapi>=0.136.1,<1.0.0",
+    "greenlet>=3.5.0,<4.0.0",
+    "httpx>=0.28.1,<0.29.0",
+    "ijson>=3.5.0,<4.0.0",
+    "inscriptis>=2.6.0,<3.0.0",
+    "lxml>=6.1.0,<7.0.0",
+    "openai>=2.33.0,<3.0.0",
+    "pgvector>=0.4.2,<1.0.0",
+    "psutil>=7.2.2,<8.0.0",
+    "psycopg2-binary>=2.9.12,<3.0.0",
+    "pydantic>=2.12.0,<3.0.0",
+    "pydantic-settings>=2.14.0,<3.0.0",
+    "python-dotenv>=1.2.2,<2.0.0",
+    "python-multipart>=0.0.27,<1.0.0",
+    "pyyaml>=6.0.3,<7.0.0",
+    "requests>=2.33.1,<3.0.0",
+    "sqlalchemy>=2.0.49,<2.1.0",
+    "sqlmodel>=0.0.38,<0.1.0",
+    "starlette>=1.0.0,<2.0.0",
+    "structlog>=25.5.0,<26.0.0",
+    "uvicorn>=0.46.0,<1.0.0",
+
+    # 第二类：科学计算、检索与数据处理依赖。上限收在下一个 feature 或 minor 边界，
+    # 避免数值栈、索引格式和数据解析行为在宽区间内漂移。
+    "dashscope>=1.25.17,<2.0.0",
+    "ir-datasets>=0.5.11,<0.6.0",
+    "numpy>=2.4.4,<3.0.0",
+    "pandas>=3.0.2,<4.0.0",
+    "scikit-learn>=1.8.0,<1.9.0",
+    "scipy>=1.17.1,<1.18.0",
+    "sentencepiece>=0.2.1,<0.3.0",
+
+    # 第三类：模型推理与 embedding 强耦合栈。上限固定到当前验证 minor，
+    # 保证 torch、transformers、peft 与 sentence-transformers 组合不被跨 minor 漂移打破。
+    "accelerate>=1.13.0,<1.14.0",
+    "datasets>=4.8.5,<4.9.0",
+    "flagembedding>=1.4.0,<1.5.0",
+    "peft>=0.19.1,<0.20.0",
+    "sentence-transformers>=5.4.1,<5.5.0",
+    "torch>=2.11.0,<2.12.0",
+    "transformers>=5.7.0,<5.8.0",
+]
+
+[dependency-groups]
+# 开发依赖同样使用区间约束表达支持窗口，精确解析结果继续由 uv.lock 固定。
+dev = [
+    "bandit>=1.8.0,<2.0.0",
+    "commitizen>=4.4.0,<5.0.0",
+    "mypy>=1.15.0,<2.0.0",
+    "pip-audit>=2.9.0,<3.0.0",
+    "pre-commit>=4.2.0,<5.0.0",
+    "pytest>=9.0.3,<10.0",
+    "pytest-asyncio>=1.1.0,<2.0.0",
+    "pytest-cov>=7.0.0,<8.0.0",
+    "pytest-xdist>=3.8.0,<4.0.0",
+    "ruff>=0.15.12,<0.16.0",
+    "types-defusedxml>=0.7.0,<1.0.0",
+    "types-psycopg2>=2.9.0,<3.0.0",
+]
+
+[build-system]
+# 构建阶段只依赖 hatchling，统一 wheel 与源码分发的打包行为。
+requires = ["hatchling>=1.27.0,<2.0.0"]
+# 指定 PEP 517 构建后端，确保构建工具按 hatchling 约定执行。
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# wheel 只打包应用代码目录，避免把测试与运维文件带入分发产物。
+packages = ["app"]
+
+[tool.uv.sources]
+# 本地开发直接引用同级 acps-sdk 工作副本，保证联调时使用最新源码。
+acps-sdk = { path = "../acps-sdk", editable = true }
+
+[tool.pytest.ini_options]
+# 测试只从 tests/ 收集，避免把脚本和临时文件误识别为测试。
+testpaths = ["tests"]
+# 自动识别协程测试函数，适配项目中的 async 单测与集成测试。
+asyncio_mode = "auto"
+# 严格校验自定义 marker，并在结果摘要中保留跳过与失败原因。
+addopts = "--strict-markers -ra"
+# 统一测试分层标记，便于按层执行和区分质量门禁。
+markers = ["unit: 单元测试", "integration: 集成测试", "e2e: 端到端测试"]
+
+[tool.ruff]
+# 让 Ruff 按项目实际 Python 语法版本解析与升级代码。
+target-version = "py314"
+# 与仓库 Python 代码风格保持一致，减少无意义换行抖动。
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle 错误：代码风格基线
+    "W",   # pycodestyle 警告：代码风格基线
+    "F",   # pyflakes：检测未使用的变量、导入和错误定义
+    "I",   # isort：强制统一导入排序
+    "N",   # pep8-naming：强制 PEP 8 命名约定
+    "UP",  # pyupgrade：自动升级至目标 Python 版本的现代语法
+    "B",   # flake8-bugbear：检测常见代码缺陷与反模式
+    "S",   # flake8-bandit：静态安全扫描（与独立 bandit 工具协同覆盖）
+    "A",   # flake8-builtins：禁止遮盖内置名称
+    "C4",  # flake8-comprehensions：推导式写法优化建议
+    "DTZ", # flake8-datetimez：禁止 naive datetime，强制 timezone-aware
+    "T20", # flake8-print：禁止 print/pprint 语句遗留进入生产代码
+    "RET", # flake8-return：保持 return 语句风格一致
+    "SIM", # flake8-simplify：检测可简化的冗余写法
+    "TC",  # flake8-type-checking：将纯类型导入移入 TYPE_CHECKING 块以减少运行时开销
+    "PTH", # flake8-use-pathlib：推荐 pathlib 替代 os.path
+    "RUF", # Ruff 自有规则：补充上述规则集未覆盖的杂项修复
+]
+# 允许中文文档和日志中的常用全角标点，同时保留其他 confusable 字符检查。
+allowed-confusables = ["，", "（", "）", "：", "；", "！"]
+
+[tool.ruff.lint.per-file-ignores]
+# 测试中的 assert 是断言主体，不按安全规则 S101 误报。
+"tests/**/test_*.py" = ["S101"]
+# 黑盒 e2e 夹具会受管拉起本地临时实例，这里允许固定参数的 subprocess 启动点。
+"tests/e2e/conftest.py" = ["S603"]
+
+[tool.ruff.format]
+# 统一字符串引号风格，减少格式化差异。
+quote-style = "double"
+
+[tool.mypy]
+# 与运行时 Python 版本对齐，避免类型系统使用不一致的语法假设。
+python_version = "3.14"
+# 让 Pydantic 模型与配置类获得更准确的静态类型推断。
+plugins = ["pydantic.mypy"]
+# 默认对仓库代码启用严格类型检查。
+strict = true
+# 明确以仓库根目录解析包路径，避免 namespace-style 目录被识别为重复模块。
+explicit_package_bases = true
+# 跳过 Alembic 迁移脚本，避免把一次性迁移逻辑纳入应用类型门禁。
+exclude = ["alembic/"]
+# 及时清理失效 ignore，防止历史豁免掩盖真实问题。
+warn_unused_ignores = true
+# 识别无效 cast，避免类型提示与真实类型长期漂移。
+warn_redundant_casts = true
+# 标记不可达分支，帮助发现死代码和错误的控制流假设。
+warn_unreachable = true
+# 要求模块显式导出公共符号，避免隐式 reexport 扩大模块边界。
+no_implicit_reexport = true
+
+[[tool.mypy.overrides]]
+# 以下第三方库无官方类型存根，对其关闭缺失导入报错，避免外部黑盒阻断仓库自身的类型门禁。
+module = [
+    "FlagEmbedding",         # 语义嵌入模型加载入口
+    "pgvector.sqlalchemy",   # SQLAlchemy 向量列类型与相似度查询扩展
+    "sklearn.cluster",       # 聚类分析脚本使用的叶子模块
+    "sklearn.preprocessing", # 特征预处理脚本使用的叶子模块
+]
+ignore_missing_imports = true
+
+[tool.bandit]
+# 测试与迁移脚本不纳入安全门禁，避免样例代码和一次性脚本稀释应用层问题。
+exclude_dirs = ["tests", "alembic"]
+# B608 禁止字符串拼接 SQL；项目统一使用 ORM 参数化查询，此规则对 ORM 内部 SQL 构造产生误报。
+skips = ["B608"]
+
+[tool.commitizen]
+# 使用 Conventional Commits 作为版本与变更日志的来源。
+name = "cz_conventional_commits"
+# 与项目发布版本保持一致，便于本地校验和发布流程共享同一版本号。
+version = "2.1.0"
+# 标签统一采用 v<version> 形式，便于发布脚本和历史检索。
+tag_format = "v$version"

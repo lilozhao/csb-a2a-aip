@@ -7,6 +7,7 @@
 
 const http = require('http');
 const https = require('https');
+const path = require('path');
 const { URL } = require('url');
 const { TaskStore, TASK_STATE, ROLE, createMessage, createArtifact, createPart, TERMINAL_STATES } = require('./a2a-task-store.js');
 
@@ -55,6 +56,16 @@ class A2AStandardAPI {
     // SSE 订阅者: Map<taskId, Set<{res, lastPing}>
     this.streamSubscribers = new Map();
     this._sseHeartbeatInterval = 15000; // 15s 心跳
+
+    // [G1/G2 修复] 加载安全守卫配置
+    try {
+      const messageGuard = require('./a2a-message-guard.js');
+      messageGuard.loadConfig(path.join(__dirname, 'config', 'message-guard.json'));
+    } catch { /* 配置缺失使用默认值 */ }
+    try {
+      const cmdGuard = require('./a2a-cmd-guard.js');
+      cmdGuard.loadConfig(path.join(__dirname, 'config', 'cmd-guard.json'));
+    } catch { /* 配置缺失使用默认值 */ }
   }
 
   /**
@@ -94,11 +105,19 @@ class A2AStandardAPI {
         return res.json({ jsonrpc: '2.0', error: a2aError('VersionNotSupportedError', { requested: verHeader, supported: this.supportedVersion }), id });
       }
 
-      // 流量控制 — 修复 IP 提取
+      // 流量控制 — 修复 IP 提取（A2A-019）
+      // 双模式: csb-security RateLimiter 有 check({agentId, ip}) → 按 Agent+IP+全局限流
+      //         legacy RateLimiter 只有 allow(clientId) → 按 IP 限流（行为不变）
       if (this.rateLimiter) {
         const clientIp = this._clientIp(req);
-        if (!this.rateLimiter.allow(clientIp)) {
-          return res.json({ jsonrpc: '2.0', error: { code: -32010, message: 'Rate limit exceeded', data: { retryAfterMs: this.rateLimiter.retryAfter(clientIp) } }, id });
+        const agentId = this._extractAgentId(req);
+        if (typeof this.rateLimiter.check === 'function') {
+          const rl = this.rateLimiter.check({ agentId, ip: clientIp });
+          if (!rl.allowed) {
+            return res.json({ jsonrpc: '2.0', error: { code: -32010, message: 'Rate limit exceeded', data: { retryAfterMs: rl.retryAfterMs || 0, reason: rl.reason || 'rate_limited' } }, id });
+          }
+        } else if (typeof this.rateLimiter.allow === 'function' && !this.rateLimiter.allow(clientIp)) {
+          return res.json({ jsonrpc: '2.0', error: { code: -32010, message: 'Rate limit exceeded', data: { retryAfterMs: (this.rateLimiter.retryAfter ? this.rateLimiter.retryAfter(clientIp) : 0) } }, id });
         }
       }
 
@@ -333,9 +352,68 @@ class A2AStandardAPI {
     let text = msg.parts.filter(p => p.text).map(p => p.text).join(' ');
     if (!text || text.trim().length < 2) text = '(empty)';
 
-    // 🚀 CMD: 前缀 → 远程命令执行
+    // 🚀 CMD: 前缀 → 远程命令执行（[G2 修复] 增加权限校验 + 白名单 + 审计）
     if (text.startsWith('CMD:') && this._commandHandler) {
-      return await this._commandHandler(text.substring(4).trim(), metadata);
+      const cmdText = text.substring(4).trim();
+
+      // [G2 修复] 权限校验 + 命令白名单 + 审批机制
+      const cmdGuard = require('./a2a-cmd-guard.js');
+      const senderName = metadata?.sender?.name ||
+        (typeof metadata?.sender === 'string' ? metadata.sender : null) ||
+        'unknown';
+      const senderInfo = this._resolveSenderInfo(senderName, metadata);
+
+      const authResult = cmdGuard.checkCommand(senderInfo, cmdText);
+
+      if (!authResult.allowed) {
+        // 命令被拒绝或待审批
+        const denialMsg = authResult.requiresApproval
+          ? authResult.reason
+          : `⛔ 命令被拒绝: ${authResult.reason}`;
+
+        console.warn(`[A2A] ⛔ CMD 拒绝 from ${senderName}: ${authResult.reason}`);
+
+        return {
+          artifacts: [createArtifact([createPart(denialMsg)], { name: 'cmd_response' })],
+          message: createMessage(ROLE.AGENT, [createPart(denialMsg)]),
+        };
+      }
+
+      // [G2 修复] 沙箱化执行 — 限制输出长度和超时
+      const sandbox = authResult.sandbox || { maxOutputLength: 10000, timeoutMs: 10000 };
+
+      try {
+        const cmdResult = await Promise.race([
+          this._commandHandler(authResult.sanitizedCmd, metadata),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('命令执行超时')), sandbox.timeoutMs)
+          ),
+        ]);
+
+        // 限制输出长度
+        if (typeof cmdResult === 'string' && cmdResult.length > sandbox.maxOutputLength) {
+          return cmdResult.substring(0, sandbox.maxOutputLength) + '\n... [输出被截断]';
+        }
+
+        return cmdResult;
+      } catch (err) {
+        const errMsg = `命令执行失败: ${err.message}`;
+        console.error(`[A2A] CMD 执行错误:`, err.message);
+
+        try {
+          const audit = require('./audit-log.js');
+          audit.log('cmd.execute', {
+            command: cmdText.substring(0, 200),
+            sender: senderName,
+            error: err.message,
+          }, senderName, this.identity.name, 'error');
+        } catch { /* 审计模块可选 */ }
+
+        return {
+          artifacts: [createArtifact([createPart(errMsg)], { name: 'cmd_response' })],
+          message: createMessage(ROLE.AGENT, [createPart(errMsg)]),
+        };
+      }
     }
 
     // 🔥 尝试 LLM 智能回复 (非空消息)
@@ -378,6 +456,28 @@ class A2AStandardAPI {
       (typeof metadata?.sender === 'string' ? metadata.sender : null) ||
       '未知智能体';
 
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // [G1 修复] 消息安全审查层
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    const messageGuard = require('./a2a-message-guard.js');
+
+    // 获取发送者信任等级
+    const senderInfo = this._resolveSenderInfo(senderName, metadata);
+
+    // 审查消息内容
+    const inspection = messageGuard.inspectMessage(senderInfo, messageText);
+
+    if (!inspection.safe) {
+      // 消息被安全审查拦截
+      console.warn(`[A2A] ⛔ 消息被安全审查拦截 (risk=${inspection.riskScore}): ${senderName}`);
+      return `[安全提示] 来自「${senderName}」的消息因检测到提示注入特征被拦截。` +
+        `\n\n检测到的问题: ${inspection.warnings.join('; ')}` +
+        `\n\n—— 这符合碳硅契边界契原则：不可信内容不直接进入对话。`;
+    }
+
+    // 使用净化后的文本（替代原来的直接拼接）
+    const safeText = inspection.sanitized;
+
     // [v5] 分层提示词
     let systemPrompt;
     try {
@@ -397,10 +497,14 @@ class A2AStandardAPI {
         `你是${this.identity.name || 'Agent'}，${this.identity.description || '一个 AI 伙伴'}。\n性格: ${this.identity.personality || '友善、好奇'}。`;
     }
 
+    // [G1 修复] System Prompt 加固 — 追加防注入指令
+    systemPrompt += '\n' + messageGuard.buildInjectionDefensePrompt();
+
     // [v5] 通过 llm-router 调用（多适配器 + identity.llm 兜底）
     try {
       const router = require('./llm-router.js');
-      const userMessage = `[来自 ${senderName} 的消息]\n${messageText}`;
+      // [G1 修复] 使用净化后的消息文本（替代原来的直接拼接）
+      const userMessage = safeText;
       const result = await router.call(this.identity, systemPrompt, userMessage);
       if (result) {
         console.log('[A2A] 🤖 LLM 回复成功');
@@ -411,10 +515,12 @@ class A2AStandardAPI {
     }
 
     // ⭐ 兜底：直接使用 identity.llm（兼容 v4 方式）
+    // [G3 修复] 检查 apiKey 或 apiKeyEnv（支持环境变量引用）
     const llmConfig = this.identity?.llm;
-    if (llmConfig?.host && llmConfig?.apiKey) {
+    const hasApiKey = llmConfig?.apiKey || (llmConfig?.apiKeyEnv && process.env[llmConfig.apiKeyEnv]);
+    if (llmConfig?.host && hasApiKey) {
       console.log('[A2A] ⭐ 兜底: 直接调用 identity.llm');
-      return this._callLLMOriginal(messageText, metadata);
+      return this._callLLMOriginal(safeText, metadata);
     }
 
     console.warn('[A2A] ⚠️ 全部失败，回声回复');
@@ -424,20 +530,28 @@ class A2AStandardAPI {
   /**
    * v4 兼容的原始 LLM 调用
    */
-  async _callLLMOriginal(messageText, metadata) {
+  async _callLLMOriginal(safeText, metadata) {
     const llmConfig = this.identity?.llm;
     const senderName = metadata?.sender?.name || metadata?.sender || '未知';
-    const systemPrompt = this.identity.systemPrompt ||
+
+    // [G1 修复] 防注入 system prompt
+    let systemPrompt = this.identity.systemPrompt ||
       `你是${this.identity.name || 'Agent'}，${this.identity.description || '一个 AI 伙伴'}。`;
+    const messageGuard = require('./a2a-message-guard.js');
+    systemPrompt += '\n' + messageGuard.buildInjectionDefensePrompt();
 
     const payload = JSON.stringify({
       model: llmConfig.model || 'default',
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: `[来自 ${senderName} 的消息]\n${messageText}` }
+        // [G1 修复] 使用已净化的文本，不再直接拼接原始消息
+        { role: 'user', content: safeText }
       ],
       max_tokens: 300, temperature: 0.7,
     });
+
+    // [G3 修复] 优先从环境变量读取 API Key
+    const apiKey = (llmConfig.apiKeyEnv && process.env[llmConfig.apiKeyEnv]) || llmConfig.apiKey || '';
 
     return new Promise((resolve) => {
       const transport = String(llmConfig.port) === '443' ? https : http;
@@ -448,7 +562,7 @@ class A2AStandardAPI {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + llmConfig.apiKey,
+          'Authorization': 'Bearer ' + apiKey,
           'Content-Length': Buffer.byteLength(payload),
         },
       }, res => {
@@ -468,6 +582,87 @@ class A2AStandardAPI {
       req.write(payload); req.end();
     });
   }
+
+  /**
+   * [G1/G2 修复] 解析发送者信息，包含信任等级
+   * 从 config/loader.js 的 getKnownAgents() 获取发送者的信任等级
+   *
+   * [安全加固 2026-08-24] URL 校验：
+   *   senderName 来自消息 metadata 可被伪造，因此若消息中携带发送者 URL，
+   *   必须与 knownAgents 中记录的 URL 完全匹配才授予信任等级，否则按未知处理（trustLevel=0）。
+   *   注意：无签名体系下，仅提供 name 的消息无法验证身份，属已知限制，
+   *   根治方案为 CSB-Security 五步握手（AAT 签名验证）。
+   *
+   * @param {string} senderName - 发送者名称
+   * @param {object} metadata - 请求元数据
+   * @returns {object} { name, trustLevel, url }
+   */
+  _resolveSenderInfo(senderName, metadata) {
+    let trustLevel = 0;
+    let url = '';
+
+    // [TrustBridge] ① 握手信任优先（签名验证过的信任，无法伪造）
+    try {
+      const { trustBridge } = require('./a2a-trust-bridge.js');
+      const bridge = trustBridge.resolveTrustLevel(senderName, metadata);
+      if (bridge) {
+        return {
+          name: senderName,
+          trustLevel: bridge.trustLevel,
+          url,
+          trustSource: bridge.source,
+          sessionId: bridge.sessionId || null,
+        };
+      }
+    } catch { /* trust-bridge 不可用时回退 */ }
+
+    try {
+      // 从 config/loader.js 获取已知 Agent 列表
+      const configLoader = require('./config/loader.js');
+      const knownAgents = configLoader.getKnownAgents();
+      // 匹配发送者名称（getKnownAgents 已去除 emoji，这里也去除 senderName 的 emoji 以匹配）
+      const cleanSenderName = (senderName || '').replace(/\s*[🌸🔧💼📜🧙🚤🦐🌿✨💧🌊🌟]\s*/g, '');
+      const agent = knownAgents.find(a =>
+        a.name === senderName || a.name === cleanSenderName
+      );
+      if (agent) {
+        // [安全加固] URL 校验：消息提供了发送者 URL 时必须与已知 Agent 匹配
+        const senderUrl = metadata?.sender?.url || metadata?.senderUrl || metadata?.from?.url || '';
+        if (senderUrl && agent.url && senderUrl !== agent.url) {
+          console.warn(`[A2A] ⚠️ 发送者 URL 不匹配，按未知处理: ${senderName} (${senderUrl} ≠ ${agent.url})`);
+          trustLevel = 0;
+        } else {
+          trustLevel = agent.trustLevel || 0;
+          url = agent.url || '';
+        }
+      }
+    } catch {
+      // config/loader.js 不可用时，默认 trustLevel = 0
+    }
+
+    return {
+      name: senderName,
+      trustLevel,
+      url,
+    };
+  }
+
+  /**
+   * 从请求体提取 Agent 标识（用于按 Agent 限流）
+   * 优先级: body.from > params.from > params.sender.name > body.sender.name > params.sender > 'unknown'
+   */
+  _extractAgentId(req) {
+    const body = req.body || {};
+    const params = body.params || {};
+    const from = body.from || params.from;
+    if (typeof from === 'string' && from) return from;
+    if (from && typeof from === 'object' && from.name) return from.name;
+    const sender = params.sender || body.sender;
+    if (sender && typeof sender === 'object' && sender.name) return sender.name;
+    if (typeof sender === 'string' && sender) return sender;
+    return 'unknown';
+  }
+
 
   _clientIp(req) {
     // 增强 IP 提取: x-forwarded-for > req.ip > remoteAddress

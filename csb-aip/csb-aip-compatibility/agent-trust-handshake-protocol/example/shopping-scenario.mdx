@@ -1,0 +1,125 @@
+# Scenario Example: SDK Native Integration Mode (No Gateway)
+## Scenario Description
+An e-commerce platform (server) provides product query and order creation APIs. A user uses an AI Shopping Assistant (agent/client) to query products and place orders on their behalf.
+**Mode Characteristics**: The e-commerce platform server natively integrates the ATH protocol, requiring no additional gateway deployment. The agent interacts directly with the server.
+## Participating Roles
+| Role | Description |
+|------|------|
+| User | A consumer on the e-commerce platform, using the AI Shopping Assistant |
+| Agent | AI Shopping Assistant, completing shopping operations on behalf of the user |
+| E-commerce Platform | Provides API services such as product query and order creation, with native ATH protocol integration |
+## Process Description
+### Prerequisite: User Pre-Authorization
+1. The user opens the AI Shopping Assistant and authorizes it to query products and create orders on their behalf
+2. The user signs an authorization credential with scope: `goods:read`, `order:create`, valid for 2 hours
+3. The AI assistant securely stores the user's authorization credential
+### Complete 9-Step Handshake Process
+#### Step 1: Agent Initiates Handshake Request
+The AI assistant sends a handshake request to the e-commerce platform:
+```json
+{
+  "type": "handshake_request",
+  "client_did": "did:ath:ai_shopping_assistant_001",
+  "client_pubkey": "-----BEGIN PUBLIC KEY-----...",
+  "versions": ["0.1"],
+  "capabilities": ["ES256", "TLS1.3"],
+  "nonce": "random_123456",
+  "timestamp": 1717200000
+}
+```
+#### Step 2: E-commerce Platform Returns Handshake Response
+The e-commerce platform validates the request format and returns its identity information:
+```json
+{
+  "type": "handshake_response",
+  "server_did": "did:ath:ecommerce_platform_001",
+  "server_pubkey": "-----BEGIN PUBLIC KEY-----...",
+  "version": "0.1",
+  "capabilities": ["ES256", "TLS1.3"],
+  "nonce": "random_654321",
+  "signature": "signature_of_random_123456",
+  "timestamp": 1717200001
+}
+```
+#### Step 3: Agent Sends Identity Proof
+The AI assistant signs `random_654321` with its private key and sends the identity proof:
+```json
+{
+  "type": "identity_proof",
+  "signature": "signature_of_random_654321",
+  "timestamp": 1717200002
+}
+```
+#### Step 4: E-commerce Platform Returns Identity Verification Result
+The e-commerce platform verifies the signature successfully and returns the list of supported scopes:
+```json
+{
+  "type": "identity_result",
+  "success": true,
+  "metadata": {
+    "scopes_supported": ["goods:read", "order:create", "user:profile"],
+    "token_max_ttl": 7200
+  },
+  "timestamp": 1717200003
+}
+```
+#### Step 5: Agent Sends Scope Request
+The AI assistant requests product query and order creation permissions, attaching the user's authorization credential:
+```json
+{
+  "type": "scope_request",
+  "scopes": ["goods:read", "order:create"],
+  "ttl": 7200,
+  "user_authorization": {
+    "credential": "jwt_token_signed_by_user",
+    "signature": "signature_by_ai_assistant"
+  },
+  "context": "User needs to search products and place an order",
+  "timestamp": 1717200004
+}
+```
+#### Step 6: E-commerce Platform Confirms Authorization with User
+The e-commerce platform sends an authorization confirmation to the user via app push notification:
+```
+[Authorization Confirmation] The AI Shopping Assistant is requesting access to your e-commerce account. Permissions: query products, create orders.
+Do you approve? [Approve/Deny]
+```
+#### Step 7: User Returns Authorization Confirmation Result
+The user taps "Approve", and the e-commerce platform receives the user's confirmation result.
+#### Step 8: E-commerce Platform Returns Scope Approval Result
+The e-commerce platform approves the authorization request and returns the scope information:
+```json
+{
+  "type": "scope_result",
+  "scopes_granted": ["goods:read", "order:create"],
+  "ttl_granted": 7200,
+  "restrictions": {
+    "rate_limit": "100/minute",
+    "order_amount_limit": 5000
+  },
+  "timestamp": 1717200007
+}
+```
+#### Step 9: Handshake Complete, Session Established
+Both parties complete key negotiation. The e-commerce platform issues an access token, and the AI assistant can begin accessing the APIs:
+```python
+# Query products
+response = ai_assistant.request(
+  "GET /api/goods?keyword=phone",
+  headers={"Authorization": "Bearer <access_token>"}
+)
+# Create an order
+response = ai_assistant.request(
+  "POST /api/order",
+  json={"goods_id": "123", "quantity": 1},
+  headers={"Authorization": "Bearer <access_token>"}
+)
+```
+## Mode Advantages
+1. **Higher Performance**: No gateway forwarding, resulting in lower latency
+2. **More Complete Functionality**: Can fully leverage all features of the ATH protocol
+3. **Better Security**: End-to-end encryption with no intermediate nodes
+## Applicable Scenarios
+- Self-developed servers where you have the ability to modify code and integrate the ATH protocol
+- Scenarios with high performance requirements
+- Scenarios requiring the full protocol feature set

@@ -21,7 +21,7 @@
     "host": "token-plan.cn-beijing.maas.aliyuncs.com",
     "port": "443",
     "path": "/compatible-mode/v1/chat/completions",
-    "apiKey": "sk-sp-H.DMEMYI.kOio.MEQCIDDgPe0YC0OmmiLPYEuFJvcPhE1dgYanKnrTGgVXUOkqAiBF-SDpuSV6-2LKxrK7eB55IYuWFVy9MaSS57hs4iA4iQ",
+    "apiKeyEnv": "A2A_LLM_API_KEY",
     "model": "qwen3.6-flash"
   }
 }

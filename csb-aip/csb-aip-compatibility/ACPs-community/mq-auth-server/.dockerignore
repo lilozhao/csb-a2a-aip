@@ -1,0 +1,49 @@
+# 版本控制
+.git
+.gitignore
+
+# GitHub / CI
+.github
+
+# 开发环境
+.vscode
+.env
+.env.*
+!.env.example
+
+# 文档
+docs/
+*.md
+!README.md
+
+# 测试
+tests/
+htmlcov/
+.coverage
+.coverage.*
+
+# 缓存
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+
+# 构建产物
+dist/
+build/
+*.egg-info/
+
+# 日志
+logs/
+
+# 脚本（非运行时）
+scripts/
+
+# 证书（运行时通过挂载注入）
+certs/
+
+# OS
+.DS_Store
+Thumbs.db

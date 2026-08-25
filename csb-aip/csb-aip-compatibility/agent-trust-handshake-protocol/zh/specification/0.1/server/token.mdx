@@ -1,0 +1,77 @@
+---
+title: "令牌交换"
+sidebarTitle: "令牌"
+description: "POST /ath/token — 用授权码交换 ATH 访问令牌。"
+---
+
+## 令牌交换（阶段 B，用户同意后）
+
+**`POST /ath/token`**
+
+用户完成 OAuth 授权同意流程后，代理用授权码交换 ATH 访问令牌。实现者计算范围交集并绑定令牌。
+
+## 请求
+
+```json
+{
+  "grant_type": "authorization_code",
+  "client_id": "ath_travelbot_001",
+  "client_secret": "ath_secret_xxxxx",
+  "agent_attestation": "<signed JWT>",
+  "code": "<oauth-authorization-code>",
+  "ath_session_id": "ath_sess_abc123"
+}
+```
+
+### 请求字段
+
+| 字段 | 类型 | 必填 | 描述 |
+|-------|------|----------|-------------|
+| `grant_type` | string | 是 | 必须为 `"authorization_code"` |
+| `client_id` | string | 是 | 代理的客户端 ID |
+| `client_secret` | string | 是 | 代理的客户端密钥 |
+| `agent_attestation` | string | 是 | 新鲜的签名 JWT，证明当前持有代理私钥。`sub` 声明必须（MUST）匹配 `client_id` 注册的 `agent_id`，`aud` 声明必须（MUST）设置为令牌端点 URL |
+| `code` | string | 是 | 回调中收到的 OAuth 授权码 |
+| `ath_session_id` | string | 是 | 授权步骤返回的会话 ID |
+
+## 响应
+
+```json
+{
+  "access_token": "ath_tk_xxxxxxxx",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "effective_scopes": ["mail:read"],
+  "provider_id": "example-mail",
+  "agent_id": "https://travel-agent.example.com/.well-known/agent.json",
+  "scope_intersection": {
+    "agent_approved": ["mail:read"],
+    "user_consented": ["mail:read", "mail:send"],
+    "effective": ["mail:read"]
+  }
+}
+```
+
+### 响应字段
+
+| 字段 | 类型 | 描述 |
+|-------|------|-------------|
+| `access_token` | string | ATH 访问令牌 |
+| `token_type` | string | 始终为 `"Bearer"` |
+| `expires_in` | number | 令牌有效期（秒） |
+| `effective_scopes` | string[] | 计算得出的有效范围 |
+| `provider_id` | string | 此令牌对应的服务提供方 |
+| `agent_id` | string | 此令牌绑定的代理 |
+| `scope_intersection` | object | 范围交集的完整分解 |
+| `scope_intersection.agent_approved` | string[] | 服务为该代理批准的范围 |
+| `scope_intersection.user_consented` | string[] | 用户同意的范围 |
+| `scope_intersection.effective` | string[] | 交集（有效权限） |
+
+## 行为
+
+- 实现者必须（MUST）验证 `agent_attestation` JWT 有效，且 `sub` 声明与 `client_id` 注册的 `agent_id` 匹配
+- 实现者必须（MUST）验证 `ath_session_id` 有效且未过期（最大生命周期：10 分钟）
+- `ath_session_id` 必须（MUST）在成功令牌交换后消费（一次性使用）
+- 响应必须（MUST）包含 `scope_intersection` 分解信息
+- 令牌必须（MUST）绑定到特定的 `(agent_id, user_id, provider_id, scopes)` 元组
+- 如果范围交集为空，实现者禁止（MUST NOT）签发令牌

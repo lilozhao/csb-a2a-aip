@@ -24,14 +24,14 @@ const DEFAULT_REGISTRY_URL = config.getRegistry('local');
  * @param {object} identity — A2A identity.json
  * @param {Array} registry — Agent 注册表（可选，后续可更新）
  */
-function init(app, identity, registry = []) {
+function init(app, identity, registry = [], a2aVersion = null) {
   adapter = new AIPAdapter({ registry });
 
   // 生成 AIP 兼容的 Agent Card
   adapter.init({
     agentId: identity.agentId || '',
     name: identity.name,
-    version: identity.version || '4.1.0',
+    version: identity.version || a2aVersion || '4.1.0',
     description: identity.description,
     url: `http://${identity.publicHost || 'localhost'}:${identity.port || 3100}`,
     icon: identity.avatar || '',

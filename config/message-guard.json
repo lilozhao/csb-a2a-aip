@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "strictness": "normal",
+  "maxMessageLength": 5000,
+  "blockOnInjection": true,
+  "logBlockedMessages": true,
+  "allowedOverrides": ["若兰", "阿轩", "Jeason", "明德"]
+}

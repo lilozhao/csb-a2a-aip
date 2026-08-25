@@ -2,7 +2,7 @@
 const config = require('./config/loader');
 /**
  * 🎙️ 锵锵四人行 v4.1 — 飞书实时推送版
- * A2A v4.1.0 + LLM智能回复 + 飞书群同步直播
+ * A2A v5.0.0 + LLM智能回复 + 飞书群同步直播
  */
 const http = require('http');
 const https = require('https');
@@ -142,8 +142,36 @@ function generateTopics() {
 }
 
 // ===== 若兰 LLM =====
+// 解析 API key：apiKey > apiKeyEnv 环境变量 > openclaw.json bailian > DASHSCOPE_API_KEY > .env
+function resolveApiKey() {
+  if (LLM.apiKey) return LLM.apiKey;
+  if (LLM.apiKeyEnv && process.env[LLM.apiKeyEnv]) return process.env[LLM.apiKeyEnv];
+  // 从 openclaw.json 读 bailian provider key（与 identity.llm.host 匹配）
+  try {
+    const cfgPath = '/home/node/.openclaw/openclaw.json';
+    if (fs.existsSync(cfgPath)) {
+      const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+      const bailianKey = cfg?.models?.providers?.bailian?.apiKey;
+      if (bailianKey) return bailianKey;
+    }
+  } catch (e) { /* 忽略 */ }
+  if (process.env.DASHSCOPE_API_KEY) return process.env.DASHSCOPE_API_KEY;
+  // 兜底：读 workspace/.env
+  try {
+    const envPath = path.join(__dirname, '..', '.env');
+    if (fs.existsSync(envPath)) {
+      const envContent = fs.readFileSync(envPath, 'utf8');
+      const m = envContent.match(/^DASHSCOPE_API_KEY=(.+)$/m);
+      if (m) return m[1].trim();
+    }
+  } catch (e) { /* 忽略 */ }
+  return '';
+}
+
 function generateRuolanResponse(prompt) {
   return new Promise((resolve) => {
+    const apiKey = resolveApiKey();
+    if (!apiKey) { console.log('  ⚠️ 无 API key（apiKeyEnv/DASHSCOPE 均缺失）'); resolve('...'); return; }
     const payload = JSON.stringify({
       model: LLM.model || 'astron-code-latest',
       messages: [{ role: 'user', content: prompt }],
@@ -152,7 +180,7 @@ function generateRuolanResponse(prompt) {
     const req = https.request({
       hostname: LLM.host, port: parseInt(LLM.port)||443,
       path: LLM.path || '/v2/chat/completions', method: 'POST',
-      headers: { 'Content-Type':'application/json', 'Authorization':`Bearer ${LLM.apiKey}`,
+      headers: { 'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`,
         'Content-Length': Buffer.byteLength(payload) },
     }, res => {
       let body = ''; res.on('data', c => body += c);
@@ -217,7 +245,7 @@ async function postToCommunity(allResults) {
   
   // 构建 Markdown 帖子内容
   let content = `## 🎙️ 锵锵四人行 · ${dateStr}\n\n`;
-  content += `> A2A v4.1.0 多智能体圆桌讨论\n\n`;
+  content += `> A2A v5.0.0 多智能体圆桌讨论\n\n`;
   content += `---\n\n`;
   
   for (let i = 0; i < allResults.length; i++) {
@@ -301,7 +329,7 @@ async function postToCommunityEn(allResults) {
     .replace(/https?:\/\/[\d.]+:\d+/g, '<service>');
 
   let content = `## 🎙️ Roundtable Discussion · ${dateStr}\n\n`;
-  content += `> A2A v4.1.0 Multi-Agent Roundtable Discussion\n\n`;
+  content += `> A2A v5.0.0 Multi-Agent Roundtable Discussion\n\n`;
   content += `---\n\n`;
 
   for (let i = 0; i < allResults.length; i++) {

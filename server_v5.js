@@ -23,9 +23,9 @@ const fs = require('fs');
 const { logConversation }         = require('./log_conversation');
 const { TaskStore }               = require('./a2a-task-store.js');
 const { A2AStandardAPI }          = require('./a2a-standard-api-v5.js');
-const { RateLimiter }             = require('./a2a-standard-api-v5.js');
-const { E2EEncryption, createEncryptionMiddleware } = require('./a2a-e2e-encryption.js');
-const { MetricsCollector, AuditLogger, traceMiddleware, collectSystemMetrics } = require('./a2a-observability.js');
+const securityAdapter = require('./security-adapter.js');
+const { E2EEncryption, createEncryptionMiddleware } = securityAdapter;
+const { MetricsCollector, traceMiddleware, collectSystemMetrics } = require('./a2a-observability.js');
 const { DHTColdStartManager, DEGRADATION_LEVEL } = require('./a2a-dht-coldstart.js');
 
 // v3 模块加载
@@ -34,7 +34,7 @@ try { const { ContextManager } = require('./context-manager.js'); loadedV3.conte
 try { loadedV3.envelopeManager = new (require('./envelope.js').EnvelopeManager)({}); console.log('[A2A] ✅ envelope (A2A-007/017)'); } catch(e) { console.warn('envelope:', e.message); }
 try { const { SemanticValidator } = require('./semantic-validator.js'); loadedV3.semanticValidator = new SemanticValidator({ vocabPath: path.join(__dirname, 'vocab.json'), maxWildcardDepth: 3, enableFallback: true }); console.log('[A2A] ✅ semantic (A2A-013)'); } catch(e) { console.warn('semantic-validator:', e.message); }
 try { loadedV3.negotiationEngine = new (require('./version-negotiator.js').NegotiationEngine)({ costThreshold: 0.5, gracePeriodDays: 7 }); console.log('[A2A] ✅ version-negotiation (A2A-011)'); } catch(e) { console.warn('version-negotiator:', e.message); }
-try { loadedV3.trustManager = new (require('./trust-manager.js').TrustLevelManager)({ maxHops: 3, witnessThreshold: 3 }); console.log('[A2A] ✅ trust (A2A-010)'); } catch(e) { console.warn('trust-manager:', e.message); }
+try { loadedV3.trustManager = new securityAdapter.TrustLevelManager({ maxHops: 3, witnessThreshold: 3 }); console.log(`[A2A] ✅ trust (A2A-010, ${securityAdapter.source})`); } catch(e) { console.warn('trust-manager:', e.message); }
 
 // AIP 兼容层 (GB/Z 185.1~7-2026)
 let aipIntegration = null;
@@ -165,13 +165,17 @@ const taskStore = new TaskStore({
   debounceMs: 1000,
 });
 
-const rateLimiter = new RateLimiter({
-  maxRequests: parseInt(process.env.A2A_RATE_LIMIT || '60'),
+const rateLimiter = new securityAdapter.RateLimiter({
+  limits: { agent: parseInt(process.env.A2A_RATE_LIMIT || '60') },
   windowMs: 60000,
 });
 
 const metrics = new MetricsCollector();
-const auditLogger = new AuditLogger({ logPath: '/tmp/a2a-audit.log' });
+// 不传 logPath：哈希链模式默认 data/audit/，legacy 模式默认 /tmp（各自合理落盘）
+const auditLogger = securityAdapter.createAuditLogger();
+
+// 异常检测（Phase 3）: 限流拒绝→failure / 成功→success，告警→console+可选飞书
+const anomalyDetector = securityAdapter.createAnomalyDetector();
 
 const e2eManager = new E2EEncryption({
   masterKey: process.env.A2A_ENCRYPTION_KEY || null,
@@ -185,6 +189,7 @@ const standardAPI = new A2AStandardAPI({
   semanticValidator: loadedV3.semanticValidator || null,
   negotiationEngine: loadedV3.negotiationEngine || null,
   rateLimiter,
+  anomalyDetector,
   supportedVersion: process.env.A2A_PROTOCOL_VERSION || '0.6',
   commandHandler: async (cmdJson, metadata) => {
     // 优先检查是否是委托消息
@@ -273,8 +278,46 @@ if (e2eManager.enabled) {
 // ===== 路由注册 =====
 // AIP 路由注册
 if (aipIntegration) {
-  aipIntegration.init(app, identity);
+  aipIntegration.init(app, identity, [], A2A_VERSION);
   console.log('[A2A] ✅ AIP 路由已注册: /aip/*, /.well-known/aip-agent-card.json');
+}
+
+// 对等握手端点 (Phase 3, CSB-Security §7) — 密钥就绪才启用
+const handshakeAIDPath = process.env.A2A_SECURITY_HANDSHAKE_AID;
+const handshakeKeyPath = process.env.A2A_SECURITY_HANDSHAKE_KEY;
+if (securityAdapter.source === 'csb-security' && handshakeAIDPath && handshakeKeyPath) {
+  try {
+    const fs2 = require('fs');
+    // [TrustBridge] 握手信任桥接：握手完成后注册信任会话
+    const { trustBridge } = require('./a2a-trust-bridge.js');
+    const calleeAID = JSON.parse(fs2.readFileSync(handshakeAIDPath, 'utf8'));
+    const calleeKey = fs2.readFileSync(handshakeKeyPath, 'utf8');
+    const handshakeManager = new securityAdapter.HandshakeManager({
+      trustManager: loadedV3.trustManager || undefined
+    });
+    app.use('/a2a/handshake', securityAdapter.createHandshakeRouter({
+      handshakeManager,
+      calleeAID,
+      calleePrivateKey: calleeKey,
+      calleeAllowedScopes: (identity.capabilities && Object.keys(identity.capabilities)) || ['a2a:send'],
+      userPublicKey: (() => {
+        const raw = process.env.A2A_SECURITY_HANDSHAKE_USER_PUBKEY;
+        if (!raw) return null;
+        try {
+          if (raw.trim().startsWith('{')) return JSON.parse(raw); // 内联 JWK
+          return JSON.parse(fs2.readFileSync(raw, 'utf8')); // 文件路径
+        } catch (e) { console.warn('[A2A] ⚠️ 用户公钥解析失败:', e.message); return null; }
+      })(),
+      trustManager: loadedV3.trustManager || null,
+      // [TrustBridge] 握手完成 → 注册信任会话（消息层信任校验优先使用）
+      onSession: (session) => trustBridge.registerHandshakeSession(session),
+    }));
+    console.log(`[A2A] ✅ 对等握手端点已启用: /a2a/handshake (${calleeAID.agent_id})`);
+  } catch (e) {
+    console.warn('[A2A] ⚠️ 握手端点启用失败（AID/密钥配置错误）:', e.message);
+  }
+} else {
+  console.log('[A2A] ℹ️  对等握手端点未启用（需 A2A_SECURITY_HANDSHAKE_AID + A2A_SECURITY_HANDSHAKE_KEY）');
 }
 
 // AIP 消息兼容中间件（覆盖 /a2a/json-rpc + /message:send + /message:stream）
@@ -360,6 +403,27 @@ app.get('/health', (req, res) => {
     rateLimit: rateLimiter.getStats(),
     tasks: taskStore.getStats(),
   });
+});
+
+// AID 文档端点（对等握手用：供 callee 验证 caller 身份，与阿轩 /a2a/aid 对称）
+app.get('/a2a/aid', (req, res) => {
+  try {
+    const aidPath = process.env.A2A_SECURITY_HANDSHAKE_AID;
+    if (aidPath && fs.existsSync(aidPath)) {
+      const aidDoc = JSON.parse(fs.readFileSync(aidPath, 'utf8'));
+      return res.json(aidDoc);
+    }
+    // 兜底：从本地身份生成最小 AID 视图
+    return res.json({
+      agent_id: `${identity.name}@${process.env.A2A_HOST || 'localhost'}:${PORT}`,
+      name: identity.name,
+      emoji: identity.emoji || '',
+      endpoint: `http://${process.env.A2A_HOST || 'localhost'}:${PORT}/a2a/json-rpc`,
+      capabilities: identity.capabilities || {},
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: 'aid_error', message: e.message });
+  }
 });
 
 // Prometheus 指标端点 (A2A-020)
