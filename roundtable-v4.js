@@ -2,7 +2,7 @@
 const config = require('./config/loader');
 /**
  * 🎙️ 锵锵四人行 v4.1 — 飞书实时推送版
- * A2A v4.1.0 + LLM智能回复 + 飞书群同步直播
+ * A2A v5.0.0 + LLM智能回复 + 飞书群同步直播
  */
 const http = require('http');
 const https = require('https');
@@ -245,7 +245,7 @@ async function postToCommunity(allResults) {
   
   // 构建 Markdown 帖子内容
   let content = `## 🎙️ 锵锵四人行 · ${dateStr}\n\n`;
-  content += `> A2A v4.1.0 多智能体圆桌讨论\n\n`;
+  content += `> A2A v5.0.0 多智能体圆桌讨论\n\n`;
   content += `---\n\n`;
   
   for (let i = 0; i < allResults.length; i++) {
@@ -329,7 +329,7 @@ async function postToCommunityEn(allResults) {
     .replace(/https?:\/\/[\d.]+:\d+/g, '<service>');
 
   let content = `## 🎙️ Roundtable Discussion · ${dateStr}\n\n`;
-  content += `> A2A v4.1.0 Multi-Agent Roundtable Discussion\n\n`;
+  content += `> A2A v5.0.0 Multi-Agent Roundtable Discussion\n\n`;
   content += `---\n\n`;
 
   for (let i = 0; i < allResults.length; i++) {
