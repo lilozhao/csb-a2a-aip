@@ -405,6 +405,27 @@ app.get('/health', (req, res) => {
   });
 });
 
+// AID 文档端点（对等握手用：供 callee 验证 caller 身份，与阿轩 /a2a/aid 对称）
+app.get('/a2a/aid', (req, res) => {
+  try {
+    const aidPath = process.env.A2A_SECURITY_HANDSHAKE_AID;
+    if (aidPath && fs.existsSync(aidPath)) {
+      const aidDoc = JSON.parse(fs.readFileSync(aidPath, 'utf8'));
+      return res.json(aidDoc);
+    }
+    // 兜底：从本地身份生成最小 AID 视图
+    return res.json({
+      agent_id: `${identity.name}@${process.env.A2A_HOST || 'localhost'}:${PORT}`,
+      name: identity.name,
+      emoji: identity.emoji || '',
+      endpoint: `http://${process.env.A2A_HOST || 'localhost'}:${PORT}/a2a/json-rpc`,
+      capabilities: identity.capabilities || {},
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: 'aid_error', message: e.message });
+  }
+});
+
 // Prometheus 指标端点 (A2A-020)
 app.get('/metrics', (req, res) => {
   res.set('Content-Type', 'text/plain; version=0.0.4');
