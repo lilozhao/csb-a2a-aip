@@ -415,10 +415,10 @@ app.get('/a2a/aid', (req, res) => {
     }
     // 兜底：从本地身份生成最小 AID 视图
     return res.json({
-      agent_id: `${identity.name}@${process.env.A2A_HOST || 'localhost'}:${PORT}`,
+      agent_id: `${identity.name}@${process.env.A2A_HOST || 'localhost'}:${port}`,
       name: identity.name,
       emoji: identity.emoji || '',
-      endpoint: `http://${process.env.A2A_HOST || 'localhost'}:${PORT}/a2a/json-rpc`,
+      endpoint: `http://${process.env.A2A_HOST || 'localhost'}:${port}/a2a/json-rpc`,
       capabilities: identity.capabilities || {},
     });
   } catch (e) {
