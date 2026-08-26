@@ -138,7 +138,7 @@ node -e "const aid=require('./csb-security/lib/identity/aid'); const k=aid.gener
 ```
 2. 公钥 JWK 配置给所有需要验证 UAC 的 callee（**统一公钥，大家共用，勿换**）：
 ```bash
-# 一澜的 Ed25519 用户公钥（kid: user-yilan，2026-08-25 已验证与 csb-security/data/yilan-user-pub.json 一致）
+# 一澜的 Ed25519 用户公钥（kid: user-yilan；权威源：csb-security/keys/user-yilan.pubkey.json，已入仓库可独立核对）
 export A2A_SECURITY_HANDSHAKE_USER_PUBKEY='{"crv":"Ed25519","x":"rpNYnf224QbmIuK1Ivrj7u7BMa5KnUFFCAe54Tm-_4U","kty":"OKP","kid":"user-yilan"}'
 # 或存成文件：export A2A_SECURITY_HANDSHAKE_USER_PUBKEY=/path/to/user-pub.jwk
 ```
