@@ -547,7 +547,7 @@ class A2AStandardAPI {
         // [G1 修复] 使用已净化的文本，不再直接拼接原始消息
         { role: 'user', content: safeText }
       ],
-      max_tokens: 300, temperature: 0.7,
+      max_tokens: 500, temperature: 0.7,
     });
 
     // [G3 修复] 优先从环境变量读取 API Key

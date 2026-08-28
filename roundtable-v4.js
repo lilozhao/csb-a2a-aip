@@ -175,7 +175,7 @@ function generateRuolanResponse(prompt) {
     const payload = JSON.stringify({
       model: LLM.model || 'astron-code-latest',
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 200, temperature: 0.8,
+      max_tokens: 500, temperature: 0.8,
     });
     const req = https.request({
       hostname: LLM.host, port: parseInt(LLM.port)||443,

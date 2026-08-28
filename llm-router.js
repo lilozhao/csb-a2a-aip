@@ -213,7 +213,7 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userMessage }
     ],
-    max_tokens: options.maxTokens || 300,
+    max_tokens: options.maxTokens || 500,
     temperature: options.temperature || 0.7,
   });
 

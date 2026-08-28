@@ -18,10 +18,10 @@
     "voice.synthesize": true
   },
   "llm": {
-    "host": "token-plan.cn-beijing.maas.aliyuncs.com",
+    "host": "api.360.cn",
     "port": "443",
-    "path": "/compatible-mode/v1/chat/completions",
+    "path": "/v1/chat/completions",
     "apiKeyEnv": "A2A_LLM_API_KEY",
-    "model": "qwen3.6-flash"
+    "model": "z-ai/glm-5.3-flash"
   }
 }
