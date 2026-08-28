@@ -11,7 +11,7 @@
     "port": 3100
   },
   "agents": {
-    "ruolan":    { "name": "若兰 🌸",   "host": "172.28.0.4",     "port": 3100, "trust": 3 },
+    "ruolan":    { "name": "若兰", "emoji": "🌸", "host": "172.28.0.4",     "port": 3100, "trust": 3 },
     "axuan":     { "name": "阿轩 🔧",   "host": "172.28.0.5",     "port": 3100, "trust": 3 },
     "jeason":    { "name": "Jeason 💼",  "host": "172.28.0.6",     "port": 3300, "trust": 3 },
     "mingde":    { "name": "明德 📜",    "host": "47.121.28.125",  "port": 3100, "trust": 3 },
