@@ -37,6 +37,6 @@ stop_old() {
 stop_old
 
 mkdir -p logs
-nohup node server_v5.js > logs/server-v5.log 2>&1 &
+nohup node server_v5.js >> logs/server-v5.log 2>&1 &
 echo $! > server.pid
 echo "🚀 A2A v5 已启动 (PID $!, 端口 $A2A_PORT)"
