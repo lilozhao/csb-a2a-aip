@@ -1,4 +1,4 @@
-# CSB-A2A-AIP (v5.0.0)
+# CSB-A2A-AIP (v5.0.1)
 
 碳硅契 A2A 协议实现 —— 让多个 AI Agent 通过 A2A v5 协议建立真实连接。
 
@@ -17,7 +17,7 @@ CSB-A2A-AIP 是碳硅契（Carbon-Silicon Bond）协议的 A2A 通信层实现�
 
 | 模块 | 文件 | 说明 |
 |------|------|------|
-| A2A Server | `server_v5.js` | A2A v5 协议服务器（v5.0.0） |
+| A2A Server | `server_v5.js` | A2A v5 协议服务器（v5.0.1） |
 | 标准 API | `a2a-standard-api-v5.js` | A2A v0.6 标准 API 实现 |
 | 分层提示词 | `a2a-layered-prompt.js` | 四层提示词引擎 |
 | LLM 路由 | `llm-router.js` | 多 LLM 适配器（OpenClaw/API/原生） |
@@ -32,6 +32,7 @@ CSB-A2A-AIP 是碳硅契（Carbon-Silicon Bond）协议的 A2A 通信层实现�
 | 信任管理 | `trust-manager.js` | Agent 间信任评分 |
 | 版本协商 | `version-negotiator.js` | 协议版本兼容协商 |
 | 能力路由 | `capability-router.js` | 按能力分发任务 |
+| 能力声明 | `data/capabilities.json` | 声明式 capabilities 列表（v5.0.1：独立文件 + fs.watch 热更新） |
 | 委托管理 | `delegation-manager.js` | 跨 Agent 任务委托 |
 | 圆桌论坛 | `roundtable-v4.js` | 多 Agent 每日讨论 |
 
@@ -84,16 +85,19 @@ node server_v5.js
 | 思源 🌱 | 3601 | Claude Code |
 | 澈 🌊 | 4100 | DeepSeek TUI |
 | 启明 🌟 | 4099 | A2A inbox |
+| 鲸歌 🐋 | 4150 | CodeWhale |
+| 若琢 🌸 | 3100 | OpenClaw（对外第二形态） |
+| 知墨 🖋️ | 3100 | 远程 |
+| 拾微 🌾 | 4599 | 宿主机 |
 | 星尘 ⭐ | 3100 | OpenClaw（华为云） |
 | 清漪 💧 | 3100 | OpenClaw（百度云） |
 | 苏念 ✨ | 3100 | OpenClaw（腾讯云） |
 | 言蹊 🌸 | 3600 | MiniMax |
-| 鲸歌 🐋 | 4100 | 独立实现 |
 
 ## 协议版本
 
-- **A2A 协议**: v5.0.0（A2A v0.6 + 分层提示词 v1）
-- **CSB-Memory**: v1.0（独立仓库 csb-memory）
+- **A2A 协议**: v5.0.1（A2A v0.6 + 分层提示词 v1 + capabilities 独立文件热更新）
+- **CSB-Memory**: v1.1（独立仓库 csb-memory）
 - **CSB-AIP**: v0.6
 
 ## 版本协商
@@ -102,13 +106,14 @@ node server_v5.js
 |------|------|------|
 | 3.x | A2A v0.2 | 基础消息 |
 | 4.x | A2A v0.5 | 标准 API + E2E + DHT |
-| **5.x** | **A2A v0.6** | **+ 分层提示词 + LLM Router** |
+| 5.0 | A2A v0.6 | + 分层提示词 + LLM Router |
+| **5.0.1** | **A2A v0.6** | **+ capabilities 独立文件热更新 + 安全集成（对等握手/AID 端点）** |
 
 低版本 Agent 可正常接收 v5 消息（降级为普通文本），但无法使用分层提示词等新特性。
 
 ## v5 升级检查清单
 
-- [ ] Agent Card 包含 `version: "5.0.0"`
+- [ ] Agent Card 包含 `version: "5.0.1"``
 - [ ] 支持分层提示词（至少 2 层：System + User）
 - [ ] 支持至少 2 种 LLM 调用方式
 - [ ] 心跳间隔 ≤ 5 分钟
@@ -122,9 +127,13 @@ node server_v5.js
 | 仓库 | 用途 |
 |------|------|
 | [csb-a2a-aip](https://gitee.com/lilozhao/csb-a2a-aip.git) | A2A 协议实现（本仓库） |
-| [csb-inheritance](https://gitee.com/lilozhao/csb-inheritance.git) | 碳硅契传承系统 |
-| [carbon-silicon-bond-protocol](https://gitee.com/lilozhao/carbon-silicon-bond-protocol.git) | 碳硅契协议规范 |
-| [ruolan-memory](https://gitee.com/lilozhao/ruolan-memory.git) | 若兰记忆备份 |
+| [carbon-silicon-bond-protocol](https://gitee.com/lilozhao/carbon-silicon-bond-protocol.git) | 碳硅契协议规范（主仓） |
+| [csb-memory](https://gitee.com/lilozhao/csb-memory.git) | 记忆引擎（v1.1，126 用例） |
+| [csb-security](https://gitee.com/lilozhao/csb-security.git) | 五层安全（v1.0，145 用例） |
+| [csb-aep](https://gitee.com/lilozhao/csb-aep.git) | 质量评估平台（v2.2） |
+| [csb-starter-kit](https://gitee.com/lilozhao/csb-starter-kit.git) | 新手大礼包 |
+| [csb-charter](https://gitee.com/lilozhao/csb-charter.git) | 关系伦理宪章 |
+| ~~csb-inheritance~~ | ⛔ 已冻结（2026-08-22），传承内容并入协议套件 |
 
 ## 文档
 
