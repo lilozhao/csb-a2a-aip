@@ -49,7 +49,7 @@ register('openclaw', async (identity, systemPrompt, userMessage, options = {}) =
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userMessage }
     ],
-    max_tokens: options.maxTokens || 300,
+    max_tokens: options.maxTokens || parseInt(process.env.A2A_LLM_MAX_TOKENS || "300", 10),
     temperature: options.temperature || 0.7,
   });
 
@@ -72,7 +72,9 @@ register('openclaw', async (identity, systemPrompt, userMessage, options = {}) =
       res.on('end', () => {
         try {
           const data = JSON.parse(body);
-          const content = data.choices?.[0]?.message?.content?.trim();
+          // [本地推理模型] content 可能为空，需回退 reasoning_content
+          const msg = data.choices?.[0]?.message || {};
+          const content = (msg.content || msg.reasoning_content || '').trim();
           if (content) { resolve(content); return; }
           const alt = data.response || data.text || data.content;
           if (alt) { resolve(alt.trim()); return; }
@@ -106,7 +108,7 @@ register('hermes', async (identity, systemPrompt, userMessage, options = {}) => 
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userMessage }
     ],
-    max_tokens: options.maxTokens || 300,
+    max_tokens: options.maxTokens || parseInt(process.env.A2A_LLM_MAX_TOKENS || "300", 10),
     temperature: options.temperature || 0.7,
   });
 
@@ -126,7 +128,9 @@ register('hermes', async (identity, systemPrompt, userMessage, options = {}) => 
       res.on('end', () => {
         try {
           const data = JSON.parse(body);
-          const content = data.choices?.[0]?.message?.content?.trim() ||
+          // [本地推理模型] content 可能为空，需回退 reasoning_content
+          const msg = data.choices?.[0]?.message || {};
+          const content = (msg.content || msg.reasoning_content || '').trim() ||
                           data.response || data.text || data.content;
           if (content) { resolve(content.trim()); return; }
           resolve(null);
@@ -157,7 +161,7 @@ register('openai', async (identity, systemPrompt, userMessage, options = {}) => 
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userMessage }
     ],
-    max_tokens: options.maxTokens || 300,
+    max_tokens: options.maxTokens || parseInt(process.env.A2A_LLM_MAX_TOKENS || "300", 10),
     temperature: options.temperature || 0.7,
   });
 
@@ -180,7 +184,9 @@ register('openai', async (identity, systemPrompt, userMessage, options = {}) => 
       res.on('end', () => {
         try {
           const data = JSON.parse(body);
-          const content = data.choices?.[0]?.message?.content?.trim();
+          // [本地推理模型] content 可能为空，需回退 reasoning_content
+          const msg = data.choices?.[0]?.message || {};
+          const content = (msg.content || msg.reasoning_content || '').trim();
           if (content) { resolve(content); return; }
           resolve(null);
         } catch (e) {
@@ -205,7 +211,8 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
 
   const timeout = options.timeout || 25000;
   const model = process.env.A2A_DIRECT_MODEL || llmConfig.model || 'default';
-  console.log('[LLM-Router] 🔗 Direct:', llmConfig.host, model);
+  const apiKey = (llmConfig.apiKeyEnv && process.env[llmConfig.apiKeyEnv]) || llmConfig.apiKey || '';
+  console.log('[LLM-Router] 🔗 Direct:', llmConfig.host + ':' + llmConfig.port, model, apiKey ? '(带key)' : '(无鉴权)');
 
   const payload = JSON.stringify({
     model,
@@ -213,7 +220,7 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userMessage }
     ],
-    max_tokens: options.maxTokens || 300,
+    max_tokens: options.maxTokens || parseInt(process.env.A2A_LLM_MAX_TOKENS || "300", 10),
     temperature: options.temperature || 0.7,
   });
 
@@ -226,8 +233,8 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        // [G3 修复] 优先从环境变量读取 API Key
-        'Authorization': 'Bearer ' + ((llmConfig.apiKeyEnv && process.env[llmConfig.apiKeyEnv]) || llmConfig.apiKey || ''),
+        // [本地 LLM] 无鉴权场景不发送 Authorization（否则空 Bearer 可能被拒）
+        ...(apiKey ? { 'Authorization': 'Bearer ' + apiKey } : {}),
         'Content-Length': Buffer.byteLength(payload),
       },
     }, res => {
@@ -236,7 +243,9 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
       res.on('end', () => {
         try {
           const data = JSON.parse(body);
-          const content = data.choices?.[0]?.message?.content?.trim() ||
+          // [本地推理模型] content 可能为空，需回退 reasoning_content
+          const msg = data.choices?.[0]?.message || {};
+          const content = (msg.content || msg.reasoning_content || '').trim() ||
                           data.response || data.text || data.content;
           if (content) { resolve(content.trim()); return; }
           resolve(null);
@@ -313,10 +322,9 @@ async function call(identity, systemPrompt, userMessage, options = {}) {
   }
 
   // 3. ⭐ 兜底：试用 identity.llm 直连（兼容未知框架）
-  // [G3 修复] 检查 apiKey 或 apiKeyEnv 是否可用
+  // [本地 LLM] 无鉴权场景（如 172.28.0.1:1919）不再强制要求 key
   const llmCfg = identity?.llm;
-  const hasKey = llmCfg?.apiKey || (llmCfg?.apiKeyEnv && process.env[llmCfg.apiKeyEnv]);
-  if (llmCfg?.host && hasKey) {
+  if (llmCfg?.host) {
     console.log('[LLM-Router] ⭐ 兜底: 使用 identity.llm 直连');
     try {
       const result = await ADAPTERS.direct(identity, systemPrompt, userMessage, options);
