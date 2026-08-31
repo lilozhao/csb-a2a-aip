@@ -35,3 +35,7 @@ data/audit/
 # Security keys (NEVER commit)
 config/security/*.pem
 config/security/*.key
+-e 
+# 运行时数据（勿提交）
+data/a2a-tasks.json
+topics-used.json

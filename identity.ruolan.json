@@ -17,11 +17,11 @@
     "selfie.generate": true,
     "voice.synthesize": true
   },
+  "adapter": "direct",
   "llm": {
-    "host": "api.360.cn",
-    "port": "443",
+    "host": "172.28.0.1",
+    "port": "1919",
     "path": "/v1/chat/completions",
-    "apiKeyEnv": "A2A_LLM_API_KEY",
-    "model": "z-ai/glm-5.3-flash"
+    "model": "Qwen3.6-35B-A3B-FP8"
   }
 }

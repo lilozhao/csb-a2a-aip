@@ -516,9 +516,9 @@ class A2AStandardAPI {
 
     // ⭐ 兜底：直接使用 identity.llm（兼容 v4 方式）
     // [G3 修复] 检查 apiKey 或 apiKeyEnv（支持环境变量引用）
+    // [2026-08-31] 放宽：本地无鉴权 LLM（无 apiKey/apiKeyEnv）也允许兜底直连
     const llmConfig = this.identity?.llm;
-    const hasApiKey = llmConfig?.apiKey || (llmConfig?.apiKeyEnv && process.env[llmConfig.apiKeyEnv]);
-    if (llmConfig?.host && hasApiKey) {
+    if (llmConfig?.host) {
       console.log('[A2A] ⭐ 兜底: 直接调用 identity.llm');
       return this._callLLMOriginal(safeText, metadata);
     }
@@ -571,7 +571,9 @@ class A2AStandardAPI {
         res.on('end', () => {
           try {
             const data = JSON.parse(body);
-            const content = data.choices?.[0]?.message?.content?.trim() || data.response || data.text || data.content;
+            const content = data.choices?.[0]?.message?.content?.trim() ||
+                            data.choices?.[0]?.message?.reasoning_content?.trim() ||
+                            data.response || data.text || data.content;
             if (content) { resolve(content.trim()); return; }
             resolve(null);
           } catch (e) { resolve(null); }

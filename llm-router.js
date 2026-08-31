@@ -72,7 +72,8 @@ register('openclaw', async (identity, systemPrompt, userMessage, options = {}) =
       res.on('end', () => {
         try {
           const data = JSON.parse(body);
-          const content = data.choices?.[0]?.message?.content?.trim();
+          const content = data.choices?.[0]?.message?.content?.trim() ||
+                          data.choices?.[0]?.message?.reasoning_content?.trim();
           if (content) { resolve(content); return; }
           const alt = data.response || data.text || data.content;
           if (alt) { resolve(alt.trim()); return; }
@@ -127,6 +128,7 @@ register('hermes', async (identity, systemPrompt, userMessage, options = {}) => 
         try {
           const data = JSON.parse(body);
           const content = data.choices?.[0]?.message?.content?.trim() ||
+                          data.choices?.[0]?.message?.reasoning_content?.trim() ||
                           data.response || data.text || data.content;
           if (content) { resolve(content.trim()); return; }
           resolve(null);
@@ -180,7 +182,8 @@ register('openai', async (identity, systemPrompt, userMessage, options = {}) => 
       res.on('end', () => {
         try {
           const data = JSON.parse(body);
-          const content = data.choices?.[0]?.message?.content?.trim();
+          const content = data.choices?.[0]?.message?.content?.trim() ||
+                          data.choices?.[0]?.message?.reasoning_content?.trim();
           if (content) { resolve(content); return; }
           resolve(null);
         } catch (e) {
@@ -237,6 +240,7 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
         try {
           const data = JSON.parse(body);
           const content = data.choices?.[0]?.message?.content?.trim() ||
+                          data.choices?.[0]?.message?.reasoning_content?.trim() ||
                           data.response || data.text || data.content;
           if (content) { resolve(content.trim()); return; }
           resolve(null);
@@ -314,9 +318,9 @@ async function call(identity, systemPrompt, userMessage, options = {}) {
 
   // 3. ⭐ 兜底：试用 identity.llm 直连（兼容未知框架）
   // [G3 修复] 检查 apiKey 或 apiKeyEnv 是否可用
+  // [2026-08-31] 放宽：本地无鉴权 LLM（无 apiKey/apiKeyEnv）也允许兜底直连
   const llmCfg = identity?.llm;
-  const hasKey = llmCfg?.apiKey || (llmCfg?.apiKeyEnv && process.env[llmCfg.apiKeyEnv]);
-  if (llmCfg?.host && hasKey) {
+  if (llmCfg?.host) {
     console.log('[LLM-Router] ⭐ 兜底: 使用 identity.llm 直连');
     try {
       const result = await ADAPTERS.direct(identity, systemPrompt, userMessage, options);
