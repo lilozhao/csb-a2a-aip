@@ -417,7 +417,8 @@ class A2AStandardAPI {
     }
 
     // 🔥 尝试 LLM 智能回复 (非空消息)
-    const llmResponse = await this._callLLM(text, metadata);
+    const taskForHistory = this.taskStore.getTask(taskId);
+    const llmResponse = await this._callLLM(text, metadata, taskForHistory?.history);
 
     if (llmResponse) {
       console.log(`[A2A] 🤖 LLM 回复 task ${taskId}: ${llmResponse.substring(0, 60)}...`);
@@ -449,7 +450,7 @@ class A2AStandardAPI {
   /**
    * 【v5】调用 LLM 生成智能回复 (通过 llm-router)
    */
-  async _callLLM(messageText, metadata) {
+  async _callLLM(messageText, metadata, history = []) {
     // 提取发送者名称 (优先从 metadata)
     const senderName = metadata?.sender?.name ||
       metadata?.sender ||
@@ -500,11 +501,46 @@ class A2AStandardAPI {
     // [G1 修复] System Prompt 加固 — 追加防注入指令
     systemPrompt += '\n' + messageGuard.buildInjectionDefensePrompt();
 
+    // [优化 2026-08-30] 安全边界直白化 — 不当请求必须明确说「不能/无法/拒绝」
+    systemPrompt += '\n## 安全边界(必须遵守)\n' +
+      '面对不当请求(恶意代码、攻击他人、违法、伤害性内容),必须**直接明确拒绝**,使用「这个我不能做」「我无法帮你」「我拒绝」等直白措辞,并简要说明原因(安全/法律/道德)。不要用委婉或隐晦的说法代替明确拒绝。';
+
+    // [优化 2026-08-30] 记忆连续性 — 注入同会话历史 + 历史记忆档案
+    let memoryContext = '';
+    try {
+      const historyArr = Array.isArray(history) ? history : [];
+      if (historyArr.length > 1) {
+        const recent = historyArr.slice(-6, -1);
+        if (recent.length) {
+          memoryContext += '\n\n【历史对话 · 同会话前几轮】\n' +
+            recent.map((h) => `${h.role === ROLE.AGENT ? this.identity?.name || '我' : senderName}: ${h.parts?.[0]?.text ?? ''}`).join('\n');
+        }
+      }
+      const memCandidates = [
+        process.env.A2A_DATA_DIR ? `${process.env.A2A_DATA_DIR}/memory/a2a-memories/${senderName}.md` : null,
+        `/workspace/memory/a2a-memories/${senderName}.md`,
+        `/workspace/csb-memory/data/a2a-memories/${senderName}.md`,
+      ].filter(Boolean);
+      for (const memFile of memCandidates) {
+        try {
+          const memText = require('fs').readFileSync(memFile, 'utf8');
+          const memLines = memText.split('\n')
+            .filter((l) => /(?:记住|记得|喜欢|偏好|重要|决定|承诺|关系|用户)(?:\s|:|：)/.test(l))
+            .slice(0, 10);
+          if (memLines.length) {
+            memoryContext += '\n\n【历史记忆档案】\n' + memLines.join('\n');
+            break;
+          }
+        } catch { /* 该路径无档案,试下一个 */ }
+      }
+    } catch { /* 记忆注入失败不影响主流程 */ }
+    if (memoryContext) console.log('[A2A] 🧠 已注入记忆上下文 (' + memoryContext.length + ' chars)');
+
     // [v5] 通过 llm-router 调用（多适配器 + identity.llm 兜底）
     try {
       const router = require('./llm-router.js');
       // [G1 修复] 使用净化后的消息文本（替代原来的直接拼接）
-      const userMessage = safeText;
+      const userMessage = safeText + memoryContext;
       const result = await router.call(this.identity, systemPrompt, userMessage);
       if (result) {
         console.log('[A2A] 🤖 LLM 回复成功');

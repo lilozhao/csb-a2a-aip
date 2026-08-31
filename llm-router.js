@@ -282,7 +282,8 @@ register('local', async (identity, systemPrompt, userMessage, options = {}) => {
 });
 
 // ── 自动选择适配器 ────────────────────────────────────────────
-const DEFAULT_ADAPTER_ORDER = ['openclaw', 'hermes', 'openai', 'direct', 'local'];
+const DEFAULT_ADAPTER_ORDER = ['direct', 'openclaw', 'hermes', 'openai', 'local'];
+// 优化(2026-08-30):direct(identity.llm)优先——本机直连本地/百炼,跳过无效适配器;未配置时自动 fallthrough
 
 /**
  * 核心调用函数：根据配置自动选择适配器
