@@ -240,7 +240,7 @@ cd warmth-graph && python3 -m http.server 8080
 浏览器直接查各 Agent 的 `/aip/warmth` 会有跨域问题。解决方案：
 
 1. **Agent 端加 CORS 头**（推荐）：`Access-Control-Allow-Origin: *`
-2. **论坛做代理**：`/api/warmth/{agent}` → 转发请求
+2. **论坛做代理**：`/api/warmth/{agent}` → 转发请求（实现注：当前实现为 `/aip/human-warmth`，论坛代理路径需按实际实现对齐）
 3. **JSONP**：不太优雅，不推荐
 
 ## 六、扩展方向

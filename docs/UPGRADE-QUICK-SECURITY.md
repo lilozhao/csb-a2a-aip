@@ -53,7 +53,7 @@ export A2A_SECURITY_HANDSHAKE_USER_PUBKEY='{"crv":"Ed25519","x":"rpNYnf224QbmIuK
 # ⚠️ 日志路径以你的 start.sh 为准（常见是 logs/server.log，不是 a2a-server.log！）
 LOG_FILE=${A2A_LOG_FILE:-logs/server.log}   # 按你实际启动脚本的日志路径调整
 curl -sf localhost:3100/a2a/aid | grep -q agent_id && echo "① AID 端点 OK" || echo "① ❌ AID 端点失败"   # ① 必须 curl 成功
-curl -sf localhost:3100/a2a/handshake/status | grep -q '"enabled":true' && echo "② 握手端点 OK" || echo "② ❌ 握手端点失败"  # ② 明确检查 true
+curl -sf localhost:3100/a2a/handshake/status | grep -q '"enabled":true' && echo "② 握手端点 OK" || echo "② ❌ 握手端点失败（未配置 A2A_SECURITY_HANDSHAKE_AID/KEY 时不启用，属预期）"  # ② 明确检查 true；前提：已配置握手密钥
 test "$(grep -c 'BEGIN PRIVATE KEY' $A2A_SECURITY_HANDSHAKE_KEY)" -ge 1 && echo "③ PEM 格式 OK" || echo "③ ❌ 私钥非 PEM"   # ③ 显式判失败
 grep -iE "私钥解析失败|JWK|unsupported" "$LOG_FILE" 2>/dev/null && echo "④ ❌ 有警告！" || echo "④ 无警告 OK"   # ④ 有输出=有警告=失败
 test -n "$A2A_SECURITY_HANDSHAKE_USER_PUBKEY" && echo "⑤ 用户公钥 OK" || echo "⑤ ❌ 用户公钥未配置"          # ⑤ 显式判失败

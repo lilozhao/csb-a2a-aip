@@ -17,7 +17,7 @@
 ```
 csb-a2a-aip/
 ├── security-adapter.js      # 适配层：加载 csb-security，失败降级 legacy
-├── security-handshake.js    # /a2a/handshake 对等握手路由（Phase 3）
+├── security-handshake.js    # /a2a/handshake 对等握手路由（Phase 3；由 security-adapter 导出，server_v5 挂载）
 ├── server_v5.js             # 集成点（trust / e2e / rateLimiter / audit / handshake / anomaly）
 └── a2a-standard-api-v5.js   # 限流双模式 + 异常检测接入
 ```
