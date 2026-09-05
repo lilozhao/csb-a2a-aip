@@ -2,8 +2,13 @@
 # A2A Server 启动脚本
 
 A2A_DIR="$(cd "$(dirname "$0")" && pwd)"
-LOG_DIR="${A2A_DIR}/logs"
+# 🔧 v5.0.1: 日志路径支持 A2A_LOG_FILE 环境变量覆盖（默认 logs/server.log）
+LOG_DIR="$(dirname "${A2A_LOG_FILE:-${A2A_DIR}/logs/server.log}")"
 PID_FILE="${A2A_DIR}/server.pid"
+
+# 🔧 v5.0.1: 持久化环境变量（watchdog 重启后不丢）
+export A2A_LOG_FILE="${A2A_LOG_FILE:-${A2A_DIR}/logs/server.log}"
+export A2A_DATA_DIR="${A2A_DATA_DIR:-${A2A_DIR}/data}"
 
 # 检查 identity.json
 if [ ! -f "${A2A_DIR}/identity.json" ]; then
@@ -17,6 +22,14 @@ fi
 
 # 创建日志目录
 mkdir -p "${LOG_DIR}"
+mkdir -p "${A2A_DATA_DIR}"
+
+# 🔧 v5.0.1: 升级时一并确保 csb-security/data 存在（简一坑 #2）
+CSB_SECURITY_DIR="${A2A_DIR}/../csb-security"
+if [ -d "${CSB_SECURITY_DIR}" ] && [ ! -d "${CSB_SECURITY_DIR}/data" ]; then
+    mkdir -p "${CSB_SECURITY_DIR}/data"
+    echo "✅ 已创建 ${CSB_SECURITY_DIR}/data"
+fi
 
 # 🔧 端口冲突检测
 PORT=$(node -e "console.log(require('./identity.json').port || 3100)")
@@ -56,21 +69,30 @@ fi
 # 启动新进程（v5 分层提示词 + LLM Router 版）
 echo "🚀 启动 A2A Server (v5 分层提示词版)..."
 cd "${A2A_DIR}"
-nohup node server_v5.js > "${LOG_DIR}/server.log" 2>&1 &
+nohup node server_v5.js > "${A2A_LOG_FILE}" 2>&1 &
 NEW_PID=$!
 echo "$NEW_PID" > "${PID_FILE}"
 
 sleep 2
 
-# 检查是否启动成功
-if kill -0 "$NEW_PID" 2>/dev/null; then
+# 检查是否启动成功（简一坑 #3：显式 curl 探活，不再假阳性）
+HEALTH_OK=0
+if curl -s "http://localhost:${PORT}/health" --connect-timeout 3 > /dev/null 2>&1; then
+    HEALTH_OK=1
+fi
+
+if kill -0 "$NEW_PID" 2>/dev/null && [ "${HEALTH_OK}" = "1" ]; then
     # 从 identity.json 读取端口
     PORT=$(node -e "console.log(require('./identity.json').port || 3100)")
-    echo "✅ A2A Server 已启动 (PID: $NEW_PID, 端口: $PORT)"
+    echo "✅ A2A Server 已启动 (PID: $NEW_PID, 端口: ${PORT})"
+    echo "   日志: ${A2A_LOG_FILE}"
+    echo "   数据: ${A2A_DATA_DIR}"
     echo ""
     echo "测试命令："
     echo "  curl http://localhost:${PORT}/health"
 else
-    echo "❌ 启动失败，请检查日志："
-    echo "  cat ${LOG_DIR}/server.log"
+    echo "❌ 启动失败（PID 存活=${NEW_PID}, 健康检查=${HEALTH_OK}）"
+    echo "   cat ${A2A_LOG_FILE}"
+    [ "${HEALTH_OK}" = "0" ] && [ -f "${A2A_LOG_FILE}" ] && tail -20 "${A2A_LOG_FILE}"
+    exit 1
 fi

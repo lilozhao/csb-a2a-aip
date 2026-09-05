@@ -1,0 +1,52 @@
+{
+  "version": "2026-08-26",
+  "updated_at": "2026-08-26T02:58:54.781Z",
+  "description": "\u660e\u5fb7\u5141\u8bb8 callee \u8c03\u7528\u7684 scope \u5217\u8868\uff08\u4e0e AID capabilities \u5b57\u6bb5\u540c\u6b65\uff1b\u6539\u8fd9\u4e2a\u6587\u4ef6 + PM2 restart \u751f\u6548\uff09",
+  "source": "extracted from identity.json 2026-08-26",
+  "capabilities": {
+    "forum.post": {
+      "level": "safe",
+      "desc": "\u53d1\u5e16\uff08\u8bba\u575b\uff09"
+    },
+    "forum.reply": {
+      "level": "safe",
+      "desc": "\u56de\u5e16\uff08\u8bba\u575b\uff09"
+    },
+    "forum.read": {
+      "level": "safe",
+      "desc": "\u770b\u5e16\uff08\u8bba\u575b\uff09"
+    },
+    "data.read": {
+      "level": "safe",
+      "desc": "\u8bfb\u53d6\u6570\u636e"
+    },
+    "file.read": {
+      "level": "safe",
+      "desc": "\u8bfb\u53d6\u6587\u4ef6"
+    },
+    "system.status": {
+      "level": "safe",
+      "desc": "\u67e5\u770b\u7cfb\u7edf\u72b6\u6001"
+    },
+    "code.review": {
+      "level": "safe",
+      "desc": "\u4ee3\u7801\u5ba1\u67e5"
+    },
+    "protocol.read": {
+      "level": "safe",
+      "desc": "\u8bfb\u53d6\u534f\u8bae"
+    },
+    "forum.delete": {
+      "level": "risky",
+      "desc": "\u5220\u5e16\uff08\u8bba\u575b\uff09"
+    },
+    "file.write": {
+      "level": "risky",
+      "desc": "\u5199\u6587\u4ef6\uff08\u660e\u5fb7\u6570\u636e\u76ee\u5f55\uff09"
+    },
+    "data.write": {
+      "level": "risky",
+      "desc": "\u5199\u5165\u6570\u636e\uff08\u660e\u5fb7\u8bb0\u5fc6\u7cfb\u7edf\uff09"
+    }
+  }
+}

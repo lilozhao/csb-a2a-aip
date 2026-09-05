@@ -1,0 +1,35 @@
+[Unit]
+Description=明德 A2A Registry (3099) v5 管理服务
+Documentation=file:/root/.openclaw/workspace/csb-a2a-aip/manage-3099.sh
+After=network.target
+
+[Service]
+# 🔧 v5.0.1: Type=simple（ExecStart 进程跑多久，service 就跑多久）
+# guard 模式：前台循环每 30s 检查 3099 进程，挂了自动 restart
+Type=simple
+User=root
+WorkingDirectory=/root/.openclaw/workspace/csb-a2a-aip
+
+# 🔧 v5.0.1: systemd 默认 PATH 不含 nvm，必须显式设（否则 nohup node 失败）
+Environment=PATH=/root/.nvm/versions/node/v24.13.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=NODE_ENV=production
+
+# 🚀 启动：guard 模式前台循环（systemd 看到主进程不退出）
+ExecStart=/bin/bash /root/.openclaw/workspace/csb-a2a-aip/manage-3099.sh guard
+
+# 🛑 停止：调 manage-3099.sh stop（清理 PID 文件 + 杀所有相关进程）
+ExecStop=/bin/bash /root/.openclaw/workspace/csb-a2a-aip/manage-3099.sh stop
+
+# SIGTERM 后给点时间让 start-registry.js 清理
+TimeoutStopSec=15
+
+# 进程退出后重启（⚠️ 关键是 Restart=always，guard 进程死了会重启）
+Restart=always
+RestartSec=10
+
+# 日志统一到 /var/log（systemd 标准路径）
+StandardOutput=file:/var/log/mingde-registry.log
+StandardError=file:/var/log/mingde-registry-error.log
+
+[Install]
+WantedBy=multi-user.target

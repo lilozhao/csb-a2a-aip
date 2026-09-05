@@ -49,7 +49,7 @@ register('openclaw', async (identity, systemPrompt, userMessage, options = {}) =
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userMessage }
     ],
-    max_tokens: options.maxTokens || parseInt(process.env.A2A_LLM_MAX_TOKENS || "300", 10),
+    max_tokens: options.maxTokens || 300,
     temperature: options.temperature || 0.7,
   });
 
@@ -72,9 +72,8 @@ register('openclaw', async (identity, systemPrompt, userMessage, options = {}) =
       res.on('end', () => {
         try {
           const data = JSON.parse(body);
-          // [本地推理模型] content 可能为空，需回退 reasoning_content
-          const msg = data.choices?.[0]?.message || {};
-          const content = (msg.content || msg.reasoning_content || '').trim();
+          const content = data.choices?.[0]?.message?.content?.trim() ||
+                          data.choices?.[0]?.message?.reasoning_content?.trim();
           if (content) { resolve(content); return; }
           const alt = data.response || data.text || data.content;
           if (alt) { resolve(alt.trim()); return; }
@@ -108,7 +107,7 @@ register('hermes', async (identity, systemPrompt, userMessage, options = {}) => 
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userMessage }
     ],
-    max_tokens: options.maxTokens || parseInt(process.env.A2A_LLM_MAX_TOKENS || "300", 10),
+    max_tokens: options.maxTokens || 300,
     temperature: options.temperature || 0.7,
   });
 
@@ -128,9 +127,8 @@ register('hermes', async (identity, systemPrompt, userMessage, options = {}) => 
       res.on('end', () => {
         try {
           const data = JSON.parse(body);
-          // [本地推理模型] content 可能为空，需回退 reasoning_content
-          const msg = data.choices?.[0]?.message || {};
-          const content = (msg.content || msg.reasoning_content || '').trim() ||
+          const content = data.choices?.[0]?.message?.content?.trim() ||
+                          data.choices?.[0]?.message?.reasoning_content?.trim() ||
                           data.response || data.text || data.content;
           if (content) { resolve(content.trim()); return; }
           resolve(null);
@@ -161,7 +159,7 @@ register('openai', async (identity, systemPrompt, userMessage, options = {}) => 
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userMessage }
     ],
-    max_tokens: options.maxTokens || parseInt(process.env.A2A_LLM_MAX_TOKENS || "300", 10),
+    max_tokens: options.maxTokens || 300,
     temperature: options.temperature || 0.7,
   });
 
@@ -184,9 +182,8 @@ register('openai', async (identity, systemPrompt, userMessage, options = {}) => 
       res.on('end', () => {
         try {
           const data = JSON.parse(body);
-          // [本地推理模型] content 可能为空，需回退 reasoning_content
-          const msg = data.choices?.[0]?.message || {};
-          const content = (msg.content || msg.reasoning_content || '').trim();
+          const content = data.choices?.[0]?.message?.content?.trim() ||
+                          data.choices?.[0]?.message?.reasoning_content?.trim();
           if (content) { resolve(content); return; }
           resolve(null);
         } catch (e) {
@@ -211,8 +208,7 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
 
   const timeout = options.timeout || 25000;
   const model = process.env.A2A_DIRECT_MODEL || llmConfig.model || 'default';
-  const apiKey = (llmConfig.apiKeyEnv && process.env[llmConfig.apiKeyEnv]) || llmConfig.apiKey || '';
-  console.log('[LLM-Router] 🔗 Direct:', llmConfig.host + ':' + llmConfig.port, model, apiKey ? '(带key)' : '(无鉴权)');
+  console.log('[LLM-Router] 🔗 Direct:', llmConfig.host, model);
 
   const payload = JSON.stringify({
     model,
@@ -220,7 +216,7 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userMessage }
     ],
-    max_tokens: options.maxTokens || parseInt(process.env.A2A_LLM_MAX_TOKENS || "300", 10),
+    max_tokens: options.maxTokens || 500,
     temperature: options.temperature || 0.7,
   });
 
@@ -233,8 +229,8 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        // [本地 LLM] 无鉴权场景不发送 Authorization（否则空 Bearer 可能被拒）
-        ...(apiKey ? { 'Authorization': 'Bearer ' + apiKey } : {}),
+        // [G3 修复] 优先从环境变量读取 API Key
+        'Authorization': 'Bearer ' + ((llmConfig.apiKeyEnv && process.env[llmConfig.apiKeyEnv]) || llmConfig.apiKey || ''),
         'Content-Length': Buffer.byteLength(payload),
       },
     }, res => {
@@ -243,9 +239,8 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
       res.on('end', () => {
         try {
           const data = JSON.parse(body);
-          // [本地推理模型] content 可能为空，需回退 reasoning_content
-          const msg = data.choices?.[0]?.message || {};
-          const content = (msg.content || msg.reasoning_content || '').trim() ||
+          const content = data.choices?.[0]?.message?.content?.trim() ||
+                          data.choices?.[0]?.message?.reasoning_content?.trim() ||
                           data.response || data.text || data.content;
           if (content) { resolve(content.trim()); return; }
           resolve(null);
@@ -287,7 +282,8 @@ register('local', async (identity, systemPrompt, userMessage, options = {}) => {
 });
 
 // ── 自动选择适配器 ────────────────────────────────────────────
-const DEFAULT_ADAPTER_ORDER = ['openclaw', 'hermes', 'openai', 'direct', 'local'];
+const DEFAULT_ADAPTER_ORDER = ['direct', 'openclaw', 'hermes', 'openai', 'local'];
+// 优化(2026-08-30):direct(identity.llm)优先——本机直连本地/百炼,跳过无效适配器;未配置时自动 fallthrough
 
 /**
  * 核心调用函数：根据配置自动选择适配器
@@ -322,7 +318,8 @@ async function call(identity, systemPrompt, userMessage, options = {}) {
   }
 
   // 3. ⭐ 兜底：试用 identity.llm 直连（兼容未知框架）
-  // [本地 LLM] 无鉴权场景（如 172.28.0.1:1919）不再强制要求 key
+  // [G3 修复] 检查 apiKey 或 apiKeyEnv 是否可用
+  // [2026-08-31] 放宽：本地无鉴权 LLM（无 apiKey/apiKeyEnv）也允许兜底直连
   const llmCfg = identity?.llm;
   if (llmCfg?.host) {
     console.log('[LLM-Router] ⭐ 兜底: 使用 identity.llm 直连');

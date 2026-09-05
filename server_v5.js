@@ -285,6 +285,55 @@ if (aipIntegration) {
 // 对等握手端点 (Phase 3, CSB-Security §7) — 密钥就绪才启用
 const handshakeAIDPath = process.env.A2A_SECURITY_HANDSHAKE_AID;
 const handshakeKeyPath = process.env.A2A_SECURITY_HANDSHAKE_KEY;
+
+// 🔧 v5.0.1: capabilities 拆到独立文件（data/capabilities.json），带热更新 watcher
+const CAPABILITIES_PATH = process.env.A2A_CAPABILITIES_PATH
+  || path.join(__dirname, 'data', 'capabilities.json');
+
+function loadCapabilities() {
+  try {
+    if (fs.existsSync(CAPABILITIES_PATH)) {
+      const doc = JSON.parse(fs.readFileSync(CAPABILITIES_PATH, 'utf8'));
+      const caps = doc.capabilities || {};
+      console.log(`[CAPABILITIES] ✅ 从 ${CAPABILITIES_PATH} 加载 ${Object.keys(caps).length} 个 scope`);
+      return caps;
+    } else {
+      console.warn(`[CAPABILITIES] ⚠️ ${CAPABILITIES_PATH} 不存在，降级到 ['a2a:send']`);
+      return {};
+    }
+  } catch (e) {
+    console.error('[CAPABILITIES] ❌ 加载失败:', e.message);
+    return {};
+  }
+}
+
+let capabilities = loadCapabilities();
+let allowedScopes = Object.keys(capabilities);
+
+// 热更新：capabilities.json 改动后 1 秒防抖重读
+if (fs.existsSync(CAPABILITIES_PATH)) {
+  let watcherTimer = null;
+  try {
+    fs.watch(CAPABILITIES_PATH, () => {
+      if (watcherTimer) clearTimeout(watcherTimer);
+      watcherTimer = setTimeout(() => {
+        const newCaps = loadCapabilities();
+        const oldLen = allowedScopes.length;
+        capabilities = newCaps;
+        allowedScopes = Object.keys(newCaps);
+        console.log(`[CAPABILITIES] 🔄 热更新: ${oldLen} → ${allowedScopes.length} 个 scope`);
+        // ⚠️ 注意：handshake-full.js 的 HandshakeManager 闭包捕获 calleeAllowedScopes
+        //    改文件后需要重建 manager 才能让新 scope 生效
+        //    当前 PM2 守护 + csb-a2a-aip 的 handshake 频次低（每次握手5步），
+        //    重启成本可接受。建议改文件后手动 pm2 delete+resurrect 让新配置全局生效。
+      }, 1000);
+    });
+    console.log(`[CAPABILITIES] 👀 watcher 已启动（修改 ${path.basename(CAPABILITIES_PATH)} 自动重读）`);
+  } catch (e) {
+    console.warn('[CAPABILITIES] watcher 启动失败:', e.message);
+  }
+}
+
 if (securityAdapter.source === 'csb-security' && handshakeAIDPath && handshakeKeyPath) {
   try {
     const fs2 = require('fs');
@@ -299,7 +348,10 @@ if (securityAdapter.source === 'csb-security' && handshakeAIDPath && handshakeKe
       handshakeManager,
       calleeAID,
       calleePrivateKey: calleeKey,
-      calleeAllowedScopes: (identity.capabilities && Object.keys(identity.capabilities)) || ['a2a:send'],
+      // 🔧 v5.0.1: 优先用 capabilities.json，回退 identity.capabilities，最后 ['a2a:send']
+      calleeAllowedScopes: allowedScopes.length > 0
+        ? allowedScopes
+        : (identity.capabilities && Object.keys(identity.capabilities)) || ['a2a:send'],
       userPublicKey: (() => {
         const raw = process.env.A2A_SECURITY_HANDSHAKE_USER_PUBKEY;
         if (!raw) return null;
@@ -313,6 +365,7 @@ if (securityAdapter.source === 'csb-security' && handshakeAIDPath && handshakeKe
       onSession: (session) => trustBridge.registerHandshakeSession(session),
     }));
     console.log(`[A2A] ✅ 对等握手端点已启用: /a2a/handshake (${calleeAID.agent_id})`);
+    console.log(`[A2A]    allowedScopes: [${allowedScopes.join(', ')}]`);
   } catch (e) {
     console.warn('[A2A] ⚠️ 握手端点启用失败（AID/密钥配置错误）:', e.message);
   }
@@ -415,10 +468,10 @@ app.get('/a2a/aid', (req, res) => {
     }
     // 兜底：从本地身份生成最小 AID 视图
     return res.json({
-      agent_id: `${identity.name}@${process.env.A2A_HOST || 'localhost'}:${PORT}`,
+      agent_id: `${identity.name}@${process.env.A2A_HOST || 'localhost'}:${port}`,
       name: identity.name,
       emoji: identity.emoji || '',
-      endpoint: `http://${process.env.A2A_HOST || 'localhost'}:${PORT}/a2a/json-rpc`,
+      endpoint: `http://${process.env.A2A_HOST || 'localhost'}:${port}/a2a/json-rpc`,
       capabilities: identity.capabilities || {},
     });
   } catch (e) {

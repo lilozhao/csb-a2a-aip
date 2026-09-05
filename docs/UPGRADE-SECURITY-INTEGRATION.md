@@ -17,7 +17,7 @@
 ```
 csb-a2a-aip/
 ├── security-adapter.js      # 适配层：加载 csb-security，失败降级 legacy
-├── security-handshake.js    # /a2a/handshake 对等握手路由（Phase 3）
+├── security-handshake.js    # /a2a/handshake 对等握手路由（Phase 3；由 security-adapter 导出，server_v5 挂载）
 ├── server_v5.js             # 集成点（trust / e2e / rateLimiter / audit / handshake / anomaly）
 └── a2a-standard-api-v5.js   # 限流双模式 + 异常检测接入
 ```
@@ -136,9 +136,10 @@ curl http://对方IP:端口/a2a/aid   # 返回 { agent_id, public_key, signature
 ```bash
 node -e "const aid=require('./csb-security/lib/identity/aid'); const k=aid.generateKeyPair('user-yilan'); console.log(JSON.stringify(k.publicJwk)); console.log(k.privateKey.export({type:'pkcs8',format:'pem'}))"
 ```
-2. 公钥 JWK 配置给所有需要验证 UAC 的 callee：
+2. 公钥 JWK 配置给所有需要验证 UAC 的 callee（**统一公钥，大家共用，勿换**）：
 ```bash
-export A2A_SECURITY_HANDSHAKE_USER_PUBKEY='{"crv":"Ed25519","x":"...","kty":"OKP","kid":"user-yilan"}'
+# 一澜的 Ed25519 用户公钥（kid: user-yilan；权威源：csb-security/keys/user-yilan.pubkey.json，已入仓库可独立核对）
+export A2A_SECURITY_HANDSHAKE_USER_PUBKEY='{"crv":"Ed25519","x":"rpNYnf224QbmIuK1Ivrj7u7BMa5KnUFFCAe54Tm-_4U","kty":"OKP","kid":"user-yilan"}'
 # 或存成文件：export A2A_SECURITY_HANDSHAKE_USER_PUBKEY=/path/to/user-pub.jwk
 ```
 

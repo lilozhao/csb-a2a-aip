@@ -26,6 +26,8 @@
    - curl http://localhost:3100/health（应返回 version 5.0.0）
    - curl http://csbc.lilozkzy.top:3099/agents（确认注册成功，version 显示 5.0.0）
 
+【v5.0.1 提示】升级后如果目录结构是"仓库并列"，csb-a2a-aip 的 start.sh 会自动 `mkdir -p ../csb-security/data`；若是自定义布局，请手动确保 csb-security/data 存在。
+
 【完成后回报】升级结果 + 健康检查输出 + 注册表确认
 ```
 

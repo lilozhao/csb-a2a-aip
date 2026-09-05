@@ -296,13 +296,16 @@ app.post('/register', (req, res) => {
     finalAliases = registry.agents[existingIndex].aliases || [];
   }
 
+  // [v5.0.3] host sanitize：去掉前端可能误带的 http:// 或 https:// 前缀
+  const cleanHost = String(host).replace(/^https?:\/\//, '');
+
   // port=0 表示无公网地址：URL 字段省略端口（不生成 http://coze:0 这种）
-  const url = (port && port > 0) ? `http://${host}:${port}` : `http://${host}`;
-  const agentCard = (port && port > 0) ? `http://${host}:${port}/.well-known/agent-card.json` : null;
+  const url = (port && port > 0) ? `http://${cleanHost}:${port}` : `http://${cleanHost}`;
+  const agentCard = (port && port > 0) ? `http://${cleanHost}:${port}/.well-known/agent-card.json` : null;
 
   const agentInfo = {
     name,
-    host,
+    host: cleanHost,
     port,
     version: version || '',
     platform: platform || '',

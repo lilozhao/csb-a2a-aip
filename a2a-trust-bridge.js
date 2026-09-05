@@ -22,7 +22,7 @@
  *   // 消息处理时（a2a-standard-api-v5.js _resolveSenderInfo）：
  *   const t = trustBridge.resolveTrustLevel(senderName, senderUrl, metadata);
  *
- * 版本: 1.0.0 | 2026-08-24 | 若兰 🌸
+ * 版本: 1.0.0 | 2026-08-24 | 若兰
  */
 
 const SESSION_TTL_MS = 5 * 60 * 1000; // 默认 5 分钟（与握手 session ttl 对齐）

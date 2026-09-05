@@ -60,6 +60,49 @@ const DEFAULT_CONFIG = {
 
 class DelegationManager {
   /**
+   * 委托审计事件落盘（X-1 · 2026-09-05）
+   * 目的：委托动作可被 GDI 观测（verify 维度审计源）——机制化而非靠自觉。
+   * 格式：JSONL，与 csb-security AuditLog / GDI verify.js 同构（哈希链）：
+   *   { timestamp, event_type, caller_id, callee_id, result, ..., prev_hash, hash }
+   *   hash = sha256(JSON.stringify(除 hash/signature 外全部字段含 prev_hash))
+   */
+  _appendAudit(event) {
+    const auditPath = this.config.auditPath || (this.config.storePath || './delegations.json').replace(/\.json$/, '-audit.jsonl');
+    try {
+      const dir = path.dirname(auditPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      let prevHash = 'GENESIS';
+      if (fs.existsSync(auditPath)) {
+        const lines = fs.readFileSync(auditPath, 'utf8').split('\n').filter(Boolean);
+        if (lines.length) prevHash = JSON.parse(lines[lines.length - 1]).hash;
+      }
+      const rest = { ...event, prev_hash: prevHash };
+      const hash = crypto.createHash('sha256').update(JSON.stringify(rest)).digest('hex');
+      fs.appendFileSync(auditPath, JSON.stringify({ ...rest, hash }) + '\n');
+      console.log(`[Delegation] 📜 审计: ${event.event_type} ${event.caller_id} → ${event.callee_id || '-'}`);
+    } catch (e) {
+      console.warn('[Delegation] ⚠️ audit 落盘失败:', e.message);
+    }
+  }
+
+  /**
+   * 构造委托审计事件（GDI verify 可消费字段）
+   */
+  _buildAudit(action, t, extra = {}) {
+    return {
+      timestamp: new Date().toISOString(),
+      event_type: `delegation.${action}`,
+      caller_id: t.grantor || null,
+      callee_id: t.grantee || null,
+      result: 'success',
+      delegation_id: t.id || null,
+      scope: t.scope ? JSON.stringify(t.scope) : null,
+      level: t.level || null,
+      ...extra,
+    };
+  }
+
+  /**
    * @param {object} config - 配置
    * @param {string} config.storePath - 信任列表存储路径
    * @param {string} config.defaultLevel - 默认委托等级
@@ -115,6 +158,7 @@ class DelegationManager {
     }
 
     this._save();
+    this._appendAudit(this._buildAudit('grant', entry));
     return entry;
   }
 
@@ -129,9 +173,11 @@ class DelegationManager {
       console.log(`[Delegation] ⚠️ 未找到委托: ${delegationId}`);
       return false;
     }
+    const removed = this.trusts[idx];
     this.trusts.splice(idx, 1);
     console.log(`[Delegation] 🚫 撤销委托: ${delegationId}`);
     this._save();
+    this._appendAudit(this._buildAudit('revoke', removed));
     return true;
   }
 
@@ -151,6 +197,7 @@ class DelegationManager {
     if (removed > 0) {
       console.log(`[Delegation] 🚫 已撤销 ${removed} 条 ${grantor} 的委托`);
       this._save();
+      this._appendAudit(this._buildAudit('revoke_all', { grantor, grantee: grantee || null, id: null }, { removed }));
     }
     return removed;
   }
