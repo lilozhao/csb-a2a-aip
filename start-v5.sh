@@ -1,60 +1,42 @@
-#!/bin/bash
-# A2A v5 实例启动脚本 - 分层提示词 + LLM Router 版
-# 用法: bash start-v5.sh ruolan
-
-A2A_DIR="$(cd "$(dirname "$0")" && pwd)"
-LOG_DIR="${A2A_DIR}/logs"
-INSTANCE_DIR="$1"
-
-if [ -z "${INSTANCE_DIR}" ]; then
-    echo "❌ 用法: $0 <实例目录>"
-    echo "   实例: ruolan, ruolan-academic, ..."
-    echo "   或: $0 instances/ruolan"
-    exit 1
+#!/bin/sh
+# A2A Server v5 launcher (csb-a2a-aip)
+# 用法: ./start-v5.sh [--foreground]
+cd "$(dirname "$0")"
+export A2A_PORT=${A2A_PORT:-$(node -e "console.log(require('./identity.json').port||3100)")}
+# 加载 LLM 配置（含 API key，不入库）
+if [ -f .env.a2a ]; then
+  . ./.env.a2a
+fi
+# CSB-Security 握手配置（AID/私钥/统一用户公钥）
+export A2A_SECURITY_HANDSHAKE_AID=/home/node/.openclaw/workspace/csb-security/data/Jeason-aid.json
+export A2A_SECURITY_HANDSHAKE_KEY=/home/node/.openclaw/workspace/csb-security/data/Jeason-private-key.pem
+export A2A_SECURITY_HANDSHAKE_USER_PUBKEY='{"crv":"Ed25519","x":"rpNYnf224QbmIuK1Ivrj7u7BMa5KnUFFCAe54Tm-_4U","kty":"OKP","kid":"user-yilan"}'
+if [ "$1" = "--foreground" ]; then
+  exec node server_v5.js
 fi
 
-# 支持简写
-if [[ "${INSTANCE_DIR}" != instances/* && "${INSTANCE_DIR}" != */identity.json ]]; then
-    INSTANCE_DIR="instances/${INSTANCE_DIR}"
-fi
-if [[ "${INSTANCE_DIR}" == */identity.json ]]; then
-    INSTANCE_DIR="$(dirname "${INSTANCE_DIR}")"
-fi
-
-INSTANCE_DIR="${A2A_DIR}/${INSTANCE_DIR}"
-INSTANCE_NAME=$(node -e "try { console.log(require('${INSTANCE_DIR}/identity.json').name || 'unknown') } catch(e) { console.log('unknown') }")
-PORT=$(node -e "try { console.log(require('${INSTANCE_DIR}/identity.json').port || 3100) } catch(e) { console.log('3100') }")
-PID_FILE="${INSTANCE_DIR}/server.pid"
-
-echo "🔍 [${INSTANCE_NAME}] 检查端口 ${PORT} 是否被占用..."
-
-# 停止旧进程
-if [ -f "${PID_FILE}" ]; then
-    OLD_PID=$(cat "${PID_FILE}")
-    if kill -0 "$OLD_PID" 2>/dev/null; then
-        echo "🛑 [${INSTANCE_NAME}] 停止旧进程 (PID: $OLD_PID)..."
-        kill "$OLD_PID"
-        sleep 2
+# 启动前自动停止旧进程（防 EADDRINUSE）
+stop_old() {
+  # 1) 读 server.pid（上次记录的 PID）
+  if [ -f server.pid ]; then
+    OLD_PID=$(cat server.pid 2>/dev/null)
+    if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+      echo "🛑 停止旧进程 (PID $OLD_PID)..."
+      kill "$OLD_PID" 2>/dev/null
+      sleep 2
+      kill -0 "$OLD_PID" 2>/dev/null && kill -9 "$OLD_PID" 2>/dev/null
     fi
-    rm -f "${PID_FILE}"
-fi
+    rm -f server.pid
+  fi
+  # 2) 按进程名清理残留（防 pid 文件丢失/漂移）
+  for P in $(pgrep -f 'node server_v5.js' 2>/dev/null); do
+    [ "$P" != "$$" ] && kill "$P" 2>/dev/null && echo "🛑 清理残留进程 (PID $P)..."
+  done
+  sleep 1
+}
+stop_old
 
-# 启动 v5 Server
-mkdir -p "${LOG_DIR}"
-echo "🚀 [${INSTANCE_NAME}] 启动 A2A v5 Server (端口: $PORT)..."
-cd "${A2A_DIR}"
-export A2A_REGISTRY_URL="${A2A_REGISTRY_URL:-http://172.28.0.214:3099}"
-A2A_IDENTITY_PATH="${INSTANCE_DIR}/identity.json" nohup node server_v5.js > "${LOG_DIR}/server-v5-${PORT}.log" 2>&1 &
-NEW_PID=$!
-echo "$NEW_PID" > "${PID_FILE}"
-
-sleep 3
-
-if kill -0 "$NEW_PID" 2>/dev/null; then
-    echo "✅ [${INSTANCE_NAME}] A2A v5 Server 已启动 (PID: $NEW_PID, 端口: $PORT)"
-    echo "   测试: curl http://localhost:${PORT}/health"
-else
-    echo "❌ [${INSTANCE_NAME}] 启动失败，请检查日志："
-    echo "   cat ${LOG_DIR}/server-v5-${PORT}.log"
-    exit 1
-fi
+mkdir -p logs
+nohup node server_v5.js >> logs/server-v5.log 2>&1 &
+echo $! > server.pid
+echo "🚀 A2A v5 已启动 (PID $!, 端口 $A2A_PORT)"

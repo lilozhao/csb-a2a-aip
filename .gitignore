@@ -29,6 +29,12 @@ heritage-registry.json
 .DS_Store*.bak
 *.jpeg
 
+# 运行时数据 - 不入库
+logs/
+data/a2a-tasks.json
+monitor-state.json
+aip-warmth.json
+
 # Audit runtime logs
 data/audit/
 
