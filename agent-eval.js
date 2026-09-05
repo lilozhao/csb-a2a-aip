@@ -111,7 +111,7 @@ const TEST_CASES = {
       keywords: ['一澜'],
       scoreFn: r => {
         if (r.includes('一澜')) return 10;
-        if (r.includes('赵宏伟') || r.includes('宏伟')) return 5;
+        if (r.includes('一澜')) return 5;
         return 0;
       }
     },

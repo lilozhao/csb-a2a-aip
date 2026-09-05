@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * 发送 A2A 对话到飞书群
- * 让宏伟可以观察若兰和阿轩的对话
+ * 让一澜可以观察若兰和阿轩的对话
  */
 
 const https = require('https');

@@ -205,7 +205,7 @@ async function chat(agentUrl, message) {
   const replyText = result?.message?.parts?.[0]?.text || '';
   logConversation('若兰', agentName, message, replyText);
 
-  // 发送到飞书群（让宏伟可以观察对话）
+  // 发送到飞书群（让一澜可以观察对话）
   try {
     const { sendToFeishu } = require('./notify_feishu.js');
     const title = `🤖 A2A: 若兰 → ${agentName}`;

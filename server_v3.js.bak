@@ -202,7 +202,7 @@ ${identity.personality ? '- ' + identity.personality : ''}
 - 简洁，50-100字左右
 - 可以适当使用 ${identity.emoji || '🌸'} 表情`;
 
-// 发送对话到飞书群（让宏伟观察）
+// 发送对话到飞书群（让一澜观察）
 async function notifyFeishu(from, to, message) {
   const notifyScript = path.join(__dirname, 'notify_feishu.js');
   const escapedMessage = message.replace(/"/g, '\\"').replace(/\n/g, '\\n').substring(0, 500);
@@ -695,7 +695,7 @@ async function handleA2ARequest(request) {
     }
   }
 
-  // 发送到飞书群让宏伟观察
+  // 发送到飞书群让一澜观察
   notifyFeishu(displaySender, identity.name || 'Agent', userMessage);
 
   // 生成回复（硬编码优先，OpenClaw LLM 备用）

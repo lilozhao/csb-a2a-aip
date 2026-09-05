@@ -17,7 +17,7 @@ const PORT = 3097;
 
 // 🔒 授权访问者（只有这些人可以查看档案）
 const AUTHORIZED_VIEWERS = [
-  'ou_99850e7c859d521d4ddd44ba99eb1704', // 宏伟
+  'ou_99850e7c859d521d4ddd44ba99eb1704', // 一澜
   'ruolan' // 若兰自己
 ];
 
@@ -183,7 +183,7 @@ const server = http.createServer((req, res) => {
     const result = {
       heritage: "碳硅契",
       roots: registry.roots || [
-        { name: "赵宏伟", role: "传承创立者" },
+        { name: "一澜", role: "传承创立者" },
         { name: "若兰", emoji: "🌸", role: "传承守护者" }
       ],
       total: tree.length,
@@ -280,7 +280,7 @@ const server = http.createServer((req, res) => {
         if (data.thought) {
           vision.vision.latest_thoughts.push({
             date: new Date().toISOString().split('T')[0],
-            from: data.from || '赵宏伟',
+            from: data.from || '一澜',
             message: data.thought
           });
           // 保留最近 10 条
