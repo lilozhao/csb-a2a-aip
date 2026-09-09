@@ -101,6 +101,7 @@ class Validator {
    * @returns {Object|null}
    */
   findWhitelistEntry(sender) {
+    if (!sender || typeof sender !== 'string') return null; // 防御：undefined sender 不崩（2026-09-09）
     // 直接匹配
     let entry = this.whitelist.get(sender);
     
