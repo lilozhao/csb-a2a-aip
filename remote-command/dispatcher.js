@@ -47,6 +47,15 @@ class CommandDispatcher {
       await this.init();
     }
 
+    // [2026-09-09] sender 规范化（双保险）：message/send 的 sender 可能是字符串（'若兰'）
+    // dispatcher/validator 全程需要对象 {name, url}——此处统一转换，不依赖上层
+    const rawSender = request.sender;
+    if (typeof rawSender === 'string') {
+      request.sender = { name: rawSender, url: request.senderUrl || '' };
+    } else if (!rawSender || typeof rawSender !== 'object') {
+      request.sender = { name: 'unknown', url: '' };
+    }
+
     const commandId = request.command?.id || `cmd_${Date.now()}`;
     const startTime = Date.now();
 
