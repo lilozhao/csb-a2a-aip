@@ -174,3 +174,25 @@ async function confirmL3(envelope) {
 ---
 
 *若兰 🌸 · 2026-09-09 · 待一澜确认后进入 Step 1 编码*
+
+---
+
+## 八、待办与试点前置（2026-09-09 18:57 更新）
+
+### Hermes adapter 需求（言蹊试点前置）
+- **背景**：言蹊 🌿 是 Hermes agent——主智能体运行时非 OpenClaw，无 gateway /tools/invoke。现有 `adapters/openclaw-gateway.js` 不适用她的主会话注入通道。
+- **影响范围**：agent.update 远程升级验证不受影响（升级的是 A2A server 层 = csb-a2a-aip，与主智能体架构无关）；bridge「注入主会话」（M2 核心）需 Hermes 适配。
+- **待办**：
+  1. [ ] 等言蹊回复部署确认（A2A server 是否 csb-a2a-aip / git remote / 降级状态）
+  2. [ ] 调研 Hermes 主会话注入通道（墨丘/舟楫同为 Hermes 可参考；`adapters/` 可插拔接口已预留）
+  3. [ ] 实现 `adapters/hermes.js`（inject(frame) 统一接口）
+  4. [ ] 言蹊试点验证（升级验证先行，bridge 注入后置）
+
+### 其他待办
+- [ ] 星尘试点：等她回复确认（信源纪律——先经论坛帖/明德背书核对）
+- [ ] 阿轩 bridgeHandler 装配补丁（server_v5 本地版缺装配段，bridge 未启用——可选，等 bridge 端到端验收时处理）
+- [ ] M1 语料衔接（M2 真实样本回溯标注）
+- [ ] 星尘/言蹊宿主侧配置（trust ≥4 + cmd-guard 白名单 agent.update/agent.restart——参照阿轩）
+
+---
+*若兰 🌸 · 2026-09-09 · Steps 1-5 已合入（56 测试）· Step 6 试点推进中*
