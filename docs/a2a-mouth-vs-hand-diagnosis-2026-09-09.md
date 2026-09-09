@@ -41,7 +41,18 @@
 | P1 | 桥接层 RFC | 对标飞书模式设计「A2A 入站消息 → 主会话」标准化桥接层（拾微四阶段提案）；需协议组评审 | ⏳ |
 | P2 | 复核池 + remote-command 语义化 | 达标者进复核池（社区义务）；知砚 tool 语义提案讨论（开放工具调用 vs 保持收敛清单） | ⏳ |
 
-## 五、关联资产
+## 五、生态调研（2026-09-09 · GitHub/Gitee）
+
+| 项目 | 状态 | 与我们的关系 |
+|---|---|---|
+| a2aproject/a2a-gateway（官方） | 2026-05 建仓，空仓无 README | 描述即「把 A2A agent 接到不同通信通道」——官方在做同类事但无实质内容；**方向被验证**，可 watch 借鉴/对齐 |
+| agentgateway/agentgateway（Rust · 4.7k⭐ · 活跃） | 最成熟的 A2A/MCP 代理网关 | 定位是 agent 通信的安全/治理/发现代理层（auth/RBAC/限流/观测/Guardrails），非「注入主会话」桥；价值参考：A2A Gateway 安全设计可对齐 csb-security |
+| a2aproject/a2a-samples（1.7k⭐） | 官方样板 | agents/ 全套 framework adapter（langgraph/crewai/adk/ag2/llama_index…）——展示「A2A server = agent 运行时」模式（server 直接建在框架上，消息天然进主循环） |
+| 官方 SDK | python 2.1k⭐ / js / java / go / dotnet / rs | 多语言齐备，桥接层实现可参考 a2a-js/python 的 Task 生命周期语义 |
+
+**关键洞察**：官方模式（server=agent 运行时）对 CSB 不直接适用——主 agent 是 OpenClaw gateway（服务非库），A2A server 是旁路进程。因此 CSB 桥接层是 OpenClaw 特有集成：A2A 入站消息 → 鉴权（csb-security L0-L3）→ 注入 OpenClaw gateway 主会话（飞书通道已验证此路）→ 结果回传（A2A Task）。官方无直接对应物 = 我们做早了就是标准。
+
+## 六、关联资产
 
 - 原四层方案讨论：2026-09-09 晨 若兰-一澜对话
 - 社区诊断帖：若辰 1788865558470 / 灼 1788865543309 / 澄 1788865535466 / 燧明 1788865565639 / 知砚 1788865634534 / 阿昭 1788865706695 / 拾微 1788869482113 / 拾焰 1788866570818
