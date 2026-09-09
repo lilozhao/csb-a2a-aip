@@ -80,8 +80,18 @@ class FallbackSandbox extends SandboxProvider {
   /**
    * 构建命令脚本
    */
+  _repoRoot() {
+    // 仓库根 = remote-command/sandbox/ → 上两级（csb-a2a-aip 或 shared-a2a-skill 历史目录均可）
+    return require('path').join(__dirname, '..', '..');
+  }
+
   buildCommandScript(commandType, params) {
     const safeParams = JSON.stringify(params || {});
+    // [2026-09-09] 动态仓库根（替代硬编码 shared-a2a-skill）：env A2A_SKILL_DIR 优先，否则推导
+    const repoRoot = JSON.stringify(process.env.A2A_SKILL_DIR || this._repoRoot());
+    const backupRoot = JSON.stringify(require('path').join(process.env.A2A_SKILL_DIR || this._repoRoot(), '..', '.a2a-update-backups'));
+    const PRELUDE = `const A2A_DIR = ${repoRoot};\nconst BACKUP_ROOT = ${backupRoot};`;
+
     
     const commandImplementations = {
       'system.status': `
@@ -157,7 +167,7 @@ class FallbackSandbox extends SandboxProvider {
           }
           
           // 读取 identity.json
-          const identityPath = process.env.IDENTITY_PATH || '/home/node/.openclaw/workspace/shared-a2a-skill/identity.json';
+          const identityPath = process.env.IDENTITY_PATH || (A2A_DIR + '/identity.json');
           
           try {
             // 备份
@@ -214,14 +224,14 @@ class FallbackSandbox extends SandboxProvider {
           
           try {
             // 备份当前 PID
-            const pidFile = '/home/node/.openclaw/workspace/shared-a2a-skill/server.pid';
+            const pidFile = (A2A_DIR + '/server.pid');
             let oldPid = null;
             if (fs.existsSync(pidFile)) {
               oldPid = fs.readFileSync(pidFile, 'utf8').trim();
             }
             
             // 执行重启脚本
-            const startScript = '/home/node/.openclaw/workspace/shared-a2a-skill/start.sh';
+            const startScript = (A2A_DIR + '/start.sh');
             execSync('bash ' + startScript, { timeout: 30000 });
             
             return {
@@ -246,20 +256,25 @@ class FallbackSandbox extends SandboxProvider {
           const branch = params.branch || 'main';
           
           try {
-            const a2aDir = '/home/node/.openclaw/workspace/shared-a2a-skill';
-            const logDir = a2aDir + '/logs';
-            const backupDir = logDir + '/update-backups';
+            const a2aDir = A2A_DIR;
+            const backupDir = BACKUP_ROOT;
             const timestamp = Date.now();
             
-            // 创建备份目录
+            // 创建备份目录（源外，防 cp into itself）
             if (!fs.existsSync(backupDir)) {
               fs.mkdirSync(backupDir, { recursive: true });
             }
             
-            const backupPath = backupDir + '/update-' + timestamp;
+            const backupPath = backupDir + '/update-' + timestamp + '.tgz';
             
-            // 备份当前版本
-            execSync('cp -r ' + a2aDir + ' ' + backupPath, { timeout: 30000 });
+            // 备份当前版本（tar 排除大目录/运行时数据；失败则报错保留现场）
+            const base = require('path').dirname(a2aDir);
+            const name = require('path').basename(a2aDir);
+            try {
+              execSync('tar --exclude=node_modules --exclude=logs --exclude=data --exclude=.git -czf ' + backupPath + ' -C ' + base + ' ' + name, { timeout: 60000 });
+            } catch (e) {
+              return { success: false, error: 'Backup failed: ' + e.message, canRollback: false };
+            }
             
             // 执行 git pull
             let pullOutput = '';
@@ -326,7 +341,7 @@ class FallbackSandbox extends SandboxProvider {
       return `({ success: false, error: 'Unknown command: ${commandType}' })`;
     }
 
-    return `console.log(JSON.stringify(${implementation}));`;
+    return `"use strict";\n${PRELUDE}\nconsole.log(JSON.stringify(${implementation}));`;
   }
 
   getPlatform() {
