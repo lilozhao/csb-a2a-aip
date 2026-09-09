@@ -211,7 +211,13 @@ function checkCommand(senderInfo = {}, command = '') {
   // [3] 禁止命令检查 — 危险命令直接拒绝
   for (const forbidden of _config.forbiddenCommands) {
     const forbiddenLower = forbidden.toLowerCase();
-    if (cmdName === forbiddenLower || command.toLowerCase().includes(forbiddenLower)) {
+    // [3a] JSON 命令只查 cmdName（提取后），不做全文 includes——
+    //      JSON 键名（type/params）与 forbidden 词（type/write 等）全文匹配会误伤（2026-09-09 实测修复）
+    const isJsonCmd = command.trim().startsWith('{') || command.trim().startsWith('[');
+    const forbiddenHit = isJsonCmd
+      ? cmdName === forbiddenLower || cmdName.startsWith(forbiddenLower)
+      : cmdName === forbiddenLower || command.toLowerCase().includes(forbiddenLower);
+    if (forbiddenHit) {
       audit.log('cmd.execute', {
         command: command.substring(0, 200),
         sender: senderInfo.name,
