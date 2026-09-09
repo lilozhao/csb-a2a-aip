@@ -161,6 +161,30 @@ function hasDelegation(msg) {
 }
 
 // ============================================
+// 标准管道响应（server_v5 集成用：走 _sendMessage 统一 addArtifact/addHistory）
+// ============================================
+
+/**
+ * 把 bridge 结果转成 _processTask 标准返回（{artifacts, message, __terminalState}）
+ * —— 与 applyToTask 的区别：不直接操作 taskStore，交给 _sendMessage 标准管道落库
+ *    __terminalState 让管道设对终态（REJECTED/FAILED，不被默认 COMPLETED 覆盖）
+ *
+ * @param {object} bridgeResult bridge-core handleInbound 返回
+ * @returns {{artifacts: object[], message: object, __terminalState?: string} | null}
+ */
+function buildTaskResponse(bridgeResult) {
+  if (!bridgeResult || bridgeResult.kind === 'not-delegation') return null;
+  const state = KIND_TO_STATE[bridgeResult.kind];
+  if (!state) return null;
+  const receipt = bridgeResult.receipt;
+  return {
+    artifacts: [formatReceiptArtifact(receipt)],
+    message: formatReceiptMessage(receipt, bridgeResult.kind),
+    __terminalState: state,
+  };
+}
+
+// ============================================
 // 导出
 // ============================================
 
@@ -170,4 +194,5 @@ module.exports = {
   formatReceiptMessage,
   applyToTask,
   hasDelegation,
+  buildTaskResponse,
 };

@@ -52,6 +52,8 @@ class A2AStandardAPI {
     this._externalHandler  = options.taskHandler || null;
     // 远程命令处理器 (CMD: 前缀)
     this._commandHandler   = options.commandHandler || null;
+    // 主会话桥接处理器 (delegation 信封，RFC v0.2)
+    this._bridgeHandler    = options.bridgeHandler || null;
 
     // SSE 订阅者: Map<taskId, Set<{res, lastPing}>
     this.streamSubscribers = new Map();
@@ -196,7 +198,9 @@ class A2AStandardAPI {
         this.taskStore.addHistory(task.id, response.message);
       }
 
-      this.taskStore.updateTaskStatus(task.id, TASK_STATE.COMPLETED, 'Completed');
+      // 终态：默认 COMPLETED；bridge/扩展可指定（如 REJECTED/FAILED，防被覆盖）
+      const terminalState = response?.__terminalState || TASK_STATE.COMPLETED;
+      this.taskStore.updateTaskStatus(task.id, terminalState, 'Completed');
       const result = this.taskStore.getTask(task.id);
       this._notifySubscribers(task.id, { task: result });
       return { task: result };
@@ -348,6 +352,14 @@ class A2AStandardAPI {
 
   async _processTask(taskId, msg, metadata) {
     if (this._externalHandler) return this._externalHandler(taskId, msg);
+
+    // 🚀 BRIDGE: delegation 信封 → 主会话桥接（RFC v0.2 · M2）
+    // 有信封且装配了 bridgeHandler → 走桥接；否则 fallthrough 原逻辑
+    if (msg && msg.delegation && this._bridgeHandler) {
+      const bridgeResp = await this._bridgeHandler(taskId, msg, metadata);
+      if (bridgeResp) return bridgeResp; // {artifacts, message, __terminalState?}
+      // bridgeHandler 返回 null（异常兜底）→ 继续原逻辑
+    }
 
     let text = msg.parts.filter(p => p.text).map(p => p.text).join(' ');
     if (!text || text.trim().length < 2) text = '(empty)';
