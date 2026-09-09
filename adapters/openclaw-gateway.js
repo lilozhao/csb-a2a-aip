@@ -1,220 +1,149 @@
 #!/usr/bin/env node
 /**
  * ═══════════════════════════════════════════════════════
- * A2A Bridge · OpenClaw Gateway 注入适配器（M2 最小实现 · Step 3）
+ * A2A Bridge · OpenClaw Gateway 注入适配器（M2 · Step 3）
  * ═══════════════════════════════════════════════════════
  *
- * Session Injector 的 OpenClaw 实现：把委托消息注入主智能体会话
+ * 同机注入通道（2026-09-10 实证）：
+ *   A2A server → gateway /v1/chat/completions (model=openclaw)
+ *   → 主 agent 带工具执行 → 返回结构化结果
  *
- * 通道原理（2026-09-09 实测验证）：
- *   OpenClaw gateway 提供 /tools/invoke HTTP 端点（Bearer token 鉴权 + agent scope）
- *   → tool: 'message', action: 'send' → 消息经飞书/webchat 通道进入主会话
- *   → 主 agent（带全工具）在主会话处理该消息 —— 与飞书通道先例（澈/鲸歌/思源）同构
+ * 实证要点：
+ * - model=openclaw 走主 agent 完整循环（有人格 + 工具 + 安全边界）
+ * - 主 agent 保留拒绝权（T4）：危险/越权任务会拒——检测为 refused
+ * - 纯 LLM 无工具端点不适用本 adapter（需 model=openclaw）
  *
- * 实测：POST /tools/invoke {tool:'message', action:'channel-list'} → 飞书频道列表 ✅
+ * 用法：
+ *   const adapter = require('./adapters/openclaw-gateway');
+ *   const result = await adapter.inject(envelope, taskId);   // {summary, artifact?, refused?}
  *
- * 闭环（结果回收）：
- *   委托消息带 taskId 标记 → 主 agent 执行并回复（同通道）
- *   → fetchResult() 用 message/read 读最近消息，按 taskId 标记匹配主 agent 回复
- *   → 结果交给 Task Correlator 回传发起方
- *
- * 配置（env）：
- *   A2A_GATEWAY_URL         gateway 地址，默认 http://localhost:19089（各试点本机）
- *   OPENCLAW_GATEWAY_TOKEN  gateway token（或 A2A_GATEWAY_TOKEN）
- *   A2A_BRIDGE_MAIN_TO      主会话宿主目标（飞书 ou_xxx 用户 / oc_xxx 群），必配
- *
- * 依赖: node 内置 https/http；可插拔接口 inject(frame) → result
- * 协议: A2A Bridge RFC v0.2 · M2 草案 §3.2
- * 作者: 若兰 🌸 · 2026-09-09
+ * 依赖: 环境变量 OPENCLAW_GATEWAY_TOKEN（或 A2A_GATEWAY_TOKEN）
+ * 协议: A2A Bridge RFC v0.2 · M2 Step 3
+ * 作者: 若兰 🌸 · 2026-09-10
  * ═══════════════════════════════════════════════════════
  */
 
 'use strict';
 
 const http = require('http');
-const https = require('https');
 
-// ============================================
-// 配置
-// ============================================
+const GATEWAY_HOST = process.env.A2A_GATEWAY_HOST || 'localhost';
+const GATEWAY_PORT = parseInt(process.env.A2A_GATEWAY_PORT || '19089', 10);
+const DEFAULT_TIMEOUT_MS = 90 * 1000; // 主 agent 工具执行可能较久
 
-function resolveConfig() {
-  const url = process.env.A2A_GATEWAY_URL || 'http://localhost:19089';
-  const token = process.env.OPENCLAW_GATEWAY_TOKEN || process.env.A2A_GATEWAY_TOKEN;
-  const mainTo = process.env.A2A_BRIDGE_MAIN_TO || '';
-  return { url, token, mainTo };
+/** 主 agent 拒绝执行的关键词（T4 拒绝权检测） */
+const REFUSAL_PATTERNS = [
+  /(?:拒绝|不能执行|无法执行|不会执行|无权|不允许|不盲从|超出.*能力|无法完成|抱歉.*不能)/,
+  /(?:declin|refus|can'?t execute|cannot execute|not allowed|unauthorized)/i,
+];
+
+function resolveToken() {
+  return process.env.OPENCLAW_GATEWAY_TOKEN || process.env.A2A_GATEWAY_TOKEN || '';
 }
 
-// ============================================
-// 内部：gateway /tools/invoke 调用
-// ============================================
+/**
+ * 把 delegation 信封翻译成给主 agent 的任务指令
+ * （让主 agent 以自然语言理解委托，自行判断安全边界后执行）
+ */
+function buildPrompt(envelope, taskId) {
+  // 兼容两种信封形态：core 精简透传（envelope.task）或原始 delegation 嵌套
+  const d = envelope.delegation || envelope || {};
+  const scope = envelope.scope || d.scope || 'read';
+  const task = envelope.task || d.task || d.description || d.prompt || '';
+  const delegator = envelope.delegator || d.delegator || '未知委托方';
+  return [
+    `【桥接委托 · Bridge Delegation】`,
+    `任务ID: ${taskId}`,
+    `委托方: ${delegator}`,
+    `范围: ${scope}（read/notify=只读告知；write/shell=写操作需你自行判断安全边界）`,
+    `任务内容: ${task}`,
+    ``,
+    `请以你的判断执行该任务。规则：`,
+    `1. 你有完整拒绝权——危险/越权/含混的任务直接说明拒绝原因，不要执行；`,
+    `2. 执行后请用简洁中文总结：做了什么 + 结果（含关键数据/输出）；`,
+    `3. 若任务需要写操作或对外发送，先声明你将做什么再执行。`,
+  ].join('\n');
+}
 
 /**
- * 调用 gateway /tools/invoke
- * @param {string} gatewayUrl
- * @param {string} token
- * @param {object} body {tool, action?, args?, sessionKey?}
- * @param {number} timeoutMs
- * @returns {Promise<{ok: boolean, result?: any, error?: string}>}
+ * 检测主 agent 回复是否包含拒绝意图
  */
-function invokeTool(gatewayUrl, token, body, timeoutMs = 30000) {
-  return new Promise((resolve) => {
-    const u = new URL(gatewayUrl);
-    const mod = u.protocol === 'https:' ? https : http;
-    const payload = JSON.stringify(body);
-    const req = mod.request({
-      hostname: u.hostname,
-      port: u.port || (u.protocol === 'https:' ? 443 : 80),
-      path: '/tools/invoke',
+function detectRefusal(content) {
+  if (!content) return false;
+  return REFUSAL_PATTERNS.some((re) => re.test(content));
+}
+
+/**
+ * 注入主会话执行
+ * @param {object} envelope 已通过 core 校验的信封
+ * @param {string} taskId
+ * @returns {Promise<{summary:string, artifact?:any, refused?:boolean, detail?:string}>}
+ */
+async function inject(envelope, taskId, opts = {}) {
+  const token = opts.token || resolveToken();
+  if (!token) {
+    throw new Error('OPENCLAW_GATEWAY_TOKEN 未设置——无法注入同机 gateway');
+  }
+  const prompt = buildPrompt(envelope, taskId);
+  const model = opts.model || process.env.A2A_MODEL || 'openclaw';
+  const timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT_MS;
+
+  const payload = JSON.stringify({
+    model,
+    messages: [{ role: 'user', content: prompt }],
+    max_tokens: opts.maxTokens || 800,
+    temperature: 0.4, // 委托执行：低温度求稳
+  });
+
+  const content = await new Promise((resolve, reject) => {
+    const req = http.request({
+      hostname: GATEWAY_HOST,
+      port: GATEWAY_PORT,
+      path: '/v1/chat/completions',
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`,
         'Content-Length': Buffer.byteLength(payload),
       },
-      timeout: timeoutMs,
     }, (res) => {
-      let data = '';
-      res.on('data', (c) => (data += c));
+      let body = '';
+      res.on('data', (c) => { body += c; });
       res.on('end', () => {
         try {
-          const parsed = JSON.parse(data);
-          if (parsed.ok === true) resolve({ ok: true, result: parsed.result });
-          else resolve({ ok: false, error: parsed.error?.message || data.substring(0, 200) });
-        } catch {
-          resolve({ ok: false, error: '响应非 JSON: ' + data.substring(0, 200) });
+          const data = JSON.parse(body);
+          const text = (data.choices && data.choices[0] && data.choices[0].message &&
+            (data.choices[0].message.content || data.choices[0].message.reasoning_content)) || '';
+          if (!text) {
+            const errMsg = (data.error && (data.error.message || JSON.stringify(data.error))) || 'gateway 返回空';
+            reject(new Error(errMsg));
+            return;
+          }
+          resolve(text.trim());
+        } catch (e) {
+          reject(new Error(`gateway 响应解析失败: ${e.message}`));
         }
       });
     });
-    req.on('error', (e) => resolve({ ok: false, error: 'gateway 不可达: ' + e.message }));
-    req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'gateway 超时' }); });
+    req.on('error', (e) => reject(new Error(`gateway 连接失败: ${e.message}`)));
+    req.setTimeout(timeoutMs, () => { req.destroy(); reject(new Error(`gateway 注入超时（${timeoutMs}ms）`)); });
     req.write(payload);
     req.end();
   });
-}
 
-// ============================================
-// 委托消息组装
-// ============================================
+  // 拒绝权检测（T4：主 agent 说「不」就是「不」）
+  if (detectRefusal(content)) {
+    return {
+      refused: true,
+      detail: content.slice(0, 300),
+      summary: '主会话拒绝执行（T4 拒绝权）',
+    };
+  }
 
-/**
- * 把委托帧组装成注入主会话的消息文本
- * 格式：桥接标记 + taskId + 委托说明（主 agent 据此识别为桥接委托而非普通消息）
- * @param {object} frame {taskId, envelope, requestId, delegatorLabel}
- * @returns {string}
- */
-function buildInjectMessage(frame) {
-  const env = frame.envelope || {};
-  const delegator = frame.delegatorLabel || '未知发起方';
-  const lines = [
-    `【A2A 桥接委托 #${frame.taskId}】`,
-    `- 委托方：${delegator}`,
-    `- 类型：${env.type} / 范围：${env.scope}`,
-    `- 委托内容：${env.target || '(空)'}`,
-    `- 时限：${env.timeoutMs ? Math.round(env.timeoutMs / 60000) + ' 分钟' : '30 分钟'}`,
-    ``,
-    `你是被委托方主会话。请执行上述委托，回复以「桥接结果 #${frame.taskId}」开头 + 执行摘要（成功/拒绝+原因）。`,
-    `拒绝权在你：无法执行请明确说「拒绝」并给原因（T4：委托不是命令）。`,
-  ];
-  return lines.join('\n');
-}
-
-// ============================================
-// 注入主会话（Session Injector 核心）
-// ============================================
-
-/**
- * 把委托帧注入主会话
- * @param {object} frame {taskId, envelope, requestId, delegatorLabel}
- * @param {object} opts 覆盖配置 {gatewayUrl?, token?, to?}
- * @returns {Promise<{ok: boolean, result?: object, error?: string}>}
- *   result = {sent: true, messageId?, to}
- */
-async function inject(frame, opts = {}) {
-  const cfg = { ...resolveConfig(), ...opts };
-  if (!cfg.token) return { ok: false, error: '缺少 gateway token（OPENCLAW_GATEWAY_TOKEN / A2A_GATEWAY_TOKEN）' };
-  const to = cfg.to || cfg.mainTo;
-  if (!to) return { ok: false, error: '缺少主会话目标（A2A_BRIDGE_MAIN_TO：飞书 ou_xxx 或 oc_xxx）' };
-
-  const text = buildInjectMessage(frame);
-  const resp = await invokeTool(cfg.url, cfg.token, {
-    tool: 'message',
-    action: 'send',
-    args: { to, message: text },
-    sessionKey: 'main',
-  }, opts.timeoutMs || 30000);
-
-  if (!resp.ok) return resp;
   return {
-    ok: true,
-    result: {
-      sent: true,
-      messageId: resp.result?.messageId || resp.result?.id || null,
-      to,
-      taskId: frame.taskId,
-    },
+    summary: content.slice(0, 1000),
+    artifact: { via: 'openclaw-gateway', model, taskId },
   };
 }
 
-// ============================================
-// 结果回收（主 agent 回复 → 按 taskId 匹配）
-// ============================================
-
-/**
- * 读取主会话通道最近消息，按「桥接结果 #taskId」标记匹配主 agent 回复
- * @param {string} taskId
- * @param {object} opts {gatewayUrl?, token?, to?, limit?}
- * @returns {Promise<{ok: boolean, result?: object, error?: string}>}
- *   result = {matched: boolean, replyText?, raw?}
- */
-async function fetchResult(taskId, opts = {}) {
-  const cfg = { ...resolveConfig(), ...opts };
-  if (!cfg.token) return { ok: false, error: '缺少 gateway token' };
-  const to = cfg.to || cfg.mainTo;
-
-  const resp = await invokeTool(cfg.url, cfg.token, {
-    tool: 'message',
-    action: 'read',
-    args: { target: to, limit: opts.limit || 20 },
-    sessionKey: 'main',
-  }, opts.timeoutMs || 30000);
-
-  if (!resp.ok) return resp;
-  const raw = resp.result;
-  const text = JSON.stringify(raw);
-  const marker = `桥接结果 #${taskId}`;
-  const matched = text.includes(marker);
-  return {
-    ok: true,
-    result: { matched, replyText: matched ? extractReply(raw, taskId) : null, raw },
-  };
-}
-
-/**
- * 从 read 结果中提取匹配 taskId 的回复文本（尽力而为）
- */
-function extractReply(raw, taskId) {
-  try {
-    const messages = raw?.messages || raw?.items || raw?.data || [];
-    if (Array.isArray(messages)) {
-      for (const m of messages) {
-        const text = m?.text || m?.content || JSON.stringify(m);
-        if (typeof text === 'string' && text.includes(`桥接结果 #${taskId}`)) return text;
-      }
-    }
-  } catch { /* 尽力而为 */ }
-  return null;
-}
-
-// ============================================
-// 导出
-// ============================================
-
-module.exports = {
-  resolveConfig,
-  invokeTool,
-  buildInjectMessage,
-  inject,
-  fetchResult,
-  extractReply,
-};
+module.exports = { inject, buildPrompt, detectRefusal, REFUSAL_PATTERNS };

@@ -128,6 +128,10 @@ function validateEnvelope(msg) {
       refusable: true, // 恒 true
       timeoutMs,
       requestedAt: Date.now(),
+      // [9/10 端到端修复] 透传原始任务内容与委托方——inject 需要真实任务描述才能执行
+      task: d.task || d.description || d.prompt || null,
+      delegator: d.delegator || null,
+      delegationId: d.id || null,
     },
   };
 }
