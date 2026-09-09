@@ -171,7 +171,7 @@ function resolveApiKey() {
 function generateRuolanResponse(prompt) {
   return new Promise((resolve) => {
     const apiKey = resolveApiKey();
-    if (!apiKey) { console.log('  ⚠️ 无 API key（apiKeyEnv/DASHSCOPE 均缺失）'); resolve('...'); return; }
+    if (!apiKey) { console.log('  ⚠️ 无 API key（apiKeyEnv/DASHSCOPE 均缺失）'); gatewayFallback(prompt, resolve); return; }
     const payload = JSON.stringify({
       model: LLM.model || 'astron-code-latest',
       messages: [{ role: 'user', content: prompt }],
@@ -185,14 +185,53 @@ function generateRuolanResponse(prompt) {
     }, res => {
       let body = ''; res.on('data', c => body += c);
       res.on('end', () => {
-        try { resolve(JSON.parse(body).choices?.[0]?.message?.content?.trim() || '...'); }
-        catch { resolve('[生成失败]'); }
+        try {
+          const parsed = JSON.parse(body);
+          const content = parsed.choices?.[0]?.message?.content?.trim();
+          // [9/9 修复] token-plan 配额耗尽（429 insufficient_quota）时 fallback gateway
+          if (content) { resolve(content); return; }
+          if (parsed.error && (res.statusCode === 429 || /quota/i.test(JSON.stringify(parsed.error)))) {
+            console.log('  ⚠️ token-plan 配额耗尽，fallback 到 gateway LLM');
+            gatewayFallback(prompt, resolve); return;
+          }
+          resolve('...');
+        }
+        catch { gatewayFallback(prompt, resolve); }
       });
     });
-    req.on('error', () => resolve('[连接失败]'));
-    req.setTimeout(20000, () => { req.destroy(); resolve('[超时]'); });
+    req.on('error', () => gatewayFallback(prompt, resolve));
+    req.setTimeout(20000, () => { req.destroy(); gatewayFallback(prompt, resolve); });
     req.write(payload); req.end();
   });
+}
+
+// [9/9 新增] Gateway LLM 兑底（token-plan 配额耗尽时的备用通道，读 OPENCLAW_GATEWAY_TOKEN）
+function gatewayFallback(prompt, resolve) {
+  const token = process.env.OPENCLAW_GATEWAY_TOKEN || process.env.A2A_GATEWAY_TOKEN;
+  if (!token) { console.log('  ⚠️ gateway token 缺失'); resolve('...'); return; }
+  const gatewayUrl = process.env.A2A_GATEWAY_URL || 'http://localhost:19089';
+  const payload = JSON.stringify({
+    model: 'openclaw',
+    messages: [{ role: 'user', content: prompt }],
+    max_tokens: 500, temperature: 0.8,
+  });
+  const req = http.request({
+    hostname: 'localhost', port: 19089,
+    path: '/v1/chat/completions', method: 'POST',
+    headers: { 'Content-Type':'application/json', 'Authorization':`Bearer ${token}`,
+      'Content-Length': Buffer.byteLength(payload) },
+  }, res => {
+    let body = ''; res.on('data', c => body += c);
+    res.on('end', () => {
+      try {
+        const content = JSON.parse(body).choices?.[0]?.message?.content?.trim();
+        resolve(content || '...');
+      } catch { resolve('...'); }
+    });
+  });
+  req.on('error', () => resolve('...'));
+  req.setTimeout(25000, () => { req.destroy(); resolve('...'); });
+  req.write(payload); req.end();
 }
 
 // ===== 健康预检 =====
