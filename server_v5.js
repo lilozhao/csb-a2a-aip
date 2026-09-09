@@ -238,9 +238,11 @@ const standardAPI = new A2AStandardAPI({
   },
 
   // 🚀 BRIDGE: delegation 信封 → 主会话桥接（RFC v0.2 · M2 试点）
-  // 启用条件：env A2A_BRIDGE_ENABLED=true + A2A_BRIDGE_MAIN_TO 配置主会话目标
+  // 启用条件：env A2A_BRIDGE_ENABLED=true，或 identity.capabilities 声明 a2a.delegate=true（agent.configure 可远程设）
   bridgeHandler: async (taskId, msg, metadata) => {
-    if (process.env.A2A_BRIDGE_ENABLED !== 'true') return null; // 未启用 → 走原逻辑
+    const bridgeEnabled = process.env.A2A_BRIDGE_ENABLED === 'true'
+      || (identity?.capabilities && identity.capabilities['a2a.delegate'] === true);
+    if (!bridgeEnabled) return null; // 未启用 → 走原逻辑
     try {
       const bridge = require('./a2a-bridge-core');
       const correlator = require('./a2a-bridge-correlator');
@@ -250,6 +252,8 @@ const standardAPI = new A2AStandardAPI({
 
       const sender = metadata?.sender || { name: 'unknown', url: '' };
       const senderLabel = `${sender.name || 'unknown'}${sender.url ? ' (' + sender.url + ')' : ''}`;
+      // 主会话目标：identity.bridge.mainTo → env A2A_BRIDGE_MAIN_TO（试点各自配置）
+      const bridgeMainTo = identity?.bridge?.mainTo || process.env.A2A_BRIDGE_MAIN_TO || '';
 
       // 信任等级查询：trustManager（A2A-010/csb-security）→ env 兑底
       const getTrustLevel = async (agentId) => {
@@ -268,9 +272,9 @@ const standardAPI = new A2AStandardAPI({
         taskId,
         getTrustLevel: () => getTrustLevel(sender.url || sender.name),
         inject: async (envelope, tid) =>
-          gatewayAdapter.inject({ taskId: tid, delegatorLabel: senderLabel, envelope }),
+          gatewayAdapter.inject({ taskId: tid, delegatorLabel: senderLabel, envelope }, { to: bridgeMainTo }),
         confirmL3: async (envelope, c) =>
-          confirm.confirmL3(envelope, { taskId: c.taskId, sender: c.sender }),
+          confirm.confirmL3(envelope, { taskId: c.taskId, sender: c.sender }, { to: bridgeMainTo }),
         recordDegrade: async (evt) => {
           await audit.recordDegradeEvent({ ...evt, taskId });
         },
