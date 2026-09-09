@@ -216,9 +216,13 @@ const standardAPI = new A2AStandardAPI({
     }
     try {
       const cmd = JSON.parse(cmdJson);
-      console.log('[A2A-CMD] 收到远程命令:', cmd.type, 'from', metadata?.sender?.name || '?');
+      console.log('[A2A-CMD] 收到远程命令:', cmd.type, 'from', metadata?.sender?.name || (typeof metadata?.sender === 'string' ? metadata.sender : '?'));
+      // [2026-09-09] sender 规范化：message/send 的 sender 可能是字符串（'若兰'），dispatcher/validator 需对象 {name}
+      const cmdSender = typeof metadata?.sender === 'string'
+        ? { name: metadata.sender, url: metadata?.senderUrl || '' }
+        : (metadata?.sender || { name: 'unknown', url: '' });
       const result = await commandDispatcher.dispatch({
-        sender: metadata?.sender || { name: 'unknown' },
+        sender: cmdSender,
         command: cmd,
         timestamp: Date.now()
       });
