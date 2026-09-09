@@ -10,7 +10,9 @@ const PHASE1_COMMANDS = new Set([
   'skill.list',
   'skill.info',
   'agent.health',
-  'agent.configure'  // 新增：远程配置能力
+  'agent.configure',  // 新增：远程配置能力
+  'agent.update',     // 新增：远程更新（git pull + 重启，2026-09-09 桥接试点）
+  'agent.restart'     // 新增：远程重启
 ]);
 
 // 风险等级定义
@@ -19,7 +21,9 @@ const COMMAND_RISK = {
   'skill.list': 'low',
   'skill.info': 'low',
   'agent.health': 'low',
-  'agent.configure': 'medium'  // 配置修改是中等风险
+  'agent.configure': 'medium',  // 配置修改是中等风险
+  'agent.update': 'high',       // 更新是高危
+  'agent.restart': 'high'       // 重启是高危
 };
 
 class Validator {

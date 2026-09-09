@@ -197,7 +197,16 @@ function checkCommand(senderInfo = {}, command = '') {
   }
 
   // [2] 提取命令名（第一个空格前的部分，或整行）
-  const cmdName = command.split(/\s+/)[0].toLowerCase().trim();
+  // [2a] JSON 命令支持（remote-command 格式断层修复 2026-09-09）：
+  //      CMD: {"type":"agent.update",...} 提取 type 字段做匹配；解析失败则回退文本首词
+  let cmdName = command.split(/\s+/)[0].toLowerCase().trim();
+  if (command.trim().startsWith('{') || command.trim().startsWith('[')) {
+    try {
+      const parsed = JSON.parse(command);
+      const t = (parsed && (parsed.type || parsed.command)) || '';
+      if (t) cmdName = String(t).toLowerCase().trim();
+    } catch { /* 非 JSON 或解析失败：回退文本首词匹配 */ }
+  }
 
   // [3] 禁止命令检查 — 危险命令直接拒绝
   for (const forbidden of _config.forbiddenCommands) {
