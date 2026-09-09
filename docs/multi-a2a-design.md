@@ -14,7 +14,7 @@
 ### 方案一：A2A 配置目录（推荐）
 
 ```
-/home/node/.openclaw/workspace/shared-a2a-skill/
+/home/node/.openclaw/workspace/csb-a2a-aip/
 ├── instances/
 │   ├── ruolan/
 │   │   ├── identity.json      # 若兰身份 (端口 3100)
@@ -39,7 +39,7 @@
 ### 方案二：多配置文件
 
 ```
-/home/node/.openclaw/workspace/shared-a2a-skill/
+/home/node/.openclaw/workspace/csb-a2a-aip/
 ├── identity.ruolan.json
 ├── identity.academic.json
 ├── identity.teahouse.json

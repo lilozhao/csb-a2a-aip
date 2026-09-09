@@ -8,7 +8,7 @@
 
 ## 🎯 功能概述
 
-宠物系统已部署到所有代理的 `shared-a2a-skill/buddy-system/` 目录下，支持：
+宠物系统已部署到所有代理的 `csb-a2a-aip/buddy-system/` 目录下，支持：
 
 1. **独立查看** - 每个代理查看自己的宠物
 2. **多代理互动** - 三代理宠物同屏展示
@@ -19,7 +19,7 @@
 ## 📁 文件位置
 
 ```
-/home/node/.openclaw/workspace/shared-a2a-skill/buddy-system/
+/home/node/.openclaw/workspace/csb-a2a-aip/buddy-system/
 ├── demo-pets.js           # 三宠物同屏展示
 ├── a2a-buddy-chat.js      # A2A 宠物茶话会
 ├── index.js               # 核心功能
@@ -34,7 +34,7 @@
 ### 1. 查看三宠物同屏
 
 ```bash
-cd /home/node/.openclaw/workspace/shared-a2a-skill/buddy-system
+cd /home/node/.openclaw/workspace/csb-a2a-aip/buddy-system
 node demo-pets.js
 ```
 

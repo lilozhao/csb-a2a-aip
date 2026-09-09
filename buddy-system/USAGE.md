@@ -10,7 +10,7 @@
 ### 1. 初始化配置
 
 ```bash
-cd /home/node/.openclaw/workspace/shared-a2a-skill/buddy-system
+cd /home/node/.openclaw/workspace/csb-a2a-aip/buddy-system
 node index.js init
 ```
 

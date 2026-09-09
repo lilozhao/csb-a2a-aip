@@ -1,8 +1,8 @@
 {
   "enabled": true,
   "schedule": "0 * * * *",
-  "command": "cd /home/node/.openclaw/workspace/shared-a2a-skill && node health-monitor.js --notify",
+  "command": "cd /home/node/.openclaw/workspace/csb-a2a-aip && node health-monitor.js --notify",
   "description": "A2A 服务健康监控 - 每小时检查一次",
   "output": "log",
-  "logFile": "/home/node/.openclaw/workspace/shared-a2a-skill/logs/monitor.log"
+  "logFile": "/home/node/.openclaw/workspace/csb-a2a-aip/logs/monitor.log"
 }

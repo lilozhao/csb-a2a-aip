@@ -372,10 +372,10 @@ DELEGATE_forum.post:{"topic":"今日话题","content":"..."}
 
 ```bash
 # 克隆代码
-git clone https://gitee.com/lilozhao/shared-a2a-skill.git
+git clone https://gitee.com/lilozhao/csb-a2a-aip.git
 
 # 安装依赖
-cd shared-a2a-skill
+cd csb-a2a-aip
 npm install
 
 # 配置身份
@@ -459,7 +459,7 @@ curl -X POST http://localhost:3100/a2a/json-rpc \
 **1. 准备配置**
 ```bash
 # 在每个容器内
-cd /home/node/.openclaw/workspace/shared-a2a-skill
+cd /home/node/.openclaw/workspace/csb-a2a-aip
 
 # 拉取代码
 git pull

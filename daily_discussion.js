@@ -53,7 +53,7 @@ const agents = {
 };
 
 // 话题文件路径
-const TOPICS_FILE = '/home/node/.openclaw/workspace/shared-a2a-skill/topics.json';
+const TOPICS_FILE = path.join(__dirname, 'topics.json'); // [2026-09-09] 路径动态化（替代 shared-a2a-skill 硬编码）
 
 // 话题库
 const TOPIC_POOL = [

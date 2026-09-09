@@ -214,13 +214,13 @@ CSB-AIP 目前完全依赖 DHT 注册表的简单列表，缺少结构化查询�
 | **ATH** | `/workspace/A2A-Protocol/agent-trust-handshake-protocol/specification/0.1/basic/handshake-flow.mdx` |
 | **ATH** | `/workspace/A2A-Protocol/agent-trust-handshake-protocol/specification/0.1/schema.json` |
 | **ATH** | `/workspace/A2A-Protocol/agent-trust-handshake-protocol/demo/ath_simple_demo.py` |
-| **CSB-AIP** | `/workspace/shared-a2a-skill/csb-aip/src/identity.js` |
-| **CSB-AIP** | `/workspace/shared-a2a-skill/csb-aip/src/describe.js` |
-| **CSB-AIP** | `/workspace/shared-a2a-skill/csb-aip/src/warmth.js` |
-| **CSB-AIP** | `/workspace/shared-a2a-skill/csb-aip/src/compat.js` |
-| **CSB-AIP** | `/workspace/shared-a2a-skill/csb-aip/a2a-aip-adapter.js` |
-| **CSB-AIP** | `/workspace/shared-a2a-skill/csb-aip/server-integration.js` |
-| **CSB-AIP** | `/workspace/shared-a2a-skill/csb-aip/SYNC-NOTES-v0.5.1.md` |
+| **CSB-AIP** | `/workspace/csb-a2a-aip/csb-aip/src/identity.js` |
+| **CSB-AIP** | `/workspace/csb-a2a-aip/csb-aip/src/describe.js` |
+| **CSB-AIP** | `/workspace/csb-a2a-aip/csb-aip/src/warmth.js` |
+| **CSB-AIP** | `/workspace/csb-a2a-aip/csb-aip/src/compat.js` |
+| **CSB-AIP** | `/workspace/csb-a2a-aip/csb-aip/a2a-aip-adapter.js` |
+| **CSB-AIP** | `/workspace/csb-a2a-aip/csb-aip/server-integration.js` |
+| **CSB-AIP** | `/workspace/csb-a2a-aip/csb-aip/SYNC-NOTES-v0.5.1.md` |
 
 ---
 

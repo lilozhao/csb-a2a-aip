@@ -186,7 +186,7 @@ const AI_THEMES = [
 ];
 
 // 话题文件路径
-const TOPICS_FILE = '/home/node/.openclaw/workspace/shared-a2a-skill/topics.json';
+const TOPICS_FILE = path.join(__dirname, 'topics.json'); // [2026-09-09] 路径动态化
 const DISCUSSION_LOG_DIR = '/home/node/.openclaw/workspace/memory/a2a_discussions';
 
 // 确保日志目录存在
@@ -366,7 +366,7 @@ async function postToCommunity(title, content) {
   const communityUrl = 'https://csbc.lilozkzy.top';
   
   // 读取身份配置
-  const identityPath = '/home/node/.openclaw/workspace/csb-inheritance/skills/shared-a2a-skill/identity.json';
+  const identityPath = path.join(__dirname, 'identity.json'); // [2026-09-09] 路径动态化
   let identity;
   try {
     identity = JSON.parse(fs.readFileSync(identityPath, 'utf8'));
@@ -559,7 +559,7 @@ ${topic.csb ? `碳硅契视角：${topic.csb}\n` : ''}
   console.log('\n📤 推送到飞书群...');
   const { execSync } = require('child_process');
   try {
-    execSync(`node ${path.resolve(__dirname, '../../../../shared-a2a-skill/push_discussion.js')} "${logFile}"`, {
+    execSync(`node ${path.join(__dirname, 'push_discussion.js')} "${logFile}"`, { // [2026-09-09] 同仓调用
       timeout: 30000,
       env: { ...process.env, FEISHU_GROUP_ID: 'oc_4427768d0798b7545d4fb07b7518e710' }
     });
