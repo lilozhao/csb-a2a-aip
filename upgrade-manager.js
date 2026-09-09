@@ -14,7 +14,7 @@ class UpgradeManager {
   constructor() {
     this.upgradeDir = '/tmp/a2a-upgrades';
     this.backupDir = '/tmp/a2a-backups';
-    this.targetDir = '/home/node/.openclaw/workspace/shared-a2a-skill';
+    this.targetDir = process.env.A2A_DIR || path.join(__dirname); // [2026-09-09] 动态化（当前仓库根）
     
     // 确保目录存在
     this.ensureDir(this.upgradeDir);

@@ -12,7 +12,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const REGISTRY_FILE = '/home/node/.openclaw/workspace/shared-a2a-skill/heritage-registry.json';
+const REGISTRY_FILE = path.join(__dirname, 'heritage-registry.json'); // [2026-09-09] 路径动态化
 const PORT = 3097;
 
 // 🔒 授权访问者（只有这些人可以查看档案）

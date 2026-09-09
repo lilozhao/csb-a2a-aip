@@ -17,7 +17,7 @@ A2A 远程命令执行技能允许智能体通过 A2A 协议安全地执行远�
 ## 安装
 
 ```bash
-cd /home/node/.openclaw/workspace/shared-a2a-skill/remote-command
+cd /home/node/.openclaw/workspace/csb-a2a-aip/remote-command
 npm install
 ```
 

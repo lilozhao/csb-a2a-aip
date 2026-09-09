@@ -33,11 +33,11 @@ const CONFIG = {
   timeout: 5000,
   
   // 状态文件
-  stateFile: '/home/node/.openclaw/workspace/shared-a2a-skill/monitor-state.json',
+  stateFile: path.join(__dirname, 'monitor-state.json'), // [2026-09-09] 路径动态化
   
   // 飞书通知配置
   feishu: {
-    webhook: ... IGNORED ... || '',
+    webhook: process.env.FEISHU_WEBHOOK || '', // [2026-09-09] 修复占位符事故（原 ... IGNORED ... 语法错误）
     enabled: false // 需要配置 webhook 才启用
   }
 };

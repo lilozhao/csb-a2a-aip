@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 
 const PORT = process.env.SKILL_SERVER_PORT || 3098;
-const SKILL_DIR = process.env.SKILL_DIR || '/home/node/.openclaw/workspace/shared-a2a-skill';
+const SKILL_DIR = process.env.SKILL_DIR || path.join(__dirname, '..', 'skills'); // [2026-09-09] 动态化
 
 // MIME 类型
 const MIME_TYPES = {

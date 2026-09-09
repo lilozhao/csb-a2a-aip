@@ -17,7 +17,7 @@ const fs = require('fs');
 const path = require('path');
 
 // 默认路径
-const DEFAULT_INPUT = path.join(__dirname, '..', '..', 'shared-a2a-skill', 'identity.json');
+const DEFAULT_INPUT = process.env.A2A_IDENTITY_PATH || path.join(__dirname, 'identity.json'); // [2026-09-09] 动态化
 const DEFAULT_OUTPUT = path.join(__dirname, '..', '..', '.well-known', 'ai-catalog.json');
 
 function parseArgs() {

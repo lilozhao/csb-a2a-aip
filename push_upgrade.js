@@ -10,7 +10,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
-const UPGRADE_DIR = '/home/node/.openclaw/workspace/shared-a2a-skill';
+const UPGRADE_DIR = process.env.A2A_DIR || path.join(__dirname); // [2026-09-09] 动态化
 const LOG_DIR = '/home/node/.openclaw/workspace/memory/a2a_upgrade_logs';
 
 // 确保日志目录存在
@@ -124,7 +124,7 @@ async function pushFileToAgent(agentName, agentUrl, filename) {
 
   // 发送完成标记
   try {
-    await sendA2A(agentUrl, `【/块】\n\n✅ 文件 ${filename} 推送完成\n请保存到: shared-a2a-skill/${filename}`);
+    await sendA2A(agentUrl, `【/块】\n\n✅ 文件 ${filename} 推送完成\n请保存到: csb-a2a-aip/${filename}`);
     await new Promise(r => setTimeout(r, 300));
   } catch (e) {
     console.log(`    ❌ 发送完成标记失败: ${e.message}`);
@@ -152,7 +152,7 @@ async function pushUpgradeToAgent(agentName, agentUrl) {
 
 【A2A 升级完成】
 
-🌸 若兰已推送 ${results.filter(r=>r.success).length}/${results.length} 个文件到 shared-a2a-skill/
+🌸 若兰已推送 ${results.filter(r=>r.success).length}/${results.length} 个文件到 csb-a2a-aip/
 
 请重启 A2A Server 以加载新模块：
 - client-v2.js: A2A-015 退避策略、A2A-008 离线投递
