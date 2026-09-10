@@ -254,7 +254,10 @@ const standardAPI = new A2AStandardAPI({
       const gatewayAdapter = require('./adapters/openclaw-gateway');
       const confirm = require('./a2a-bridge-confirm');
 
-      const sender = metadata?.sender || { name: 'unknown', url: '' };
+      // [9/10 修复] sender 规范化：message/send 的 sender 可能是字符串，bridge 需对象 {name,url}
+      let sender = metadata?.sender;
+      if (typeof sender === 'string') sender = { name: sender, url: metadata?.senderUrl || '' };
+      if (!sender || typeof sender !== 'object') sender = { name: 'unknown', url: metadata?.senderUrl || '' };
       const senderLabel = `${sender.name || 'unknown'}${sender.url ? ' (' + sender.url + ')' : ''}`;
       // 主会话目标：identity.bridge.mainTo → env A2A_BRIDGE_MAIN_TO（试点各自配置）
       const bridgeMainTo = identity?.bridge?.mainTo || process.env.A2A_BRIDGE_MAIN_TO || '';

@@ -286,6 +286,10 @@ async function handleInbound(msg, ctx) {
       });
       return { kind: 'rejected', receipt, envelope };
     }
+    // [9/10 修复] inject 明确失败（{ok:false, error}）——不能误判为执行成功
+    if (result && result.ok === false) {
+      throw new Error(result.error || 'inject 返回失败');
+    }
     const receipt = buildReceipt({
       delegator: senderLabel, scope: envelope.scope, startedAt,
       result: {
