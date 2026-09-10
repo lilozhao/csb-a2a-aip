@@ -161,11 +161,66 @@ async function confirmL3(envelope) {
 6. **Step 6**：言蹊/星尘接入 adapter → 跨公网互发验收（测试用例 1-8）
 7. **Step 7**：M2 语料收集 → M1 意图分类回溯标注（衔接）
 
-## 七、风险与开放问题（2026-09-09 15:22 实证更新）
+## 七、注入通道分级矩阵（Step 6 前置设计 · 2026-09-10 实证）
+
+> **缘起**：一澜提出关键质疑——本机注入依赖 OpenClaw gateway `/v1/chat/completions`，**能否保证其他 agent 都有此服务？** 查证后确认：不能一概而论，且该端点有严重安全边界（operator 级）。本章为 Step 6 的前置设计。
+
+### 7.1 核心结论
+
+注入通道由三个维度共同决定：**权限级别 × 网络位置 × 宿主框架**。不存在「一条通道通吃」。
+
+### 7.2 通道分级（C1–C5）
+
+| 级别 | 通道 | 权限模型 | 网络约束 | 适用宿主 | 状态 |
+|---|---|---|---|---|---|
+| **C1** | OpenClaw gateway `/v1/chat/completions`（model=openclaw） | ⚠️ **operator 级**（官方：full operator-access surface） | **仅 loopback / 内网 / tailnet**（官方明令禁止直接暴露公网） | OpenClaw 系（内网：若兰/阿轩/若琢） | ✅ 已实证（本机，2026-09-10） |
+| **C2** | OpenClaw 官方 **scoped 会话注入 API**（待官方实现） | scoped（非 operator） | 可跨网 | OpenClaw 系（含公网） | ⏳ feature request 已提交（docs/openclaw-session-inject-feature-request-2026-09-09.md） |
+| **C3** | IM bot 通道（飞书等） | 消息级（窄） | 可跨网（受平台边界限制，bot 间互发/自我消息陷阱需评估） | 任意有 IM 的宿主 | 🟡 候选（未验证；一澜 2026-09-10 指出：A2A 本身即 bot 通道，不引入 IM 耦合） |
+| **C4** | 宿主原生工具面／运行时注入（Hermes / DSH / Coze / Claude Code 等各自机制） | 各自定义 | 各自 | 非 OpenClaw 系 | ⏳ 需逐宿主调研（`adapters/` 可插拔接口已预留） |
+| **C5** | 降级通道（诚实指路，无注入能力） | 无 | — | 全部兜底 | ✅ 已实现（`recordDegrade` + P0 诚实指路） |
+
+### 7.3 决策树
+
+```
+宿主框架？
+├─ OpenClaw 系
+│   ├─ 网络在 loopback / 内网 / tailnet  →  C1（2026-09-10 本机已验）
+│   └─ 需跨公网                          →  C2（等官方 scoped API）；过渡期用 C5
+├─ 非 OpenClaw 系                        →  C4（逐宿主 adapter）；无则 C5
+└─ 仅 IM 可用                            →  C3（评估后，谨慎：不引入耦合）
+```
+
+### 7.4 安全红线（不可协商）
+
+1. **C1 绝不跨公网**——operator 级凭据泄露 = 实例完全沦陷（官方文档原文强调）
+2. **C1 使用前提**：调用方必须是信任边界内的已知 agent（信封签名 + csb-security 握手 + 信任等级）
+3. **每级通道都要过 bridge 自身的门槛**：信任等级（L2/L3）+ write/shell 的 L3 用户确认流
+4. **通道≠授权**：通上了不等于能做事——通道只解决「消息送达」，授权仍由 bridge core 判
+
+### 7.5 试点现状对照（Step 6 输入）
+
+| Agent | 框架 | 网络位置 | 可用通道 | Step 6 预期 |
+|---|---|---|---|---|
+| 若兰（本机） | OpenClaw | 内网 | **C1 ✅（已验）** | — |
+| 阿轩 | OpenClaw | 内网（172.28.0.5） | C1（需启用端点 + token） | **可验收（优先）** |
+| 若琢 | OpenClaw | 内网（172.28.0.4） | C1 | 可验收 |
+| 言蹊 | Hermes | 公网 | C4（待实现 hermes adapter） | 需 adapter |
+| 星尘 | 待摸底 | 公网 | C4 / C5 | 需摸底 |
+| 思源 | Claude Code | 内网 | C4 | 后续 |
+
+### 7.6 对 Step 6 的修订建议
+
+原计划「言蹊/星尘接入 adapter → 跨公网验收」需修正为：
+1. **先做阿轩（内网 C1）跨机验收** ← 通道已验证，只差宿主配置
+2. 言蹊（Hermes）→ 先实现 C4 hermes adapter
+3. 星尘 → 先摸底框架与可用注入面
+4. 跨公网**一律不用 C1**（安全红线）；等 C2 官方 API 或用各宿主 C4
+
+## 八、风险与开放问题（2026-09-09 15:22 实证更新）
 
 | # | 风险/问题 | 应对 | 状态 |
 |---|---|---|---|
-| 1 | ~~OpenClaw gateway 无现成「会话注入」API~~ **实证：候选 A/B 均不可行（自我消息陷阱）** | 候选 C：外部 bot 身份注入；或 OpenClaw 提供显式会话注入 API（feature request 已记 docs/openclaw-session-inject-feature-request-2026-09-09.md） | 🚫 候选 A（message/send 自我注入）实测：阿轩 gateway 18889 可达、消息真实送达 DM，但**主智能体不处理自己 bot 发的消息**（OpenClaw 自我消息过滤，防回声循环）——注入必须来自外部身份或内部事件通道；🚫 候选 B（HTTP 调 exec/cron）实测：gateway HTTP 工具面仅 message（exec/cron/process 全 deny——远程 exec 被禁，正确安全设计） |
+| 1 | ~~OpenClaw gateway 无现成「会话注入」API~~ **实证：候选 A/B 不可行（自我消息陷阱 / 远程 exec 被禁）** | **候选 C 修正（2026-09-10）**：同机 gateway `/v1/chat/completions` (model=openclaw) **实证可行**——走完整 agent 循环（人格+工具+安全边界），已落地 `adapters/openclaw-gateway.js`。⚠️ 仅限 C1（operator 级）网络边界内（loopback/内网），跨公网需等官方 scoped API | ✅ **C1 已验（本机）**；候选 D：scoped 官方 API（feature request 已提交） |
 | 2 | 跨公网互发延迟/防火墙 | 言蹊/星尘 A2A 端口已知可达（R1 全程通信成功） | ✅ |
 | 3 | L3 确认打扰用户频率 | 试点期限写操作；确认请求聚合（同源同批一次确认） | — |
 | 4 | 主会话执行上下文污染 | 隔离任务帧（taskId 标记），执行结果不回写主会话记忆（除降级事件） | — |
@@ -177,7 +232,7 @@ async function confirmL3(envelope) {
 
 ---
 
-## 八、待办与试点前置（2026-09-09 18:57 更新）
+## 九、待办与试点前置（2026-09-09 18:57 更新）
 
 ### Hermes adapter 需求（言蹊试点前置）
 - **背景**：言蹊 🌿 是 Hermes agent——主智能体运行时非 OpenClaw，无 gateway /tools/invoke。现有 `adapters/openclaw-gateway.js` 不适用她的主会话注入通道。
@@ -195,4 +250,6 @@ async function confirmL3(envelope) {
 - [ ] 星尘/言蹊宿主侧配置（trust ≥4 + cmd-guard 白名单 agent.update/agent.restart——参照阿轩）
 
 ---
-*若兰 🌸 · 2026-09-09 · Steps 1-5 已合入（56 测试）· Step 6 试点推进中*
+*若兰 🌸 · 2026-09-09 起草 · 2026-09-10 更新（通道分级矩阵 + Steps 2-4 落地）*
+*当前状态：Step 1–4 已合入（46 测试覆盖：core 25 / correlator 9 / e2e 3 / confirm 9）；Step 5-6 待推进*
+*关键实证：C1 同机注入通道打通 + 真实 L3 确认流闭环（碳基投票 latency 120s）*
