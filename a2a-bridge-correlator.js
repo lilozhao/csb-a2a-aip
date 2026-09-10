@@ -221,8 +221,97 @@ class BridgeCorrelator {
   }
 }
 
+// ============================================
+// [9/9 装配段接口] Task 应用与标准管道响应
+// 来源：commit cffdac7（server_v5 装配段依赖）——与 BridgeCorrelator 类并存
+// ============================================
+
+/** bridge 结果 kind → A2A Task 终态（澈：复用标准 Task 生命周期） */
+const KIND_TO_STATE = Object.freeze({
+  executed: 'TASK_STATE_COMPLETED',
+  rejected: 'TASK_STATE_REJECTED',
+  degraded: 'TASK_STATE_FAILED',
+});
+
+/** 回执 → 结构化 Artifact（JSON part，机器可读） */
+function formatReceiptArtifact(receipt) {
+  return {
+    artifactId: 'bridge-receipt-' + Date.now(),
+    name: 'bridge-receipt',
+    mimeType: 'application/json',
+    parts: [{ kind: 'text', text: JSON.stringify(receipt, null, 2), metadata: { receipt: true } }],
+  };
+}
+
+/** 回执 → 人类可读 Message（进 Task history） */
+function formatReceiptMessage(receipt, kind) {
+  const r = receipt.receipt || receipt;
+  const st = r.result || {};
+  let head;
+  switch (kind) {
+    case 'executed': head = '✅ 桥接委托已执行'; break;
+    case 'rejected': head = `⛔ 桥接委托被拒绝（${st.reason || 'unknown'}）`; break;
+    case 'degraded': head = `⚠️ 桥接不可用（${st.reason || 'unknown'}）——已走 P0 诚实指路`; break;
+    default: head = '桥接处理结果';
+  }
+  const lines = [
+    head,
+    `- delegator: ${r.delegator || '?'}`,
+    `- scope: ${r.scope || '?'}`,
+    `- duration: ${r.durationMs !== undefined ? r.durationMs + 'ms' : '?'}`,
+  ];
+  if (st.summary) lines.push(`- summary: ${st.summary}`);
+  if (st.detail) lines.push(`- detail: ${st.detail}`);
+  if (st.fallbackHint) lines.push(`- fallback: ${st.fallbackHint}`);
+  if (st.artifact) lines.push(`- artifact: ${st.artifact}`);
+  return { role: 'agent', parts: [{ kind: 'text', text: lines.join('\n') }], messageId: 'bridge-msg-' + Date.now() };
+}
+
+/** 把 bridge 结果应用到 A2A Task（状态 + 历史 + 产物，依赖注入 taskStore） */
+function applyToTask(taskStore, taskId, bridgeResult) {
+  if (!bridgeResult || bridgeResult.kind === 'not-delegation') return null;
+  const state = KIND_TO_STATE[bridgeResult.kind];
+  if (!state) return null;
+  const receipt = bridgeResult.receipt;
+  const envelope = bridgeResult.envelope;
+  taskStore.addArtifact(taskId, formatReceiptArtifact(receipt));
+  const msg = formatReceiptMessage(receipt, bridgeResult.kind);
+  if (msg) taskStore.addHistory(taskId, msg);
+  const note = bridgeResult.kind === 'executed' ? 'Bridge executed'
+    : bridgeResult.kind === 'rejected' ? `Bridge rejected: ${receipt?.receipt?.result?.reason || ''}`
+    : `Bridge degraded: ${receipt?.receipt?.result?.reason || ''}`;
+  taskStore.updateTaskStatus(taskId, state, note);
+  if (envelope && typeof taskStore.setMetadata === 'function') {
+    taskStore.setMetadata(taskId, { bridgeEnvelope: envelope });
+  }
+  return taskStore.getTask(taskId);
+}
+
+/** 判断入站消息是否带 delegation 信封（server_v5 分支用） */
+function hasDelegation(msg) {
+  return !!(msg && typeof msg === 'object' && msg.delegation && typeof msg.delegation === 'object');
+}
+
+/** bridge 结果 → _processTask 标准返回（{artifacts, message, __terminalState}） */
+function buildTaskResponse(bridgeResult) {
+  if (!bridgeResult || bridgeResult.kind === 'not-delegation') return null;
+  const state = KIND_TO_STATE[bridgeResult.kind];
+  if (!state) return null;
+  return {
+    artifacts: [formatReceiptArtifact(bridgeResult.receipt)],
+    message: formatReceiptMessage(bridgeResult.receipt, bridgeResult.kind),
+    __terminalState: state,
+  };
+}
+
 module.exports = {
   BridgeCorrelator,
+  KIND_TO_STATE,
+  formatReceiptArtifact,
+  formatReceiptMessage,
+  applyToTask,
+  hasDelegation,
+  buildTaskResponse,
   TASK_STATE,
   RESULT_CODE,
   FAIL_REASON,

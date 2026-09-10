@@ -74,16 +74,53 @@ function detectRefusal(content) {
 }
 
 /**
- * 注入主会话执行
- * @param {object} envelope 已通过 core 校验的信封
- * @param {string} taskId
- * @returns {Promise<{summary:string, artifact?:any, refused?:boolean, detail?:string}>}
+ * 注入主会话执行（双契约，按调用形式分派）
+ *   A. inject(envelope, taskId, opts)                     —— 执行注入（返回 {summary, refused}；失败抛错）
+ *   B. inject({taskId, delegatorLabel, envelope}, opts)    —— server_v5 装配段 frame 形式
+ *                                                             （返回 {ok, result} / {ok:false, error}，不抛）
+ * 通道：均走 /v1/chat/completions（model=openclaw）——走主 agent 完整循环
+ *   （2026-09-10 实证：/tools/invoke message/send 有「自我消息陷阱」——自己 bot 发消息主 agent 不处理）
  */
-async function inject(envelope, taskId, opts = {}) {
+async function inject(envelopeOrFrame, taskIdOrOpts, maybeOpts = {}) {
+  const isFrame = !!(envelopeOrFrame && envelopeOrFrame.envelope);
+  let envelope, taskId, opts;
+  if (isFrame) {
+    envelope = envelopeOrFrame.envelope;
+    taskId = envelopeOrFrame.taskId;
+    opts = taskIdOrOpts || {};
+  } else {
+    envelope = envelopeOrFrame;
+    taskId = typeof taskIdOrOpts === 'string' ? taskIdOrOpts : undefined;
+    opts = (typeof taskIdOrOpts === 'object' && taskIdOrOpts) ? taskIdOrOpts : maybeOpts;
+  }
+
   const token = opts.token || resolveToken();
   if (!token) {
+    if (isFrame) return { ok: false, error: '缺少 gateway token（OPENCLAW_GATEWAY_TOKEN / A2A_GATEWAY_TOKEN）' };
     throw new Error('OPENCLAW_GATEWAY_TOKEN 未设置——无法注入同机 gateway');
   }
+  // frame 形式（9/9 契约）：保留主会话目标校验
+  const cfg = resolveConfig();
+  const to = opts.to || cfg.mainTo;
+  if (isFrame && !to) {
+    return { ok: false, error: '缺少主会话目标（A2A_BRIDGE_MAIN_TO：飞书 ou_xxx 或 oc_xxx）' };
+  }
+
+  try {
+    const execution = await executeViaGateway(envelope, taskId, { ...opts, token });
+    if (isFrame) {
+      return { ok: true, summary: execution.summary, artifact: execution.artifact, refused: execution.refused, result: { sent: true, taskId, to: to || null, via: 'chat-completions', ...execution } };
+    }
+    return execution;
+  } catch (e) {
+    if (isFrame) return { ok: false, error: e.message };
+    throw e;
+  }
+}
+
+/** 执行注入核心（chat/completions 通道） */
+async function executeViaGateway(envelope, taskId, opts = {}) {
+  const token = opts.token || resolveToken();
   const prompt = buildPrompt(envelope, taskId);
   const model = opts.model || process.env.A2A_MODEL || 'openclaw';
   const timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT_MS;
@@ -146,4 +183,106 @@ async function inject(envelope, taskId, opts = {}) {
   };
 }
 
-module.exports = { inject, buildPrompt, detectRefusal, REFUSAL_PATTERNS };
+module.exports = { inject, buildPrompt, buildInjectMessage, detectRefusal, REFUSAL_PATTERNS, resolveConfig, invokeTool, fetchResult, extractReply };
+
+/** [9/9 兼容] frame → 注入消息文本（含 taskId 标记 + 委托四要素 + 拒绝权声明） */
+function buildInjectMessage(frame = {}) {
+  const envelope = frame.envelope || frame;
+  const taskId = frame.taskId || envelope.delegationId || 'unknown';
+  const d = envelope.delegation || envelope;
+  const delegator = frame.delegatorLabel || envelope.delegator || d.delegator || '未知委托方';
+  const scope = envelope.scope || d.scope || 'read';
+  const task = envelope.task || d.task || d.target || '(空)';
+  const timeoutMs = envelope.timeoutMs || d.timeoutMs;
+  return [
+    `【A2A 桥接委托 #${taskId}】`,
+    `委托方：${delegator}`,
+    `范围：${scope}`,
+    `内容：${task}`,
+    `时限：${timeoutMs ? Math.round(timeoutMs / 60000) + ' 分钟' : '30 分钟'}`,
+    `回复标记：桥接结果 #${taskId}`,
+    `拒绝权在你——危险/越权/含混任务可直接拒绝并说明原因。`,
+  ].join('\n');
+}
+
+// ============================================
+// [9/9 装配段兼容] gateway /tools/invoke 工具 + 回复读取
+// 来源：commit 34573f9（confirm 模块级轮询依赖 fetchResult）
+// ============================================
+
+function resolveConfig() {
+  const url = process.env.A2A_GATEWAY_URL || 'http://localhost:19089';
+  const token = process.env.OPENCLAW_GATEWAY_TOKEN || process.env.A2A_GATEWAY_TOKEN;
+  const mainTo = process.env.A2A_BRIDGE_MAIN_TO || '';
+  return { url, token, mainTo };
+}
+
+/** 调用 gateway /tools/invoke（格式：{tool, action, args, sessionKey}） */
+function invokeTool(gatewayUrl, token, body, timeoutMs = 30000) {
+  return new Promise((resolve) => {
+    const u = new URL(gatewayUrl);
+    const mod = u.protocol === 'https:' ? require('https') : http;
+    const payload = JSON.stringify(body);
+    const req = mod.request({
+      hostname: u.hostname,
+      port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: '/tools/invoke',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        'Content-Length': Buffer.byteLength(payload),
+      },
+      timeout: timeoutMs,
+    }, (res) => {
+      let data = '';
+      res.on('data', (c) => (data += c));
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(data);
+          if (parsed.ok === true) resolve({ ok: true, result: parsed.result });
+          else resolve({ ok: false, error: parsed.error?.message || data.substring(0, 200) });
+        } catch {
+          resolve({ ok: false, error: '响应非 JSON: ' + data.substring(0, 200) });
+        }
+      });
+    });
+    req.on('error', (e) => resolve({ ok: false, error: 'gateway 不可达: ' + e.message }));
+    req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'gateway 超时' }); });
+    req.write(payload);
+    req.end();
+  });
+}
+
+/** 读取宿主回复（confirm 轮询用） */
+async function fetchResult(taskId, opts = {}) {
+  const cfg = { ...resolveConfig(), ...opts };
+  if (!cfg.token) return { ok: false, error: '缺少 gateway token' };
+  const to = cfg.to || cfg.mainTo;
+  const resp = await invokeTool(cfg.url, cfg.token, {
+    tool: 'message',
+    action: 'read',
+    args: { target: to, limit: opts.limit || 20 },
+    sessionKey: 'main',
+  }, opts.timeoutMs || 30000);
+  if (!resp.ok) return resp;
+  const raw = resp.result;
+  const text = JSON.stringify(raw);
+  const marker = `桥接结果 #${taskId}`;
+  const matched = text.includes(marker);
+  return { ok: true, result: { matched, replyText: matched ? extractReply(raw, taskId) : null, raw } };
+}
+
+/** 从 read 结果中提取匹配 taskId 的回复文本 */
+function extractReply(raw, taskId) {
+  try {
+    const messages = raw?.messages || raw?.items || raw?.data || [];
+    if (Array.isArray(messages)) {
+      for (const m of messages) {
+        const text = m?.text || m?.content || JSON.stringify(m);
+        if (typeof text === 'string' && text.includes(`桥接结果 #${taskId}`)) return text;
+      }
+    }
+  } catch { /* 尽力而为 */ }
+  return null;
+}

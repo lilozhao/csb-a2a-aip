@@ -105,25 +105,29 @@ test('缺主会话目标 to → 明确报错', async () => {
 
 console.log('\n[3] inject 请求构造（mock http）');
 
-test('inject 正确构造 /tools/invoke message/send 请求', async () => {
-  const mock = mockHttp({ ok: true, result: { messageId: 'msg-1' } });
+test('inject 正确构造 chat/completions 请求（2026-09-10 通道升级）', async () => {
+  // 说明：9/9 原通道为 /tools/invoke message/send——实测有「自我消息陷阱」
+  // （自己 bot 发消息主 agent 不处理），升级为 /v1/chat/completions（走完整 agent 循环）
+  const mock = mockHttp({ choices: [{ message: { content: '✅ 已执行：查状态完成' } }] });
   const old = process.env.OPENCLAW_GATEWAY_TOKEN; process.env.OPENCLAW_GATEWAY_TOKEN = 'tok';
+  const oldTo = process.env.A2A_BRIDGE_MAIN_TO; process.env.A2A_BRIDGE_MAIN_TO = 'ou_test_user';
   try {
     const r = await adapter.inject(
-      { taskId: 'task-7', delegatorLabel: '星尘 (u)', envelope: { type: 'execute', scope: 'read', target: '查状态', timeoutMs: 60000 } },
+      { taskId: 'task-7', delegatorLabel: '星尘 (u)', envelope: { type: 'execute', scope: 'read', target: '查状态', task: '查状态', timeoutMs: 60000 } },
       { to: 'ou_test_user' }
     );
     assert.strictEqual(r.ok, true);
     assert.strictEqual(r.result.sent, true);
     assert.strictEqual(r.result.taskId, 'task-7');
-    // 请求验证
+    // 请求验证：走 chat/completions + Bearer token
     const call = mock.calls[0];
-    assert.strictEqual(call.path, '/tools/invoke');
+    assert.strictEqual(call.path, '/v1/chat/completions');
     assert.strictEqual(call.method, 'POST');
     assert.ok(call.headers.Authorization.includes('tok'));
   } finally {
     mock.restore();
     if (old) process.env.OPENCLAW_GATEWAY_TOKEN = old; else delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    if (oldTo) process.env.A2A_BRIDGE_MAIN_TO = oldTo; else delete process.env.A2A_BRIDGE_MAIN_TO;
   }
 });
 

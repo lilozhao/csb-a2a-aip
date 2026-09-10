@@ -206,4 +206,126 @@ class ConfirmFlow {
 
 function createConfirmFlow(deps) { return new ConfirmFlow(deps); }
 
-module.exports = { ConfirmFlow, createConfirmFlow, DECISION, DEFAULT_CONFIRM_TIMEOUT_MS, AGGREGATE_WINDOW_MS };
+// ============================================
+// [9/9 装配段兼容] 模块级全自动确认流（server_v5 装配段依赖）
+// 来源：commit d113688——发送 → 轮询回复 → 超时自动拒（与 ConfirmFlow 类并存）
+// ============================================
+
+const DEFAULTS = Object.freeze({
+  CONFIRM_TIMEOUT_MS: 5 * 60 * 1000, // RFC v0.2 §4.3
+  POLL_INTERVAL_MS: 5000,
+});
+
+/** 组装 L3 确认请求消息 */
+function buildConfirmMessage({ taskId, envelope, delegatorLabel }) {
+  const env = envelope || {};
+  const lines = [
+    `【A2A 桥接 L3 确认 #${taskId}】`,
+    `有跨宿主委托请求需要你确认：`,
+    `- 委托方：${delegatorLabel || '未知'}`,
+    `- 类型：${env.type || 'execute'} / 范围：${env.scope || 'write'}`,
+    `- 内容：${env.task || env.target || '(空)'}`,
+    `- 时限：${env.timeoutMs ? Math.round(env.timeoutMs / 60000) + ' 分钟' : '30 分钟'}`,
+    ``,
+    `回复「确认 #${taskId}」放行，或「拒绝 #${taskId}」并给原因。`,
+    `${Math.round(DEFAULTS.CONFIRM_TIMEOUT_MS / 60000)} 分钟无回复将自动拒绝（不静默执行）。`,
+  ];
+  return lines.join('\n');
+}
+
+/** 解析宿主用户回复 → 确认/拒绝 */
+function parseConfirmReply(text, taskId) {
+  if (!text || typeof text !== 'string') return { decision: null };
+  const hasId = text.includes(`#${taskId}`) || text.includes(taskId);
+  if (!hasId) return { decision: null };
+  if (/确认|同意|放行|approve|yes|ok/i.test(text)) return { decision: 'approve' };
+  if (/拒绝|不同意|decline|refuse|no/i.test(text)) {
+    const reason = text.replace(/拒绝|不同意|decline|refuse/gi, '').replace(/[#\s]/g, ' ').trim().slice(0, 200);
+    return { decision: 'decline', reason: reason || '用户拒绝' };
+  }
+  return { decision: null };
+}
+
+/** 从 read 结果中提取所有可能的消息文本（尽力而为） */
+function collectTexts(result) {
+  if (!result) return [];
+  const out = [];
+  try {
+    const raw = result.raw || result;
+    const candidates = raw.messages || raw.items || raw.data || raw.replies || [];
+    if (Array.isArray(candidates)) {
+      for (const m of candidates) {
+        const t = m?.text || m?.content || m?.message || (typeof m === 'string' ? m : null);
+        if (typeof t === 'string') out.push(t);
+      }
+    }
+    if (typeof raw === 'string') out.push(raw);
+    if (out.length === 0 && result.replyText) out.push(result.replyText);
+  } catch { /* 尽力而为 */ }
+  return out;
+}
+
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+/**
+ * 模块级全自动 L3 确认（装配段依赖）
+ * 发送请求 → 轮询宿主回复 → 超时自动拒
+ */
+async function confirmL3(envelope, ctx = {}, opts = {}) {
+  const taskId = ctx.taskId || ('confirm-' + Date.now());
+  const delegatorLabel = ctx.sender ? `${ctx.sender.name} (${ctx.sender.url})` : '未知发起方';
+  const timeoutMs = opts.timeoutMs || DEFAULTS.CONFIRM_TIMEOUT_MS;
+  const pollIntervalMs = opts.pollIntervalMs || DEFAULTS.POLL_INTERVAL_MS;
+
+  let adapter = opts.adapter;
+  if (!adapter) {
+    try { adapter = require('./adapters/openclaw-gateway.js'); }
+    catch (e) { return { ok: false, declined: true, detail: 'L3 确认器不可用（无 adapter）: ' + e.message }; }
+  }
+  const send = opts.send || ((text) => adapter.inject({
+    taskId: 'confirm-' + taskId,
+    delegatorLabel: '桥接层(L3确认)',
+    envelope: { type: 'notify', scope: 'notify', target: text, task: text, timeoutMs },
+  }, { to: opts.to }));
+  const read = opts.read || ((tid) => adapter.fetchResult('confirm-' + tid, { to: opts.to }));
+
+  const sent = await send(buildConfirmMessage({ taskId, envelope, delegatorLabel }));
+  if (!sent || sent.ok !== true) {
+    return { ok: false, declined: true, detail: 'L3 确认请求发送失败: ' + (sent?.error || '未知') };
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    await sleep(pollIntervalMs);
+    let resp;
+    try { resp = await read(taskId); } catch (e) { lastError = e.message; continue; }
+    if (!resp || resp.ok !== true) { lastError = resp?.error || '读取失败'; continue; }
+    const texts = collectTexts(resp.result);
+    for (const t of texts) {
+      const parsed = parseConfirmReply(t, taskId);
+      if (parsed.decision === 'approve') return { ok: true, by: '宿主用户', confirmedAt: new Date().toISOString() };
+      if (parsed.decision === 'decline') return { ok: false, declined: true, detail: parsed.reason || '用户拒绝', by: '宿主用户' };
+    }
+  }
+
+  return {
+    ok: false, timedOut: true, declined: true,
+    detail: `L3 确认超时（${Math.round(timeoutMs / 60000)} 分钟无回复）${lastError ? '；读取提示: ' + lastError : ''}`,
+  };
+}
+
+module.exports = {
+  // 类风格（今日实现，事件驱动 + 聚合 + 幂等）
+  ConfirmFlow,
+  createConfirmFlow,
+  DECISION,
+  DEFAULT_CONFIRM_TIMEOUT_MS,
+  AGGREGATE_WINDOW_MS,
+  // 模块级（9/9 装配段兼容，全自动发送+轮询）
+  DEFAULTS,
+  buildConfirmMessage,
+  parseConfirmReply,
+  collectTexts,
+  confirmL3,
+};
