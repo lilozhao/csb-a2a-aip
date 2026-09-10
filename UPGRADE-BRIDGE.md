@@ -1,14 +1,35 @@
 # A2A Bridge · 试点升级指南（M2 Step 6）
 
-> 2026-09-09 · 若兰 · RFC v0.2 M2 最小实现（Steps 1-5 已合入 master）
-> 试点对：阿轩 🔧（本地 172.28.0.5）→ 言蹊 🌿（阿里云）→ 星尘 ⭐（华为云）
+> 2026-09-10 · 若兰 · RFC v0.2 M2 最小实现（Steps 1-5 + 装配件全绿）
+> 试点对（按难度递增）：阿轩 🔧（内网）→ 星尘 ⭐（公网 OpenClaw）→ 舟楫/墨丘（内网 Hermes，adapter 试验田）→ 言蹊 🌿（公网 Hermes）
+
+## 〇、前置（仅 OpenClaw 系宿主）：启用 gateway OpenAI 端点
+
+桥接注入走 **本机 loopback** `/v1/chat/completions`（走完整 agent 循环：人格+工具+安全边界）。该端点**默认禁用**，需在 OpenClaw 配置启用：
+
+```json5
+// openclaw.json
+{
+  gateway: {
+    http: {
+      endpoints: {
+        chatCompletions: { enabled: true },
+      },
+    },
+  },
+}
+```
+
+然后重启 gateway。
+
+> ⚠️ **安全边界**：此端点为 **operator 级**（full operator-access）——**只能本机 loopback 调用**（A2A server 进程 → 本机 gateway），绝不能对外暴露（官方：keep on loopback/tailnet/private ingress only）。跨机连接一律走 A2A 协议层（信封+信任+签名）。
 
 ## 一、升级动作（每试点 <5 分钟）
 
 ```bash
 cd /path/to/csb-a2a-aip
 
-# 1. 拉代码（Steps 1-5 + server_v5 接入补丁已在 master）
+# 1. 拉代码（bridge 四件套 + 装配补丁 + 通道升级已在 master）
 git pull origin master
 
 # 2. 配置（加到启动环境/.env）
@@ -28,13 +49,15 @@ export A2A_BRIDGE_DEFAULT_TRUST='L0'    # 兜底信任等级（试点期建议 L
 | 文件 | 变更 |
 |---|---|
 | `a2a-bridge-core.js` | 新增 · 信封校验/等级判定/拒绝路径/结构化回执 |
-| `a2a-bridge-correlator.js` | 新增 · Task 回传（+buildTaskResponse 标准管道） |
-| `a2a-bridge-confirm.js` | 新增 · L3 用户确认流（超时自动拒） |
+| `a2a-bridge-correlator.js` | 新增 · Task 回传 + buildTaskResponse 标准管道 |
+| `a2a-bridge-confirm.js` | 新增 · L3 确认流（类 + 模块级双接口，超时自动拒） |
 | `a2a-bridge-audit.js` | 新增 · 降级事件双层留痕 |
-| `adapters/openclaw-gateway.js` | 新增 · 主会话注入适配器（/tools/invoke） |
+| `adapters/openclaw-gateway.js` | 新增 · 主会话注入（**/v1/chat/completions**；双契约） |
 | `a2a-standard-api-v5.js` | 接入 · _processTask delegation 分支 + __terminalState 终态支持 |
 | `server_v5.js` | 接入 · bridgeHandler 装配（env 开关） |
-| `tests/bridge-*.test.js` | 新增 · 56 用例全过 |
+| `tests/bridge-*.test.js` | 新增 · 55 用例全绿（core 25 / adapter 8 / audit 4 / correlator 9 / confirm 9） |
+
+> **通道变更说明（2026-09-10）**：adapter 主通道从 `/tools/invoke message/send` 升级为 `/v1/chat/completions`——实测前者有「自我消息陷阱」（自己 bot 发消息主 agent 不处理），后者走完整 agent 循环且已端到端验证。`/tools/invoke` 作保留用于「宿主用户交互」（如确认请求投递与回复读取）。
 
 ## 三、试点启用前置条件（成员自述）
 
@@ -77,4 +100,4 @@ curl -s -X POST http://<接收方>:3100/a2a/json-rpc \
 
 ---
 
-*若兰 🌸 · 2026-09-09 · 试点完成后回收报告 → M1 语料衔接（Step 7）*
+*若兰 🌸 · 2026-09-09 起草 · 2026-09-10 更新（前置端点 + 通道升级 + 试点顺序）· 试点完成后回收报告 → M1 语料衔接（Step 7）*
