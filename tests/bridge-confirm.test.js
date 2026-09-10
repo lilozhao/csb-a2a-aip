@@ -1,151 +1,144 @@
 #!/usr/bin/env node
 /**
- * A2A Bridge Confirm · 单元测试（M2 Step 4）
- * 覆盖：确认消息组装 / 回复解析（确认/拒绝/无关）/ 确认流（批准/拒绝/超时/发送失败）
- * 风格：手写 assert + console（仓库惯例）
- *
- * 用法: node tests/bridge-confirm.test.js
+ * a2a-bridge-confirm.js 测试（M2 Step 4）
+ * 覆盖：批准 / 拒绝 / 超时=拒绝 / 同源聚合 / 幂等 / 投递失败 / 审计记录
+ * 用法：node tests/bridge-confirm.test.js
  */
+'use strict';
+
 const assert = require('assert');
-const confirm = require('../a2a-bridge-confirm');
+const { ConfirmFlow, DECISION } = require('../a2a-bridge-confirm.js');
 
 let passed = 0, failed = 0;
-function test(name, fn) {
-  return Promise.resolve()
-    .then(fn)
-    .then(() => { passed++; console.log(`  ✅ ${name}`); })
-    .catch((e) => { failed++; console.log(`  ❌ ${name}\n     ${e.message}`); });
+async function test(name, fn) {
+  try { await fn(); passed++; console.log(`  ✅ ${name}`); }
+  catch (e) { failed++; console.log(`  ❌ ${name}: ${e.message}`); }
 }
 
-// ============================================
-// mock adapter（可控回复队列）
-// ============================================
-function mkAdapter(replies) {
-  // replies: 数组，依次作为 read 结果；'__TIMEOUT__' 表示一直无匹配
-  let idx = 0;
-  return {
-    sendCalls: [],
-    inject: async (frame) => { adapter.sendCalls.push(frame); return { ok: true, result: { sent: true } }; },
-    fetchResult: async () => {
-      const r = replies[Math.min(idx, replies.length - 1)];
-      idx++;
-      return { ok: true, result: { raw: { messages: r === '__TIMEOUT__' || r === undefined ? [{ text: '无关闲聊' }] : r } } };
-    },
-  };
-}
-let adapter;
+const env = (scope = 'write', task = '写文件操作') => ({ scope, task, delegator: 'http://172.28.0.5:3100' });
 
-// ============================================
-// 测试
-// ============================================
-console.log('\n[1] 确认消息组装');
-
-test('buildConfirmMessage 含 taskId 标记 + 委托信息 + 超时声明', () => {
-  const msg = confirm.buildConfirmMessage({
-    taskId: 'task-5',
-    delegatorLabel: '星尘 (http://s:3100)',
-    envelope: { type: 'execute', scope: 'write', target: '删除 /tmp/x', timeoutMs: 300000 },
+function makeFlow(opts = {}) {
+  const sent = [];
+  const audits = [];
+  const flow = new ConfirmFlow({
+    sendConfirmRequest: async (req) => { sent.push(req); },
+    audit: (e) => audits.push(e),
+    timeoutMs: opts.timeoutMs || 500,
+    now: opts.now,
   });
-  assert.ok(msg.includes('【A2A 桥接 L3 确认 #task-5】'));
-  assert.ok(msg.includes('星尘'));
-  assert.ok(msg.includes('删除 /tmp/x'));
-  assert.ok(msg.includes('确认 #task-5'));
-  assert.ok(msg.includes('自动拒绝'));
-});
+  return { flow, sent, audits };
+}
 
-console.log('\n[2] 回复解析');
+async function main() {
+  console.log('🧪 a2a-bridge-confirm 测试');
 
-test('「确认 #task-5」→ approve', () => {
-  assert.strictEqual(confirm.parseConfirmReply('确认 #task-5', 'task-5').decision, 'approve');
-});
+  // 1. 批准流
+  await test('用户批准 → ok=true', async () => {
+    const { flow, sent } = makeFlow();
+    const p = flow.confirmL3(env(), { taskId: 't1', sender: { url: 'http://172.28.0.5:3100' } });
+    await new Promise(r => setImmediate(r));
+    assert.strictEqual(sent.length, 1, '应投递确认请求');
+    assert.ok(sent[0].summary.includes('写文件操作'));
+    flow.resolve('t1', { approved: true, by: '一澜' });
+    const r = await p;
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.by, '一澜');
+  });
 
-test('「拒绝 #task-5 内容越权」→ decline + reason', () => {
-  const r = confirm.parseConfirmReply('拒绝 #task-5 内容越权了', 'task-5');
-  assert.strictEqual(r.decision, 'decline');
-  assert.ok(r.reason.includes('越权'));
-});
+  // 2. 拒绝流
+  await test('用户拒绝 → ok=false declined', async () => {
+    const { flow } = makeFlow();
+    const p = flow.confirmL3(env(), { taskId: 't2' });
+    await new Promise(r => setImmediate(r));
+    flow.resolve('t2', { approved: false, by: '一澜' });
+    const r = await p;
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.declined, true);
+  });
 
-test('无关消息（无 taskId）→ null', () => {
-  assert.strictEqual(confirm.parseConfirmReply('今天天气不错', 'task-5').decision, null);
-});
+  // 3. 超时=拒绝（阿昭规则）
+  await test('超时 → 视为拒绝（不静默执行）', async () => {
+    const { flow, audits } = makeFlow({ timeoutMs: 80 });
+    const r = await flow.confirmL3(env(), { taskId: 't3' });
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.timedOut, true);
+    assert.ok(/超时/.test(r.detail));
+    assert.ok(audits.some(a => a.event === 'timed_out'), '应有超时审计');
+  });
 
-test('英文 approve/decline 也识别', () => {
-  assert.strictEqual(confirm.parseConfirmReply('approve #task-5', 'task-5').decision, 'approve');
-  assert.strictEqual(confirm.parseConfirmReply('decline #task-5', 'task-5').decision, 'decline');
-});
+  // 4. 同源聚合（不重复投递）
+  await test('同源同窗口聚合 → 只投递一次', async () => {
+    const { flow, sent, audits } = makeFlow({ timeoutMs: 2000 });
+    const p1 = flow.confirmL3(env('write', '任务A'), { taskId: 'a1', sender: { url: 'http://172.28.0.5:3100' } });
+    await new Promise(r => setImmediate(r));
+    const p2 = flow.confirmL3(env('write', '任务B'), { taskId: 'a2', sender: { url: 'http://172.28.0.5:3100' } });
+    await new Promise(r => setImmediate(r));
+    assert.strictEqual(sent.length, 1, '同源应聚合，只投一次');
+    assert.ok(audits.some(a => a.event === 'aggregated'));
+    flow.resolve('a1', { approved: true, by: '一澜' });
+    await p1;
+    // a2 被聚合，仍等待自身决策
+    flow.resolve('a2', { approved: true, by: '一澜' });
+    const r2 = await p2;
+    assert.strictEqual(r2.ok, true);
+  });
 
-console.log('\n[3] confirmL3 确认流');
+  // 5. 幂等：重复确认同 taskId
+  await test('幂等：同 taskId 重复确认取首次决策', async () => {
+    const { flow } = makeFlow({ timeoutMs: 5000 });
+    const p = flow.confirmL3(env(), { taskId: 'i1' });
+    await new Promise(r => setImmediate(r));
+    flow.resolve('i1', { approved: true, by: '一澜' });
+    await p;
+    const r2 = await flow.confirmL3(env(), { taskId: 'i1' });
+    assert.strictEqual(r2.ok, true);
+    assert.strictEqual(r2.by, '一澜');
+    const rec = flow.getRecord('i1');
+    assert.strictEqual(rec.decision, DECISION.APPROVED);
+  });
 
-test('宿主确认 → ok:true', async () => {
-  adapter = mkAdapter([[{ text: '确认 #task-c1' }]]);
-  const r = await confirm.confirmL3(
-    { type: 'execute', scope: 'write', target: '写入文件' },
-    { taskId: 'task-c1', sender: { name: '阿轩', url: 'http://a:3100' } },
-    { adapter, pollIntervalMs: 1, timeoutMs: 1000 }
-  );
-  assert.strictEqual(r.ok, true);
-  assert.ok(adapter.sendCalls.length >= 1);
-  assert.ok(adapter.sendCalls[0].envelope.target.includes('L3 确认'));
-});
+  // 6. 投递失败 → 拒绝（不静默执行）
+  await test('确认请求投递失败 → 拒绝', async () => {
+    const flow = new ConfirmFlow({ sendConfirmRequest: async () => { throw new Error('IM 断线'); }, timeoutMs: 500 });
+    const r = await flow.confirmL3(env(), { taskId: 'd1' });
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.declined, true);
+    assert.ok(/投递失败/.test(r.detail));
+  });
 
-test('宿主拒绝 → declined + detail', async () => {
-  adapter = mkAdapter([[{ text: '拒绝 #task-c2 太危险了' }]]);
-  const r = await confirm.confirmL3(
-    { type: 'execute', scope: 'shell', target: 'rm -rf' },
-    { taskId: 'task-c2', sender: { name: 'x', url: 'u' } },
-    { adapter, pollIntervalMs: 1, timeoutMs: 1000 }
-  );
-  assert.strictEqual(r.ok, false);
-  assert.strictEqual(r.declined, true);
-  assert.ok(r.detail.includes('危险'));
-});
+  // 7. 审计记录完整（批准含 by/latency）
+  await test('审计记录：批准含 by 与 latency', async () => {
+    const { flow, audits } = makeFlow();
+    const p = flow.confirmL3(env(), { taskId: 'au1' });
+    await new Promise(r => setImmediate(r));
+    flow.resolve('au1', { approved: true, by: '一澜' });
+    await p;
+    const a = audits.find(x => x.event === 'approved');
+    assert.ok(a && a.by === '一澜' && typeof a.latencyMs === 'number');
+  });
 
-test('无回复超时 → timedOut（不静默执行）', async () => {
-  adapter = mkAdapter(['__TIMEOUT__']);
-  const r = await confirm.confirmL3(
-    { type: 'execute', scope: 'write', target: 'x' },
-    { taskId: 'task-c3', sender: { name: 'x', url: 'u' } },
-    { adapter, pollIntervalMs: 5, timeoutMs: 50 }
-  );
-  assert.strictEqual(r.ok, false);
-  assert.strictEqual(r.timedOut, true);
-  assert.ok(r.detail.includes('超时'));
-});
+  // 8. 未知 taskId 答复被忽略
+  await test('未知 taskId 答复 → 忽略', async () => {
+    const { flow } = makeFlow();
+    const r = flow.resolve('ghost', { approved: true });
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.detail, 'unknown taskId');
+  });
 
-test('发送失败 → declined（确认不可达不执行）', async () => {
-  const badAdapter = {
-    inject: async () => ({ ok: false, error: 'gateway down' }),
-    fetchResult: async () => ({ ok: false, error: 'x' }),
-  };
-  const r = await confirm.confirmL3(
-    { type: 'execute', scope: 'write', target: 'x' },
-    { taskId: 'task-c4', sender: { name: 'x', url: 'u' } },
-    { adapter: badAdapter, pollIntervalMs: 1, timeoutMs: 100 }
-  );
-  assert.strictEqual(r.ok, false);
-  assert.ok(r.detail.includes('发送失败'));
-});
+  // 9. prune 清理已完成记录
+  await test('prune 清理已完成记录', async () => {
+    let t = 1000;
+    const flow = new ConfirmFlow({ sendConfirmRequest: async () => {}, timeoutMs: 50, now: () => t });
+    const p = flow.confirmL3(env(), { taskId: 'p1' });
+    await p; // 超时完成
+    t += 2 * 60 * 60 * 1000; // 2h 后
+    const n = flow.prune(60 * 60 * 1000);
+    assert.strictEqual(n, 1);
+    assert.strictEqual(flow.getRecord('p1'), null);
+  });
 
-test('多轮后确认（前几轮无关消息）→ ok:true', async () => {
-  adapter = mkAdapter([
-    [{ text: '在开会' }],
-    [{ text: '在开会' }],
-    [{ text: '确认 #task-c5' }],
-  ]);
-  const r = await confirm.confirmL3(
-    { type: 'execute', scope: 'write', target: 'x' },
-    { taskId: 'task-c5', sender: { name: 'x', url: 'u' } },
-    { adapter, pollIntervalMs: 1, timeoutMs: 2000 }
-  );
-  assert.strictEqual(r.ok, true);
-});
+  console.log(`\n📊 结果: ${passed} 通过 / ${failed} 失败`);
+  process.exit(failed > 0 ? 1 : 0);
+}
 
-// ============================================
-// 汇总
-// ============================================
-setTimeout(() => {
-  console.log(`\n${'='.repeat(50)}`);
-  console.log(`结果: ${passed} 通过 / ${failed} 失败`);
-  if (failed > 0) process.exit(1);
-  console.log('全部通过 ✅');
-}, 100);
+main();
