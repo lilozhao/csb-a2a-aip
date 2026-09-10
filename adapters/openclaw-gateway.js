@@ -27,8 +27,22 @@
 
 const http = require('http');
 
-const GATEWAY_HOST = process.env.A2A_GATEWAY_HOST || 'localhost';
-const GATEWAY_PORT = parseInt(process.env.A2A_GATEWAY_PORT || '19089', 10);
+const GATEWAY_URL_ENV = process.env.A2A_GATEWAY_URL || '';
+
+/** 解析 gateway 地址（优先 A2A_GATEWAY_URL 解析端口，兼容各试点不同端口） */
+function resolveGatewayAddr() {
+  if (GATEWAY_URL_ENV) {
+    try {
+      const u = new URL(GATEWAY_URL_ENV);
+      return { host: u.hostname, port: parseInt(u.port || (u.protocol === 'https:' ? '443' : '80'), 10) };
+    } catch (_) { /* 回退 */ }
+  }
+  return {
+    host: process.env.A2A_GATEWAY_HOST || 'localhost',
+    port: parseInt(process.env.A2A_GATEWAY_PORT || '19089', 10),
+  };
+}
+
 const DEFAULT_TIMEOUT_MS = 90 * 1000; // 主 agent 工具执行可能较久
 
 /** 主 agent 拒绝执行的关键词（T4 拒绝权检测） */
@@ -133,9 +147,10 @@ async function executeViaGateway(envelope, taskId, opts = {}) {
   });
 
   const content = await new Promise((resolve, reject) => {
+    const addr = resolveGatewayAddr();
     const req = http.request({
-      hostname: GATEWAY_HOST,
-      port: GATEWAY_PORT,
+      hostname: addr.host,
+      port: addr.port,
       path: '/v1/chat/completions',
       method: 'POST',
       headers: {
