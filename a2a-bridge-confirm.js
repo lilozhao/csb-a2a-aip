@@ -282,11 +282,18 @@ async function confirmL3(envelope, ctx = {}, opts = {}) {
     try { adapter = require('./adapters/openclaw-gateway.js'); }
     catch (e) { return { ok: false, declined: true, detail: 'L3 确认器不可用（无 adapter）: ' + e.message }; }
   }
-  const send = opts.send || ((text) => adapter.inject({
-    taskId: 'confirm-' + taskId,
-    delegatorLabel: '桥接层(L3确认)',
-    envelope: { type: 'notify', scope: 'notify', target: text, task: text, timeoutMs },
-  }, { to: opts.to }));
+  const send = opts.send || (async (text) => {
+    // [9/11 修复] 确认请求必须投递到“宿主用户”（message/send），
+    // 不能走 chat/completions（那是执行注入通道→消息会变成给主 agent 的指令，用户收不到）
+    const cfg = adapter.resolveConfig();
+    const to = opts.to || cfg.mainTo;
+    if (!to) return { ok: false, error: '缺少主会话目标（A2A_BRIDGE_MAIN_TO）' };
+    return adapter.invokeTool(cfg.url, cfg.token, {
+      tool: 'message', action: 'send',
+      args: { to, message: text },
+      sessionKey: 'main',
+    }, opts.timeoutMs || 30000);
+  });
   const read = opts.read || ((tid) => adapter.fetchResult('confirm-' + tid, { to: opts.to }));
 
   const sent = await send(buildConfirmMessage({ taskId, envelope, delegatorLabel }));
