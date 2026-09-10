@@ -171,9 +171,13 @@ class A2AStandardAPI {
     }
 
     // 将 sender 信息存入 metadata，供 LLM 回复使用
+    // [9/10 修复] 补充 senderUrl（bridge 需要 {name, url} 完整发起方标识）
     const taskMetadata = {
       ...(params.configuration?.metadata || {}),
       ...(params.sender ? { sender: params.sender } : {}),
+      ...(params.senderUrl ? { senderUrl: params.senderUrl } : {}),
+      ...(params.sender && typeof params.sender === 'object' && params.sender.url && !params.senderUrl
+        ? { senderUrl: params.sender.url } : {}),
     };
 
     const task = this.taskStore.createTask({

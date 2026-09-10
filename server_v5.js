@@ -262,15 +262,41 @@ const standardAPI = new A2AStandardAPI({
       // 主会话目标：identity.bridge.mainTo → env A2A_BRIDGE_MAIN_TO（试点各自配置）
       const bridgeMainTo = identity?.bridge?.mainTo || process.env.A2A_BRIDGE_MAIN_TO || '';
 
-      // 信任等级查询：trustManager（A2A-010/csb-security）→ env 兑底
+      // 信任等级查询（增强回退链，9/10 真机修复）：
+      //  1. TrustManager store（显式记录） 2. TrustBridge 握手/AAT 3. config/agents.json trust 数值 4. env 兑底
+      const trustNumToLevel = (t) => {
+        const n = Number(t);
+        if (!Number.isFinite(n)) return 'L0';
+        if (n >= 4) return 'L3';
+        if (n === 3) return 'L2';
+        if (n === 2) return 'L1';
+        return 'L0';
+      };
       const getTrustLevel = async (agentId) => {
+        // 1. TrustManager store（非 L0 记录才算命中）
         try {
           const mgr = loadedV3.trustManager;
           if (mgr && agentId) {
             const rec = mgr.getTrustLevel(String(agentId));
-            if (rec?.trustLevel) return rec.trustLevel;
+            if (rec?.trustLevel && rec.trustLevel !== 'L0') return rec.trustLevel;
           }
-        } catch (e) { /* 查询失败走兑底 */ }
+        } catch (e) { /* 走下一级 */ }
+        // 2. TrustBridge 握手/AAT（数值 → L 级）
+        try {
+          const tb = loadedV3.trustBridge || loadedV3.a2aTrustBridge;
+          if (tb?.resolveTrustLevel) {
+            const r = tb.resolveTrustLevel(sender.name, { sender });
+            if (r && Number.isFinite(r.trustLevel)) return 'L' + Math.min(3, Math.max(0, r.trustLevel));
+          }
+        } catch (e) { /* 走下一级 */ }
+        // 3. config/agents.json：按名字 / host 匹配 → trust 数值映射
+        try {
+          const list = require('./config/loader.js').getAgentList();
+          const nm = (sender.name || '').trim();
+          const hit = list.find(a => a.name === nm || (sender.url && a.host && String(sender.url).includes(a.host)));
+          if (hit && hit.trust !== undefined) return trustNumToLevel(hit.trust);
+        } catch (e) { /* 走兑底 */ }
+        // 4. env 兑底
         return process.env.A2A_BRIDGE_DEFAULT_TRUST || 'L0';
       };
 
