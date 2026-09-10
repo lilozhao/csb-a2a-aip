@@ -3,12 +3,7 @@
   "minTrustLevel": 3,
   "requireApproval": true,
   "commandWhitelist": [
-    "status",
-    "health",
-    "memory.list",
-    "memory.get",
-    "task.list",
-    "echo"
+    "status",    "health",    "memory.list",    "memory.get",    "task.list",    "echo","agent.update", "agent.restart"
   ],
   "sensitiveCommands": [
     "memory.delete",

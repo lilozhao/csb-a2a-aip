@@ -37,25 +37,37 @@ echo "🔍 检查端口 ${PORT} 是否被占用..."
 
 # 检查是否有其他进程占用此端口
 EXISTING_PID=$(lsof -ti:${PORT} 2>/dev/null || echo "")
+EXISTING_PID=$(lsof -ti:${PORT} 2>/dev/null || echo "")
 if [ -n "${EXISTING_PID}" ]; then
-    # 检查是否是自己的 PID 文件记录的进程
-    if [ -f "${PID_FILE}" ]; then
-        OLD_PID=$(cat "${PID_FILE}")
-        if [ "${EXISTING_PID}" = "${OLD_PID}" ] && kill -0 "${OLD_PID}" 2>/dev/null; then
-            echo "✅ 端口 ${PORT} 已被自己的进程占用 (PID: ${OLD_PID})"
-        fi
+    # 检查是否是自己的 PID 文件记录的进程（兼容 PID 文件丢失场景）
+    OLD_PID=""
+    [ -f "${PID_FILE}" ] && OLD_PID=$(cat "${PID_FILE}" 2>/dev/null)
+
+    # 判断占用者是否"自己人"：(a) PID 文件记录且存活；或 (b) cmdline 是 node server_v5.js
+    IS_SELF=0
+    if [ "${EXISTING_PID}" = "${OLD_PID}" ] && kill -0 "${EXISTING_PID}" 2>/dev/null; then
+        IS_SELF=1
+    elif kill -0 "${EXISTING_PID}" 2>/dev/null; then
+        EXISTING_CMD=$(cat /proc/${EXISTING_PID}/cmdline 2>/dev/null | tr '\0' ' ')
+        case "${EXISTING_CMD}" in
+            *"node server_v5.js"*)
+                IS_SELF=1
+                echo "🔧 端口 ${PORT} 占用者 (PID: ${EXISTING_PID}) 是 server_v5.js 但 PID 文件丢失 → 修复"
+                echo "${EXISTING_PID}" > "${PID_FILE}"
+                ;;
+        esac
     fi
-    # 如果不是自己的进程，说明有冲突
-    if [ "${EXISTING_PID}" != "${OLD_PID:-}" ] || ! kill -0 "${EXISTING_PID}" 2>/dev/null; then
+
+    if [ "${IS_SELF}" = "0" ]; then
         EXISTING_PROC=$(ps -p ${EXISTING_PID} -o comm= 2>/dev/null || echo "unknown")
         echo "❌ 端口 ${PORT} 已被其他进程占用 (PID: ${EXISTING_PID}, 进程: ${EXISTING_PROC})"
         echo "⚠️  可能是重复的 A2A 实例，拒绝启动"
-        echo "如需覆盖，请手动 kill ${EXISTING_PID} 后重新运行"
+        echo "如需覆盖，请手动 kill ${EXISTING_PID} 后重新启动"
         exit 1
     fi
-fi
 
-# 停止旧进程
+    echo "✅ 端口 ${PORT} 已被自己的进程占用 (PID: ${EXISTING_PID})，继续重启"
+fi
 if [ -f "${PID_FILE}" ]; then
     OLD_PID=$(cat "${PID_FILE}")
     if kill -0 "$OLD_PID" 2>/dev/null; then
