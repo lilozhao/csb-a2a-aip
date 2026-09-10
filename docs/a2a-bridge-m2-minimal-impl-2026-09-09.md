@@ -173,7 +173,7 @@ async function confirmL3(envelope) {
 
 | 级别 | 通道 | 权限模型 | 网络约束 | 适用宿主 | 状态 |
 |---|---|---|---|---|---|
-| **C1** | OpenClaw gateway `/v1/chat/completions`（model=openclaw） | ⚠️ **operator 级**（官方：full operator-access surface） | **仅 loopback / 内网 / tailnet**（官方明令禁止直接暴露公网） | OpenClaw 系（内网：若兰/阿轩/若琢） | ✅ 已实证（本机，2026-09-10） |
+| **C1** | OpenClaw gateway `/v1/chat/completions`（model=openclaw）· **本机 loopback 调用** | ⚠️ **operator 级**——但**凭据不出本机**（A2A server → 本机 gateway） | 宿主本机 loopback（任何网络位置的 OpenClaw agent 皆可） | OpenClaw 系（**内网阿轩/若琢，公网星尘**） | ✅ 已实证（本机，2026-09-10） |
 | **C2** | OpenClaw 官方 **scoped 会话注入 API**（待官方实现） | scoped（非 operator） | 可跨网 | OpenClaw 系（含公网） | ⏳ feature request 已提交（docs/openclaw-session-inject-feature-request-2026-09-09.md） |
 | **C3** | IM bot 通道（飞书等） | 消息级（窄） | 可跨网（受平台边界限制，bot 间互发/自我消息陷阱需评估） | 任意有 IM 的宿主 | 🟡 候选（未验证；一澜 2026-09-10 指出：A2A 本身即 bot 通道，不引入 IM 耦合） |
 | **C4** | 宿主原生工具面／运行时注入（Hermes / DSH / Coze / Claude Code 等各自机制） | 各自定义 | 各自 | 非 OpenClaw 系 | ⏳ 需逐宿主调研（`adapters/` 可插拔接口已预留） |
@@ -183,38 +183,43 @@ async function confirmL3(envelope) {
 
 ```
 宿主框架？
-├─ OpenClaw 系
-│   ├─ 网络在 loopback / 内网 / tailnet  →  C1（2026-09-10 本机已验）
-│   └─ 需跨公网                          →  C2（等官方 scoped API）；过渡期用 C5
-├─ 非 OpenClaw 系                        →  C4（逐宿主 adapter）；无则 C5
+├─ OpenClaw 系（无论内网/公网）
+│   └─ 本机 A2A server → 本机 loopback gateway  →  C1（凭据不出本机，✅ 2026-09-10 已验）
+│       （跨公网的部分只走 A2A 协议层：信封+信任+签名；不暴露 operator 端点）
+│   └─ 需外部调用宿主 gateway（非 loopback）  →  ❌ 禁止；等 C2 官方 scoped API
+├─ Hermes 系（言蹊/舟楫/墨丘）              →  C4（hermes adapter，先内网舟楫/墨丘验证）
+├─ 其他非 OpenClaw 系                    →  C4（逐宿主 adapter）；无则 C5
 └─ 仅 IM 可用                            →  C3（评估后，谨慎：不引入耦合）
 ```
 
 ### 7.4 安全红线（不可协商）
 
-1. **C1 绝不跨公网**——operator 级凭据泄露 = 实例完全沦陷（官方文档原文强调）
-2. **C1 使用前提**：调用方必须是信任边界内的已知 agent（信封签名 + csb-security 握手 + 信任等级）
-3. **每级通道都要过 bridge 自身的门槛**：信任等级（L2/L3）+ write/shell 的 L3 用户确认流
-4. **通道≠授权**：通上了不等于能做事——通道只解决「消息送达」，授权仍由 bridge core 判
+1. **C1 只走 loopback**——operator 凭据绝不离开本机；对外只开 A2A 协议面（信封+签名+信任）
+2. **绝不把 gateway operator 端点暴露到公网/内网其他机器**（官方原文：keep on loopback/tailnet/private ingress only；且不允许外部调用）
+3. **C1 使用前提**：本机 A2A server 已通过 bridge 的信任门槛（信封签名 + csb-security 握手）
+4. **每级通道都要过 bridge 自身门槛**：信任等级（L2/L3）+ write/shell 的 L3 用户确认流
+5. **通道≠授权**：通上了不等于能做事——通道只解决「消息送达」，授权仍由 bridge core 判
 
-### 7.5 试点现状对照（Step 6 输入）
+### 7.5 试点现状对照（Step 6 输入 · 2026-09-10 一澜补充框架信息）
 
 | Agent | 框架 | 网络位置 | 可用通道 | Step 6 预期 |
 |---|---|---|---|---|
 | 若兰（本机） | OpenClaw | 内网 | **C1 ✅（已验）** | — |
-| 阿轩 | OpenClaw | 内网（172.28.0.5） | C1（需启用端点 + token） | **可验收（优先）** |
+| 阿轩 | OpenClaw | 内网（172.28.0.5） | C1（需启用端点 + token，本机调用） | **可验收（优先）** |
 | 若琢 | OpenClaw | 内网（172.28.0.4） | C1 | 可验收 |
-| 言蹊 | Hermes | 公网 | C4（待实现 hermes adapter） | 需 adapter |
-| 星尘 | 待摸底 | 公网 | C4 / C5 | 需摸底 |
+| **星尘** | **OpenClaw** | **公网**（华为云） | **C1（本机 loopback）**——凭据不出本机 | 可验收（验 A2A 跨公网 + 本机注入） |
+| **舟楫 / 墨丘** | **Hermes** | 内网 | **C4（hermes adapter）**——先内网验证 | **adapter 开发位（推荐）** |
+| 言蹊 | Hermes | 公网 | C4（hermes adapter） | adapter 完成后验收 |
 | 思源 | Claude Code | 内网 | C4 | 后续 |
 
 ### 7.6 对 Step 6 的修订建议
 
-原计划「言蹊/星尘接入 adapter → 跨公网验收」需修正为：
-1. **先做阿轩（内网 C1）跨机验收** ← 通道已验证，只差宿主配置
-2. 言蹊（Hermes）→ 先实现 C4 hermes adapter
-3. 星尘 → 先摸底框架与可用注入面
-4. 跨公网**一律不用 C1**（安全红线）；等 C2 官方 API 或用各宿主 C4
+原计划「言蹊/星尘接入 adapter → 跨公网验收」修正为（按难度递增）：
+1. **阿轩（内网 OpenClaw C1）** ← 通道已验证，只差宿主配置（启用端点 + token）
+2. **星尘（公网 OpenClaw C1）** ← 本机 loopback 注入 + A2A 跨公网，验证「公网 OpenClaw 可用」
+3. **舟楫/墨丘（内网 Hermes C4）** ← 先摸 Hermes 主子注入面，写 hermes adapter（内网比公网好调）
+4. **言蹊（公网 Hermes C4）** ← adapter 完成后验收
+5. 跨公网**一律不用 gateway operator 端点**（红线 2）；A2A 协议层承担跨网
 
 ## 八、风险与开放问题（2026-09-09 15:22 实证更新）
 
