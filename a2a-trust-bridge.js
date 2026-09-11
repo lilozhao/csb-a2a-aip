@@ -100,7 +100,7 @@ class TrustBridge {
    */
   _verifyAAT(token, metadata) {
     try {
-      const { verifyAATWithAID } = require('../../csb-security/lib/identity/aat.js');
+      const { verifyAATWithAID } = require('../csb-security/lib/identity/aat.js');
       const configLoader = require('./config/loader.js');
       const knownAgents = configLoader.getKnownAgents();
       const senderName = metadata?.sender?.name || '';

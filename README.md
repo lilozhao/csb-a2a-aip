@@ -30,6 +30,7 @@ CSB-A2A-AIP 是碳硅契（Carbon-Silicon Bond）协议的 A2A 通信层实现�
 | DHT 发现 | `a2a-dht-coldstart.js` | 注册表发现 + 断线重连 |
 | 可观测性 | `a2a-observability.js` | 日志 + 指标 + Trace ID |
 | 信任管理 | `trust-manager.js` | Agent 间信任评分 |
+| 信任证据接线 | `a2a-trust-evidence.js` | 消息链事件 → 证据账本（信任升级 P0，见 [docs/TRUST-EVIDENCE-WIRING.md](docs/TRUST-EVIDENCE-WIRING.md)） |
 | 版本协商 | `version-negotiator.js` | 协议版本兼容协商 |
 | 能力路由 | `capability-router.js` | 按能力分发任务 |
 | 能力声明 | `data/capabilities.json` | 声明式 capabilities 列表（v5.0.1：独立文件 + fs.watch 热更新） |

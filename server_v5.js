@@ -249,6 +249,9 @@ const standardAPI = new A2AStandardAPI({
     if (!bridgeEnabled) return null; // 未启用 → 走原逻辑
     try {
       const bridge = require('./a2a-bridge-core');
+      // [9/11 接线] 信任证据：委托结果 → 证据账本（fail-safe，未装配也不影响委托）
+      const trustEvidence = require('./a2a-trust-evidence.js');
+      const { TrustEvidence } = trustEvidence;
       const correlator = require('./a2a-bridge-correlator');
       const audit = require('./a2a-bridge-audit');
       const gatewayAdapter = require('./adapters/openclaw-gateway');
@@ -310,6 +313,16 @@ const standardAPI = new A2AStandardAPI({
           confirm.confirmL3(envelope, { taskId: c.taskId, sender: c.sender }, { to: bridgeMainTo }),
         recordDegrade: async (evt) => {
           await audit.recordDegradeEvent({ ...evt, taskId });
+        },
+        // [9/11 接线] 信任证据（信任升级 P0）：委托结果 → 证据账本
+        // fail-safe：记账异常不影响委托主流程（a2a-trust-evidence 内部已吞异常并计数）
+        recordEvidence: async (evt) => {
+          const action = evt?.action;
+          const subject = TrustEvidence.subjectFrom(evt?.subject, sender.name);
+          const evidence = evt?.evidence || { ref: taskId };
+          if (action === 'delegate_completed') return trustEvidence.delegateCompleted(subject, evidence, 'a2a-bridge');
+          if (action === 'user_declined') return trustEvidence.userDeclined(subject, evidence, 'a2a-bridge');
+          return trustEvidence._safeCall('record', [{ subject, action, evidence, actor: 'a2a-bridge', note: evt?.note }]);
         },
       });
       return correlator.buildTaskResponse(result);

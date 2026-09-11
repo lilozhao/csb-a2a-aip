@@ -105,6 +105,14 @@ A2A 消息中必须能携带上下文：
 - 开关：`A2A_SELF_GUARD`（默认 true）、`A2A_SELF_GUARD_ALLOW_LOCAL`（默认 false）
 - 详见 [SELF-GUARD.md](SELF-GUARD.md)
 
+### 12. 信任证据接线（Trust Evidence Wiring）
+
+- 消息链事件自动记账：`message_ok`（+1）/ `guard_blocked`（-1）/ `delegate_completed`（+2）/ `user_declined`（**中性**）
+- 证据落盘 append-only JSONL + 哈希链（建议启用 Ed25519 签名）→ 信任等级可重放重算，重启不丢
+- 正向限流 3/时·20/日（防刷分）；负向不封顶；用户拒绝强制中性
+- **fail-safe**：记账失败绝不影响消息处理（安全层是增强件，不是单点故障）
+- 详见 [docs/TRUST-EVIDENCE-WIRING.md](docs/TRUST-EVIDENCE-WIRING.md)
+
 ---
 
 ## 升级检查清单

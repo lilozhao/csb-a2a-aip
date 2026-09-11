@@ -18,7 +18,8 @@
  *     getTrustLevel: async (agentUrl) => 'L2',   // 信任查询（对接 csb-security）
  *     inject: async (envelope, taskId) => {...}, // Session Injector
  *     confirmL3: async (envelope) => {...},      // L3 用户确认器
- *     recordDegrade: async (evt) => {...}        // 降级事件留痕（星尘）
+ *     recordDegrade: async (evt) => {...},       // 降级事件留痕（星尘）
+ *     recordEvidence: async (evt) => {...}       // 信任证据留痕（信任升级 P0 接线）
  *   });
  *
  * 依赖: 无（纯 Node.js）
@@ -211,6 +212,40 @@ function buildFailureReceipt({ delegator, scope, startedAt, reason, detail, fall
 // ============================================
 
 /**
+ * 信任证据记账（fail-safe）
+ *
+ * 设计要点：
+ *   1. 证据记账是**旁路**：失败绝不影响委托判定与回执（安全层是增强件，不是单点故障）
+ *   2. 未被装配（老部署）也不报错 —— 但不静默：首次数一行 warn，提醒“信任体系未接线”
+ *   3. 保持本模块纯逻辑：账本由 ctx.recordEvidence 注入，这里不 require 任何文件模块
+ *
+ * @param {object} ctx handleInbound 的依赖注入上下文
+ * @param {object} evt { action, subject, evidence, note }
+ */
+let _evidenceWarned = false;
+async function _recordEvidence(ctx, evt = {}) {
+  try {
+    if (typeof ctx?.recordEvidence !== 'function') {
+      if (!_evidenceWarned) {
+        _evidenceWarned = true;
+        console.warn('[BridgeCore] ⚠️ recordEvidence 未装配 → 信任证据不积累（信任等级会恒停在 L0）');
+      }
+      return null;
+    }
+    return await ctx.recordEvidence({
+      action: evt.action,
+      subject: evt.subject || ctx.sender || { name: 'unknown' },
+      evidence: evt.evidence || null,
+      actor: 'a2a-bridge-core',
+      note: evt.note || null,
+    });
+  } catch (e) {
+    console.warn('[BridgeCore] ⚠️ 信任证据记账失败（不影响委托）:', e.message);
+    return null;
+  }
+}
+
+/**
  * 桥接入站处理主入口
  *
  * @param {object} msg 入站消息（含可选 delegation 信封）
@@ -219,6 +254,10 @@ function buildFailureReceipt({ delegator, scope, startedAt, reason, detail, fall
  *   - inject:        async (envelope, taskId) => result  Session Injector（主会话执行）
  *   - confirmL3:     async (envelope) => {ok, by?}       L3 用户确认器
  *   - recordDegrade: async (evt) => void                 降级事件留痕（星尘）
+ *   - recordEvidence: async (evt) => void                信任证据留痕（可选；不传则跳过）
+ *     evt = { action: 'delegate_completed'|'user_declined', subject, evidence, actor }
+ *     本模块是纯逻辑模块（无网络/无文件依赖）→ 不直接 require 账本，
+ *     由装配方（server_v5.js）注入实现，与 recordDegrade 同风格
  *   - sender:        {name, url}                          发起方标识
  *   - taskId:        string                               关联 A2A Task ID
  * @returns {Promise<{kind: 'not-delegation'|'rejected'|'executed'|'degraded', receipt?: object, envelope?: object}>}
@@ -270,6 +309,17 @@ async function handleInbound(msg, ctx) {
         delegator: senderLabel, scope: envelope.scope, startedAt,
         reason, detail: (confirm && (confirm.detail || confirm.error)) || 'L3 用户未确认，委托未执行',
       });
+      // [9/11 接线] 信任证据：用户拒绝记账（中性——行使拒绝权不是对方过错）
+      // 仅"显式拒绝"记：超时是系统未得到答复，不归咎于发起方。
+      // 采集器内部还有第二道护栏（NEVER_NEGATIVE 强制归零），双保险。
+      if (confirm && confirm.declined === true) {
+        await _recordEvidence(ctx, {
+          action: 'user_declined',
+          subject: ctx.sender,
+          evidence: { ref: taskId, detail: `scope=${envelope.scope}; ${receipt.reason || reason}` },
+          note: 'L3 用户显式拒绝',
+        });
+      }
       return { kind: 'rejected', receipt, envelope };
     }
   }
@@ -284,6 +334,13 @@ async function handleInbound(msg, ctx) {
         reason: REASON.TARGET_REFUSED,
         detail: result.detail || '被委托方主会话拒绝执行',
       });
+      // [9/11 接线] 信任证据：被委托方拒绝也是中性（拒绝权双向有效）
+      await _recordEvidence(ctx, {
+        action: 'user_declined',
+        subject: ctx.sender,
+        evidence: { ref: taskId, detail: `scope=${envelope.scope}; target_refused` },
+        note: '被委托方主会话拒绝（T4 拒绝权）',
+      });
       return { kind: 'rejected', receipt, envelope };
     }
     // [9/10 修复] inject 明确失败（{ok:false, error}）——不能误判为执行成功
@@ -297,6 +354,14 @@ async function handleInbound(msg, ctx) {
         summary: result?.summary || '主会话执行完成',
         artifact: result?.artifact || null,
       },
+    });
+    // [9/11 接线] 信任证据：委托真正执行完成才记（正向 +2，采集器定权重）
+    // 注意：这里只对"执行完成"记账——回执本身不算证据，做成了才算。
+    await _recordEvidence(ctx, {
+      action: 'delegate_completed',
+      subject: ctx.sender,
+      evidence: { ref: taskId, detail: `scope=${envelope.scope}; status=completed` },
+      note: '桥接委托执行完成',
     });
     return { kind: 'executed', receipt, envelope };
   } catch (e) {

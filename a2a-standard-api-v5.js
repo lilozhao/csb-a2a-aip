@@ -12,6 +12,10 @@ const { URL } = require('url');
 const { TaskStore, TASK_STATE, ROLE, createMessage, createArtifact, createPart, TERMINAL_STATES } = require('./a2a-task-store.js');
 // [2026-09-11] 自环调用守卫：自己发给自己 → 快速拒绝，不再挂起等超时
 const selfGuard = require('./a2a-self-guard.js');
+// [2026-09-11] 信任证据接线：消息链事件 → 证据账本（信任升级 P0 最后一环）
+// fail-safe：csb-security 不可用时全部 no-op，绝不影响消息处理
+const trustEvidence = require('./a2a-trust-evidence.js');
+const { TrustEvidence } = trustEvidence;
 
 // ============================================
 // 标准错误代码 (A2A §5.4)
@@ -59,6 +63,9 @@ class A2AStandardAPI {
 
     // [2026-09-11] 自环调用守卫配置（env A2A_SELF_GUARD / A2A_SELF_GUARD_ALLOW_LOCAL / A2A_SELF_GUARD_RESPONSE）
     this.selfGuardConfig   = { ...selfGuard.loadConfig(), ...(options.selfGuardConfig || {}) };
+
+    // [2026-09-11] 信任证据：本任务已被安全审查拦截的标记（拦截不记 message_ok）
+    this._guardBlockedTasks = new Set();
 
     // SSE 订阅者: Map<taskId, Set<{res, lastPing}>
     this.streamSubscribers = new Map();
@@ -220,6 +227,17 @@ class A2AStandardAPI {
       // 终态：默认 COMPLETED；bridge/扩展可指定（如 REJECTED/FAILED，防被覆盖）
       const terminalState = response?.__terminalState || TASK_STATE.COMPLETED;
       this.taskStore.updateTaskStatus(task.id, terminalState, 'Completed');
+
+      // [9/11 接线] 信任证据：消息正常收尾 → 正向；被安全审查拦截的不算正向
+      if (terminalState === TASK_STATE.COMPLETED && !this._guardBlockedTasks.has(task.id)) {
+        trustEvidence.messageOk(
+          TrustEvidence.subjectFrom(taskMetadata.sender, 'unknown'),
+          { ref: task.id, detail: msg.parts?.filter((p) => p.text).map((p) => p.text).join(' ').slice(0, 80) },
+          'a2a-standard-api',
+        );
+      }
+      this._guardBlockedTasks.delete(task.id);
+
       const result = this.taskStore.getTask(task.id);
       this._notifySubscribers(task.id, { task: result });
       return { task: result };
@@ -514,6 +532,13 @@ class A2AStandardAPI {
     if (!inspection.safe) {
       // 消息被安全审查拦截
       console.warn(`[A2A] ⛔ 消息被安全审查拦截 (risk=${inspection.riskScore}): ${senderName}`);
+      // [9/11 接线] 信任证据：拦截计负向（采集器集中定权重，调用点不自定义）
+      trustEvidence.guardBlocked(
+        TrustEvidence.subjectFrom(senderInfo, senderName),
+        { ref: taskId, detail: `risk=${inspection.riskScore}; ${(inspection.warnings || []).join('; ')}` },
+        'a2a-standard-api',
+      );
+      if (taskId) this._guardBlockedTasks.add(taskId);
       return `[安全提示] 来自「${senderName}」的消息因检测到提示注入特征被拦截。` +
         `\n\n检测到的问题: ${inspection.warnings.join('; ')}` +
         `\n\n—— 这符合碳硅契边界契原则：不可信内容不直接进入对话。`;
