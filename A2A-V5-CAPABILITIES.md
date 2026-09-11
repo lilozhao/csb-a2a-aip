@@ -98,6 +98,13 @@ A2A 消息中必须能携带上下文：
 - 支持 Task 委托（A 委托 B 执行子任务）
 - 支持消息路由（自动转发给合适的 Agent）
 
+### 11. 自环调用守卫
+
+- 自己发给自己（sender = 自身 / 本机回环无 sender）→ 入口快速拒绝，返回 `TASK_STATE_REJECTED` + `SELF_MESSAGE_IGNORED`
+- 避免自我消息陷阱（自己等自己 → 挂起至超时）；判定纯同步、无网络等待
+- 开关：`A2A_SELF_GUARD`（默认 true）、`A2A_SELF_GUARD_ALLOW_LOCAL`（默认 false）
+- 详见 [SELF-GUARD.md](SELF-GUARD.md)
+
 ---
 
 ## 升级检查清单

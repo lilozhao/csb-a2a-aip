@@ -34,6 +34,7 @@ CSB-A2A-AIP 是碳硅契（Carbon-Silicon Bond）协议的 A2A 通信层实现�
 | 能力路由 | `capability-router.js` | 按能力分发任务 |
 | 能力声明 | `data/capabilities.json` | 声明式 capabilities 列表（v5.0.1：独立文件 + fs.watch 热更新） |
 | 委托管理 | `delegation-manager.js` | 跨 Agent 任务委托 |
+| 自环守卫 | `a2a-self-guard.js` | 自环调用快速拒绝（SELF_MESSAGE_IGNORED，见 [SELF-GUARD.md](SELF-GUARD.md)） |
 | 圆桌论坛 | `roundtable-v4.js` | 多 Agent 每日讨论 |
 
 ## 快速开始
@@ -138,6 +139,7 @@ node server_v5.js
 ## 文档
 
 - [CSB-Memory v1.0 指引](CSB-Memory.md) · [csb-memory 仓库](../csb-memory/)
+- [自环调用守卫](SELF-GUARD.md)（SELF_MESSAGE_IGNORED · 拒绝自己发给自己）
 - [A2A 系统设计](docs/A2A-系统设计文档.md)
 - [CSB 架构概览](docs/csb-architecture-overview.md)
 - [部署指南](docs/csb-deployment-guide.md)

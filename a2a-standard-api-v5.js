@@ -10,6 +10,8 @@ const https = require('https');
 const path = require('path');
 const { URL } = require('url');
 const { TaskStore, TASK_STATE, ROLE, createMessage, createArtifact, createPart, TERMINAL_STATES } = require('./a2a-task-store.js');
+// [2026-09-11] 自环调用守卫：自己发给自己 → 快速拒绝，不再挂起等超时
+const selfGuard = require('./a2a-self-guard.js');
 
 // ============================================
 // 标准错误代码 (A2A §5.4)
@@ -54,6 +56,9 @@ class A2AStandardAPI {
     this._commandHandler   = options.commandHandler || null;
     // 主会话桥接处理器 (delegation 信封，RFC v0.2)
     this._bridgeHandler    = options.bridgeHandler || null;
+
+    // [2026-09-11] 自环调用守卫配置（env A2A_SELF_GUARD / A2A_SELF_GUARD_ALLOW_LOCAL / A2A_SELF_GUARD_RESPONSE）
+    this.selfGuardConfig   = { ...selfGuard.loadConfig(), ...(options.selfGuardConfig || {}) };
 
     // SSE 订阅者: Map<taskId, Set<{res, lastPing}>
     this.streamSubscribers = new Map();
@@ -132,6 +137,16 @@ class A2AStandardAPI {
         'tasks/cancel': 'CancelTask',
       };
       const normalizedMethod = METHOD_ALIASES[method] || method;
+
+      // 🔁 [2026-09-11] 自环调用快速拒绝 —— 自己发给自己没有任何语义，
+      // 却会走 LLM 链路自己等自己（挂起至超时）。这里直接返回终态 REJECTED。
+      if (normalizedMethod === 'SendMessage' || normalizedMethod === 'SendStreamingMessage') {
+        const selfCheck = this._checkSelfMessage(params, req);
+        if (selfCheck.self) {
+          console.warn(`[A2A] 🔁 自环调用已快速拒绝 (${selfCheck.reason})`);
+          return res.json({ jsonrpc: '2.0', result: this._buildSelfRejectedTask(params, selfCheck), id });
+        }
+      }
 
       let result;
       switch (normalizedMethod) {
@@ -319,7 +334,19 @@ class A2AStandardAPI {
     res.json(r);
   }
   async _handleRESTSendMessage(req, res) {
-    const r = await this._sendMessage({ message: req.body.message, configuration: req.body.configuration });
+    const restParams = {
+      message: req.body.message,
+      configuration: req.body.configuration,
+      ...(req.body.sender ? { sender: req.body.sender } : {}),
+      ...(req.body.senderUrl ? { senderUrl: req.body.senderUrl } : {}),
+    };
+    // [2026-09-11] 自环守卫（REST 通道同样生效）
+    const selfCheck = this._checkSelfMessage(restParams, req);
+    if (selfCheck.self) {
+      console.warn(`[A2A] 🔁 自环调用已快速拒绝 (REST, ${selfCheck.reason})`);
+      return res.json(this._buildSelfRejectedTask(restParams, selfCheck));
+    }
+    const r = await this._sendMessage(restParams);
     if (r.error) return res.status(400).json(r);
     res.json(r);
   }
@@ -705,6 +732,59 @@ class A2AStandardAPI {
    * 从请求体提取 Agent 标识（用于按 Agent 限流）
    * 优先级: body.from > params.from > params.sender.name > body.sender.name > params.sender > 'unknown'
    */
+  // ================= 自环守卫 =================
+
+  /**
+   * 判断当前请求是否为「自己发给自己」
+   * @returns {{self:boolean, reason:string|null, detail:object}}
+   */
+  _checkSelfMessage(params, req) {
+    try {
+      const cfg = this.selfGuardConfig || selfGuard.loadConfig();
+      if (!cfg.enabled) return { self: false, reason: null, detail: { skipped: 'disabled' } };
+      const sender = params?.sender;
+      const senderUrl = params?.senderUrl
+        || (sender && typeof sender === 'object' ? sender.url : undefined);
+      return selfGuard.isSelfCall({
+        sender,
+        senderUrl,
+        identity: this.identity || {},
+        remoteAddr: req?.socket?.remoteAddress || req?.connection?.remoteAddress || '',
+        forwardedFor: req?.headers?.['x-forwarded-for'] || '',
+        config: cfg,
+      });
+    } catch (e) {
+      // 守卫自身异常 → 放行（诚实不误伤）
+      console.warn('[A2A] self-guard 异常，放行:', e.message);
+      return { self: false, reason: null, detail: { error: e.message } };
+    }
+  }
+
+  /**
+   * 构造自环拒绝任务（终态 REJECTED，不发 LLM、不写记忆）
+   */
+  _buildSelfRejectedTask(params, guardResult) {
+    const text = (this.selfGuardConfig?.responseText) || selfGuard.DEFAULT_RESPONSE_TEXT;
+    const msg = params?.message || {};
+    const task = this.taskStore.createTask({
+      contextId: msg.contextId || undefined,
+      metadata: {
+        ...(params?.sender ? { sender: params.sender } : {}),
+        ...(params?.senderUrl ? { senderUrl: params.senderUrl } : {}),
+        selfGuard: { reason: guardResult.reason, detail: guardResult.detail || {} },
+      },
+    });
+    this.taskStore.addHistory(task.id, {
+      role: msg.role || ROLE.USER,
+      parts: msg.parts || [],
+      messageId: msg.messageId || `msg_${Date.now()}`,
+    });
+    this.taskStore.addArtifact(task.id, createArtifact([createPart(text)], { name: 'self_guard' }));
+    this.taskStore.addHistory(task.id, createMessage(ROLE.AGENT, [createPart(text)]));
+    this.taskStore.updateTaskStatus(task.id, TASK_STATE.REJECTED, text);
+    return { task: this.taskStore.getTask(task.id) };
+  }
+
   _extractAgentId(req) {
     const body = req.body || {};
     const params = body.params || {};
