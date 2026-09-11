@@ -8,8 +8,18 @@
  */
 const assert = require('assert');
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 
 const adapter = require('../adapters/openclaw-gateway');
+
+/** 读本地 identity.json 的 bridge.mainTo（测试环境可能不存在） */
+function identityMainTo() {
+  try {
+    const id = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'identity.json'), 'utf-8'));
+    return (id && id.bridge && id.bridge.mainTo) || '';
+  } catch { return ''; }
+}
 
 let passed = 0, failed = 0;
 function test(name, fn) {
@@ -90,17 +100,57 @@ test('缺 token → 明确报错', async () => {
   }
 });
 
-test('缺主会话目标 to → 明确报错', async () => {
+test('缺主会话目标 to → 两处都缺时明确报错', async () => {
   const old = process.env.OPENCLAW_GATEWAY_TOKEN; process.env.OPENCLAW_GATEWAY_TOKEN = 'tok';
   const oldTo = process.env.A2A_BRIDGE_MAIN_TO; delete process.env.A2A_BRIDGE_MAIN_TO;
+  const idTo = identityMainTo();
+  const mock = mockHttp({ choices: [{ message: { content: 'ok' } }] });
   try {
     const r = await adapter.inject({ taskId: 't', envelope: {} });
-    assert.strictEqual(r.ok, false);
-    assert.ok(r.error.includes('A2A_BRIDGE_MAIN_TO'));
+    if (idTo) {
+      // identity.json 兜底生效：不再报「缺少主会话目标」
+      assert.ok(!String(r.error || '').includes('A2A_BRIDGE_MAIN_TO'), '兜底后仍报缺目标');
+      assert.strictEqual(r.ok, true);
+    } else {
+      assert.strictEqual(r.ok, false);
+      assert.ok(r.error.includes('A2A_BRIDGE_MAIN_TO'));
+    }
   } finally {
+    mock.restore();
     if (old) process.env.OPENCLAW_GATEWAY_TOKEN = old; else delete process.env.OPENCLAW_GATEWAY_TOKEN;
     if (oldTo) process.env.A2A_BRIDGE_MAIN_TO = oldTo;
   }
+});
+
+console.log('\n[2.1] 主会话目标读取源（2026-09-11 修复：env 缺失回退 identity.json）');
+
+test('env 缺失 → mainTo 从 identity.json 兜底（与 server_v5 主链路同源）', () => {
+  const oldTo = process.env.A2A_BRIDGE_MAIN_TO; delete process.env.A2A_BRIDGE_MAIN_TO;
+  try {
+    const idTo = identityMainTo();
+    if (!idTo) { console.log('     ⏭  identity.json 无 bridge.mainTo，跳过'); return; }
+    const cfg = adapter.resolveConfig();
+    assert.strictEqual(cfg.mainTo, idTo, 'env 缺失时未回退到 identity.json');
+    assert.ok(cfg.channel, 'channel 应有默认值');
+  } finally {
+    if (oldTo) process.env.A2A_BRIDGE_MAIN_TO = oldTo;
+  }
+});
+
+test('env 优先于 identity.json（可临时覆盖）', () => {
+  const oldTo = process.env.A2A_BRIDGE_MAIN_TO;
+  process.env.A2A_BRIDGE_MAIN_TO = 'ou_env_override';
+  try {
+    assert.strictEqual(adapter.resolveConfig().mainTo, 'ou_env_override');
+  } finally {
+    if (oldTo) process.env.A2A_BRIDGE_MAIN_TO = oldTo; else delete process.env.A2A_BRIDGE_MAIN_TO;
+  }
+});
+
+test('resolveConfig 含 channel 字段（confirm 投递依赖）', () => {
+  const cfg = adapter.resolveConfig();
+  assert.ok('channel' in cfg, 'resolveConfig 应返回 channel');
+  assert.strictEqual(typeof cfg.channel, 'string');
 });
 
 console.log('\n[3] inject 请求构造（mock http）');

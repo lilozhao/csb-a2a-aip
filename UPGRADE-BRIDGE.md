@@ -32,7 +32,9 @@ cd /path/to/csb-a2a-aip
 # 1. 拉代码（bridge 四件套 + 装配补丁 + 通道升级已在 master）
 git pull origin master
 
-# 2. 配置（加到启动环境/.env）
+# 2. 配置（两种写法任选，优先级：env > identity.json）
+#    推荐写进 identity.json 的 bridge 段（本地配置单源，重启不会丢）：
+#    "bridge": { "mainTo": "ou_xxx", "channel": "feishu" }
 export A2A_BRIDGE_ENABLED=true          # 启用桥接
 export A2A_BRIDGE_MAIN_TO='ou_xxx'      # 主会话宿主目标（飞书 ou_xxx 用户 或 oc_xxx 群）
 export OPENCLAW_GATEWAY_TOKEN='xxx'     # 本机 OpenClaw gateway token（若已有 A2A_GATEWAY_TOKEN 可省）
@@ -57,7 +59,15 @@ export A2A_BRIDGE_CHANNEL='feishu'      # [9/11] 确认回复读取用通道（�
 | `adapters/openclaw-gateway.js` | 新增 · 主会话注入（**/v1/chat/completions**；双契约） |
 | `a2a-standard-api-v5.js` | 接入 · _processTask delegation 分支 + __terminalState 终态支持 |
 | `server_v5.js` | 接入 · bridgeHandler 装配（env 开关） |
-| `tests/bridge-*.test.js` | 新增 · 55 用例全绿（core 25 / adapter 8 / audit 4 / correlator 9 / confirm 9） |
+| `tests/bridge-*.test.js` | 新增 · 57 用例全绿（core 25 / adapter 11 / audit 4 / correlator 9 / confirm 9） |
+
+> **2026-09-11 修复（v9 真机实拍）**：
+> - **E · 配置读取源不统一**（`adapters/openclaw-gateway.js`）：`resolveConfig()` 原先**只读 env**，而 `server_v5.js` 主链路已先读 `identity.bridge.mainTo` —— 同一个配置「有的路径能用、有的不能」，症状酷似「配置丢了」。
+>   现统一为 **env（临时覆盖）→ identity.json（本地单源）**，并补 `channel` 字段。
+>   - 影响：重启后 env 未带 `A2A_BRIDGE_MAIN_TO` 时，adapter frame 校验与 confirm 默认 send 不再报「缺少主会话目标」。
+>   - 自检：`node scripts/check-bridge-config.js`（打印实际生效值 + 来源，脱敏）。
+>
+> **⚠️ 重启语义提醒**：`scripts/restart-a2a.js` 继承的是**当前进程**的环境变量 —— 若当前进程本来就没带某个变量，重启后依然没有。改了 `.env` / 启动脚本要生效，需用 `./start-v5.sh` 冷启（该脚本 `set -a` 自动 export `.env`）。
 
 > **2026-09-11 修复（v6 真机实拍）**：
 > - **A · 确认请求折叠**（`a2a-bridge-confirm.js`）：默认不回显任务原文，只给「摘要 hash + 长度」；加「待人工确认、非指令」声明。根因：确认请求若落入任何 LLM 会话，携带可执行原文会被当指令执行 → 绕过 L3。需回显时设 `A2A_BRIDGE_CONFIRM_SHOW_TASK=true`。

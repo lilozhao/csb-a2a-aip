@@ -26,6 +26,8 @@
 'use strict';
 
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 
 const GATEWAY_URL_ENV = process.env.A2A_GATEWAY_URL || '';
 
@@ -198,7 +200,7 @@ async function executeViaGateway(envelope, taskId, opts = {}) {
   };
 }
 
-module.exports = { inject, buildPrompt, buildInjectMessage, detectRefusal, REFUSAL_PATTERNS, resolveConfig, invokeTool, fetchResult, extractReply };
+module.exports = { inject, buildPrompt, buildInjectMessage, detectRefusal, REFUSAL_PATTERNS, resolveConfig, invokeTool, fetchResult, extractReply, harvestTexts, _resetIdentityBridgeCache };
 
 /** [9/9 兼容] frame → 注入消息文本（含 taskId 标记 + 委托四要素 + 拒绝权声明） */
 function buildInjectMessage(frame = {}) {
@@ -225,11 +227,46 @@ function buildInjectMessage(frame = {}) {
 // 来源：commit 34573f9（confirm 模块级轮询依赖 fetchResult）
 // ============================================
 
+/**
+ * 读取 identity.json 的 bridge 段（本地配置文件，单源兜底）
+ *
+ * 背景（2026-09-11）：A2A_BRIDGE_MAIN_TO / CHANNEL 只在 .env 里时，
+ * 一旦进程环境没带上（重启丢变量、start 脚本没 export…），所有只认 env
+ * 的路径（adapter frame 校验、confirm 默认 send）就报「缺少主会话目标」——
+ * 而 server_v5 主链路已经先读 identity.bridge.mainTo。两边不一致 → 同一个
+ * 配置、有的路径能用有的不能用，排查起来像“配置丢了”，实际是**读取源不统一**。
+ * 因此 adapter 也按同一优先级：env 优先（可临时覆盖）→ identity.json 兜底。
+ *
+ * @returns {{mainTo: string, channel: string}} bridge 配置（缺省空串）
+ */
+let _identityBridgeCache;
+function identityBridge() {
+  if (_identityBridgeCache !== undefined) return _identityBridgeCache;
+  _identityBridgeCache = { mainTo: '', channel: '' };
+  try {
+    const idPath = path.join(__dirname, '..', 'identity.json');
+    const id = JSON.parse(fs.readFileSync(idPath, 'utf-8'));
+    if (id && id.bridge) {
+      _identityBridgeCache = {
+        mainTo: String(id.bridge.mainTo || ''),
+        channel: String(id.bridge.channel || ''),
+      };
+    }
+  } catch { /* 文件缺失/损坏 → 保持空值，不阻塞主流程 */ }
+  return _identityBridgeCache;
+}
+
+/** 测试用：清空 identity 缓存（改文件后重读） */
+function _resetIdentityBridgeCache() { _identityBridgeCache = undefined; }
+
 function resolveConfig() {
   const url = process.env.A2A_GATEWAY_URL || 'http://localhost:19089';
   const token = process.env.OPENCLAW_GATEWAY_TOKEN || process.env.A2A_GATEWAY_TOKEN;
-  const mainTo = process.env.A2A_BRIDGE_MAIN_TO || '';
-  return { url, token, mainTo };
+  const idBridge = identityBridge();
+  // 优先级：env（临时覆盖）→ identity.json（本地配置单源）
+  const mainTo = process.env.A2A_BRIDGE_MAIN_TO || idBridge.mainTo || '';
+  const channel = process.env.A2A_BRIDGE_CHANNEL || idBridge.channel || 'feishu';
+  return { url, token, mainTo, channel };
 }
 
 /** 调用 gateway /tools/invoke（格式：{tool, action, args, sessionKey}） */
@@ -271,26 +308,54 @@ function invokeTool(gatewayUrl, token, body, timeoutMs = 30000) {
 
 /**
  * 读取宿主回复（confirm 轮询用）
- * [9/11 修复 C] 显式传 channel——缺省 channel 时 gateway 报 “tool execution failed”（v6 实拍）；
- *              失败自动回退一次「不带 channel」，兼容不同 gateway 版本；错误信息带诊断上下文。
+ * [9/11 修复 C] 显式传 channel——缺省 channel 时 gateway 报 “tool execution failed”（v6 实拍）。
+ * [9/11 修复 D] 根因：飞书 message read 需 messageId，无法拉会话列表（实测：
+ *              "Feishu read requires messageId."）→ 主路径改为 sessions_history
+ *              （读宿主主会话，仅取 user 角色消息），message read 保留为 fallback。
  */
 async function fetchResult(taskId, opts = {}) {
   const cfg = { ...resolveConfig(), ...opts };
   if (!cfg.token) return { ok: false, error: '缺少 gateway token' };
+  const sessionKey = opts.sessionKey || 'main';
+  const limit = opts.limit || 40;
+
+  // 主路径：sessions_history（宿主会话 → 用户回复）
+  const hist = await invokeTool(cfg.url, cfg.token, {
+    tool: 'sessions_history',
+    args: { sessionKey, limit },
+    sessionKey,
+  }, opts.timeoutMs || 30000);
+
+  if (hist.ok) {
+    const texts = harvestTexts(hist.result, { userOnly: true });
+    const marker = `桥接结果 #${taskId}`;
+    const confirmMarker = `确认 #${taskId}`;
+    const hit = texts.find((t) => t.includes(marker) || t.includes(confirmMarker)) || null;
+    return {
+      ok: true,
+      result: {
+        matched: hit !== null,
+        replyText: hit,
+        messages: texts.map((t) => ({ text: t })),
+        raw: hist.result,
+      },
+    };
+  }
+
+  // Fallback：message read（其他 channel / 旧 gateway）
   const to = cfg.to || cfg.mainTo;
-  const channel = cfg.channel || process.env.A2A_BRIDGE_CHANNEL || 'feishu';
-  const limit = opts.limit || 20;
+  const channel = cfg.channel || resolveConfig().channel || 'feishu';
   const attempts = [
     { target: to, limit, channel },
     { target: to, limit },
   ];
-  let lastErr = null;
+  let lastErr = hist.error;
   for (const args of attempts) {
     const resp = await invokeTool(cfg.url, cfg.token, {
       tool: 'message',
       action: 'read',
       args,
-      sessionKey: 'main',
+      sessionKey,
     }, opts.timeoutMs || 30000);
     if (resp.ok) {
       const raw = resp.result;
@@ -302,7 +367,36 @@ async function fetchResult(taskId, opts = {}) {
     lastErr = resp.error;
   }
   const targetHint = to ? String(to).slice(0, 12) + '…' : '未设置';
-  return { ok: false, error: `${lastErr}（channel=${channel} target=${targetHint}）` };
+  return { ok: false, error: `${lastErr}（sessions_history + message.read 均失败；channel=${channel} target=${targetHint}）` };
+}
+
+/**
+ * [9/11 修复 D] 从 sessions_history / message.read 结果中尽提取文本片段。
+ * userOnly=true 时仅取 user 角色消息 —— 防 assistant thinking 里出现同名字样误触发确认。
+ */
+function harvestTexts(result, opts = {}) {
+  const out = [];
+  const push = (v) => { if (typeof v === 'string' && v.trim()) out.push(v); };
+  try {
+    let payload = result;
+    const c = result?.content;
+    if (Array.isArray(c) && c[0]?.text) {
+      try { payload = JSON.parse(c[0].text); } catch { push(c[0].text); }
+    }
+    const msgs = payload?.messages || payload?.items || (Array.isArray(payload) ? payload : []);
+    if (Array.isArray(msgs)) {
+      for (const m of msgs) {
+        if (opts.userOnly && m?.role && m.role !== 'user') continue;
+        const parts = m?.content;
+        if (Array.isArray(parts)) {
+          for (const p of parts) { if (p?.type === 'thinking') continue; push(p?.text); }
+        } else push(parts);
+        push(m?.text);
+      }
+    }
+    if (typeof payload === 'string') push(payload);
+  } catch { /* 尽力而为 */ }
+  return out;
 }
 
 /** 从 read 结果中提取匹配 taskId 的回复文本 */
