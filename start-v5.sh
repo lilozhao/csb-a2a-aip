@@ -7,6 +7,15 @@ export A2A_PORT=${A2A_PORT:-$(node -e "console.log(require('./identity.json').po
 if [ -f .env.a2a ]; then
   . ./.env.a2a
 fi
+# 加载本地敏感配置（gateway token 等）
+# 2026-09-11 修复：之前只加载 .env.a2a，.env 里的 A2A_GATEWAY_TOKEN 进不来
+#   → bridge 注入缺 token（同一类 root cause：配置未进进程）
+# set -a = 自动 export，确保子进程可见
+if [ -f .env ]; then
+  set -a
+  . ./.env
+  set +a
+fi
 # CSB-Security 握手配置（AID/私钥/统一用户公钥）
 export A2A_SECURITY_HANDSHAKE_AID=/home/node/.openclaw/workspace/csb-security/data/Jeason-aid.json
 export A2A_SECURITY_HANDSHAKE_KEY=/home/node/.openclaw/workspace/csb-security/data/Jeason-private-key.pem

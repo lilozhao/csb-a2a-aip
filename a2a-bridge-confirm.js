@@ -318,7 +318,11 @@ async function confirmL3(envelope, ctx = {}, opts = {}) {
       sessionKey: 'main',
     }, opts.timeoutMs || 30000);
   });
-  const read = opts.read || ((tid) => adapter.fetchResult('confirm-' + tid, { to: opts.to }));
+  // [9/11 修复 A] 读取时不得再加 'confirm-' 前缀：
+  // 确认请求发出的是「确认 #<taskId>」，若读取时拼成 'confirm-'+tid，
+  // fetchResult 内部查找标记会变成「确认 #confirm-<taskId>」→ 永不匹配。
+  // 实测症状：用户已回复，轮询 5 分钟仍读不到（读取通道本身正常）。
+  const read = opts.read || ((tid) => adapter.fetchResult(tid, { to: opts.to }));
 
   const sent = await send(buildConfirmMessage({ taskId, envelope, delegatorLabel }));
   if (!sent || sent.ok !== true) {
