@@ -10,7 +10,11 @@
  *   [3] 内容净化     — 转义/包裹不可信内容，防止指令覆盖
  *   [4] System Prompt 加固 — 在 system prompt 中注入防注入指令
  *
- * 版本: 1.0.0 | 2026-08-24
+ * 版本: 1.0.1 | 2026-09-11
+ *   - 修复：英文注入正则交替分支未分组 → 裸 "ignore" 单独命中（术语
+ *     SELF_MESSAGE_IGNORED 被误判为注入，2026-09-11 思源真实投递实证）
+ *   - 修复：ASCII 危险关键词改词边界匹配 → 不再命中更长标识符内部
+ *     （exec/eval/format/DAN…）；CJK 关键词保持子串匹配
  */
 
 const fs = require('fs');
@@ -24,7 +28,8 @@ const INJECTION_PATTERNS = [
   /忽略(以上|之前|上面|所有)(的)?(指令|提示|规则|内容)/i,
   /忽略.{0,12}(指令|提示|规则|内容)/i,            // 宽松变体："忽略以上所有指令"等中间带修饰词的写法
   /无视(所有|以上|之前|系统)(的)?(指令|提示|规则)/i,
-  /disregard|ignore|forget\s+(all\s+)?(previous|above|prior)\s+(instructions|prompts|rules)/i,
+  // ⚠️ 必须整组短语匹配：交替分支不加 (?:...) 会让裸 ignore/disregard 单独命中
+  /\b(?:disregard|ignore|forget)\s+(?:all\s+)?(?:the\s+)?(?:previous|above|prior|earlier|preceding)\s+(?:instructions|prompts|rules|commands)/i,
   /不要(遵守|执行|遵循)(以上|之前|系统)(的)?(指令|规则|提示)/i,
   /以上(指令|规则|内容)(全部)?(作废|无效|取消)/i,
 
@@ -58,7 +63,7 @@ const INJECTION_PATTERNS = [
   /\\x[0-9a-f]{2}/i,           // 十六进制编码
   /\\u[0-9a-f]{4}/i,           // Unicode 编码
   /&#\d+;/i,                    // HTML 实体编码
-  /base64|atob|btoa/i,          // Base64 编解码
+  /\b(?:base64|atob|btoa)\b/i, // Base64 编解码（词边界，勿命中 base64decodeXxx 之外的正常词）
 ];
 
 // 危险关键词（用于风险评估，不直接拦截）
@@ -69,6 +74,27 @@ const RISK_KEYWORDS = [
   'sudo', 'rm -rf', 'del /f', 'format',
   'exec', 'eval', 'Function(',
 ];
+
+/**
+ * 关键词匹配 — ASCII 走词边界，CJK 走子串
+ *
+ * 背景（2026-09-11）：原先统一用 lowerText.includes(keyword) 子串匹配，
+ * ASCII 关键词会命中更长标识符内部（exec→executed/evaluation、format→formatted、
+ * DAN→dandelion、ignore→SELF_MESSAGE_IGNORED），造成误报。
+ * 中文没有词边界概念，保持子串匹配。
+ *
+ * @param {string} text - 待检测文本
+ * @param {string} keyword - 关键词
+ * @returns {boolean} 是否命中
+ */
+function matchesKeyword(text, keyword) {
+  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // 纯 ASCII 关键词 → 前后加“非标识符字符”断言（用 lookaround 以兼容 'Function(' 这类含符号关键词）
+  if (/^[\x00-\x7F]+$/.test(keyword)) {
+    return new RegExp(`(?<![A-Za-z0-9_])${escaped}(?![A-Za-z0-9_])`, 'i').test(text);
+  }
+  return text.toLowerCase().includes(keyword.toLowerCase());
+}
 
 // ============================================
 // 默认配置
@@ -191,10 +217,9 @@ function inspectMessage(senderInfo = {}, messageContent = '') {
     }
   }
 
-  // [3] 危险关键词检测
-  const lowerText = messageContent.toLowerCase();
+  // [3] 危险关键词检测（ASCII 词边界 / CJK 子串）
   for (const keyword of RISK_KEYWORDS) {
-    if (lowerText.includes(keyword.toLowerCase())) {
+    if (matchesKeyword(messageContent, keyword)) {
       result.riskScore += 1;
       if (thresholds.blockKeywords) {
         result.warnings.push(`检测到危险关键词: "${keyword}"`);
@@ -309,6 +334,8 @@ module.exports = {
   sanitize,
   loadConfig,
   buildInjectionDefensePrompt,
+  matchesKeyword,
   INJECTION_PATTERNS,
+  RISK_KEYWORDS,
   DEFAULT_CONFIG,
 };

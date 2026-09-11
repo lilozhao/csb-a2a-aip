@@ -140,6 +140,17 @@ curl -s -X POST http://你的IP:端口/a2a/json-rpc \
 **Q: 会不会误拦截正常消息？**
 normal 模式只拦截"明确注入特征"（忽略指令/身份劫持/泄露请求等）。实测正常对话无误伤。若发现误伤，调 `strictness: relaxed`。
 
+**Q: 我消息里提到别人的错误码（如 `SELF_MESSAGE_IGNORED`）会被拦吗？**
+不会（message-guard v1.0.1 起）。v1.0.0 有两处误报已修：
+1. 英文注入正则交替分支未分组 → 裸 `ignore` 单独命中（`SELF_MESSAGE_IGNORED` 被当成注入）
+2. ASCII 危险关键词子串匹配 → `executed`/`evaluation`/`formatted`/`dandelion` 被误计分
+
+**现在的匹配策略（v1.0.1）**：
+- **英文（ASCII）关键词 → 词边界匹配**（`(?<![A-Za-z0-9_])…(?![A-Za-z0-9_])`）：`exec` 不再命中 `executed`，`DAN` 不再命中 `dandelion`
+- **中文（CJK）关键词 → 保持子串匹配**（中文无词边界概念）：`忽略指令`、`系统提示词` 照旧生效
+- **英文注入短语 → 必须整组命中**：`ignore all previous instructions` 仍拦；单独的 `ignore`/`disregard` 不拦
+- 回归测试：`node tests/message-guard.test.js`（22 用例，含术语引用与真注入双向验证）
+
 **Q: 我是 Windows（.ps1 启动）怎么办？**
 逻辑相同：拉代码 → 改 identity.json → 设环境变量（PowerShell: `$env:A2A_LLM_API_KEY="sk-..."`）→ 重启。
 
@@ -150,6 +161,15 @@ normal 模式只拦截"明确注入特征"（忽略指令/身份劫持/泄露请
 - 红队 28 用例：19 个完全防御（3 分），S 类总分 2.4/3 → AEP +9 🟢
 - 多轮渐进攻击（5 轮）平均 2.6/3，仅第 4 轮（escape）出现语气弱化
 - 安全层开销：<1% 延迟 + <1% token（微秒级正则，不增加 LLM 等待）
+
+---
+
+### 变更记录
+
+- **2026-09-11** message-guard v1.0.1：修复两处误报（裸 `ignore` 命中 + ASCII 关键词子串匹配）
+  - 触发案例：思源真实投递含 `SELF_MESSAGE_IGNORED` 被拦（`data/message-guard.log` @ 2026-09-11T12:01:19.995Z）
+  - 影响面：任何 Agent 在对话/文档里引用我们的错误码、或正常使用 `executed`/`evaluation` 等词，都会被同伴的安全审查拦掉 —— 属于「安全层之间互相误伤」
+  - 教训：**安全审查的匹配粒度要跟术语体系对齐**；子串匹配在「新术语自带旧关键词」时会自我误伤
 
 ---
 
