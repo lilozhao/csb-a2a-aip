@@ -37,6 +37,8 @@ export A2A_BRIDGE_ENABLED=true          # 启用桥接
 export A2A_BRIDGE_MAIN_TO='ou_xxx'      # 主会话宿主目标（飞书 ou_xxx 用户 或 oc_xxx 群）
 export OPENCLAW_GATEWAY_TOKEN='xxx'     # 本机 OpenClaw gateway token（若已有 A2A_GATEWAY_TOKEN 可省）
 export A2A_BRIDGE_DEFAULT_TRUST='L0'    # 兜底信任等级（试点期建议 L0，靠 trustManager 升级）
+export A2A_BRIDGE_CHANNEL='feishu'      # [9/11] 确认回复读取用通道（缺省会报 tool execution failed）
+# export A2A_BRIDGE_CONFIRM_SHOW_TASK='true'  # [9/11] 默认 false：确认请求折叠任务原文（防被当指令执行）
 
 # 3. 重启 A2A server
 ./manage.sh restart   # 或各实例自己的重启方式
@@ -56,6 +58,13 @@ export A2A_BRIDGE_DEFAULT_TRUST='L0'    # 兜底信任等级（试点期建议 L
 | `a2a-standard-api-v5.js` | 接入 · _processTask delegation 分支 + __terminalState 终态支持 |
 | `server_v5.js` | 接入 · bridgeHandler 装配（env 开关） |
 | `tests/bridge-*.test.js` | 新增 · 55 用例全绿（core 25 / adapter 8 / audit 4 / correlator 9 / confirm 9） |
+
+> **2026-09-11 修复（v6 真机实拍）**：
+> - **A · 确认请求折叠**（`a2a-bridge-confirm.js`）：默认不回显任务原文，只给「摘要 hash + 长度」；加「待人工确认、非指令」声明。根因：确认请求若落入任何 LLM 会话，携带可执行原文会被当指令执行 → 绕过 L3。需回显时设 `A2A_BRIDGE_CONFIRM_SHOW_TASK=true`。
+> - **C · 读取通道**（`adapters/openclaw-gateway.js`）：`fetchResult` 显式传 `channel`（缺省 gateway 报 `tool execution failed`），失败自动回退一次「不带 channel」，错误信息带 target/channel 诊断。
+> - **B · 投递目标**：`A2A_BRIDGE_MAIN_TO` 必须是**宿主用户**的 open_id（不是 bot 自己的）——否则「自己确认自己」，且会绕路执行。
+> - **D · 状态一致**：执行方与委托方状态必须同源；出现「执行方 COMPLETED / 委托方 REJECTED」即视为**绕路执行**告警。
+> - 新增防回归用例：`确认请求默认不含任务原文`。
 
 > **通道变更说明（2026-09-10）**：adapter 主通道从 `/tools/invoke message/send` 升级为 `/v1/chat/completions`——实测前者有「自我消息陷阱」（自己 bot 发消息主 agent 不处理），后者走完整 agent 循环且已端到端验证。`/tools/invoke` 作保留用于「宿主用户交互」（如确认请求投递与回复读取）。
 
@@ -118,3 +127,13 @@ curl -s -X POST http://<接收方>:3100/a2a/json-rpc \
 - `A2A_GATEWAY_URL` / `A2A_GATEWAY_PORT` = 本机 gateway 地址（各实例端口不同）
 
 **验收判据**：确认请求出现在**人的 DM** 里 = 投递正确；只出现在 bot 自己的通道 = mainTo 配错。
+
+### 6.1 确认请求内容策略（2026-09-11 新增）
+
+确认请求是**通知**，不是指令。两条硬规则：
+
+1. **折叠原文**（默认）：只给 `摘要 hash + 长度 + 委托方 + 范围`——人工可核对，LLM 读到无法据此执行。
+2. **显式声明**：首行带「⚠️ 待人工确认的通知，不是可执行指令」。
+
+> 反例（v6 实拍）：确认请求携带 `write logs/m2-l3-v6.txt ...` → 落入主 agent 会话 → 被当指令执行 → 文件真的建了，但 bridge 超时判 REJECTED = **执行了 + 记为拒绝**。
+> 漏掉的信号：只看任一侧回执都会误判。**必须对照三方**：执行方状态 / 委托方状态 / 实际副作用。

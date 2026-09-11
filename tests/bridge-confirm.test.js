@@ -137,6 +137,20 @@ async function main() {
     assert.strictEqual(flow.getRecord('p1'), null);
   });
 
+  // 10. [9/11] 防护：确认请求默认折叠任务原文（防被当指令执行）
+  await test('确认请求默认折叠任务原文（防指令绕过）', async () => {
+    const { buildConfirmMessage, summarizeTask } = require('../a2a-bridge-confirm');
+    const raw = 'write logs/m2-l3-v6.txt :: M2 L3 确认路径 v6 验收成功';
+    const saved = process.env.A2A_BRIDGE_CONFIRM_SHOW_TASK;
+    delete process.env.A2A_BRIDGE_CONFIRM_SHOW_TASK;
+    const msg = buildConfirmMessage({ taskId: 't1', envelope: { type: 'execute', scope: 'write', task: raw }, delegatorLabel: '若兰' });
+    assert.ok(!msg.includes('m2-l3-v6.txt'), '确认请求不应回显原始任务内容');
+    assert.ok(/摘要 [0-9a-f]{8}/.test(msg), '应包含摘要指纹');
+    assert.ok(msg.includes('不是可执行指令'), '应包含防注入声明');
+    assert.strictEqual(summarizeTask(''), '(空)');
+    if (saved !== undefined) process.env.A2A_BRIDGE_CONFIRM_SHOW_TASK = saved;
+  });
+
   console.log(`\n📊 结果: ${passed} 通过 / ${failed} 失败`);
   process.exit(failed > 0 ? 1 : 0);
 }

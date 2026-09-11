@@ -269,23 +269,40 @@ function invokeTool(gatewayUrl, token, body, timeoutMs = 30000) {
   });
 }
 
-/** 读取宿主回复（confirm 轮询用） */
+/**
+ * 读取宿主回复（confirm 轮询用）
+ * [9/11 修复 C] 显式传 channel——缺省 channel 时 gateway 报 “tool execution failed”（v6 实拍）；
+ *              失败自动回退一次「不带 channel」，兼容不同 gateway 版本；错误信息带诊断上下文。
+ */
 async function fetchResult(taskId, opts = {}) {
   const cfg = { ...resolveConfig(), ...opts };
   if (!cfg.token) return { ok: false, error: '缺少 gateway token' };
   const to = cfg.to || cfg.mainTo;
-  const resp = await invokeTool(cfg.url, cfg.token, {
-    tool: 'message',
-    action: 'read',
-    args: { target: to, limit: opts.limit || 20 },
-    sessionKey: 'main',
-  }, opts.timeoutMs || 30000);
-  if (!resp.ok) return resp;
-  const raw = resp.result;
-  const text = JSON.stringify(raw);
-  const marker = `桥接结果 #${taskId}`;
-  const matched = text.includes(marker);
-  return { ok: true, result: { matched, replyText: matched ? extractReply(raw, taskId) : null, raw } };
+  const channel = cfg.channel || process.env.A2A_BRIDGE_CHANNEL || 'feishu';
+  const limit = opts.limit || 20;
+  const attempts = [
+    { target: to, limit, channel },
+    { target: to, limit },
+  ];
+  let lastErr = null;
+  for (const args of attempts) {
+    const resp = await invokeTool(cfg.url, cfg.token, {
+      tool: 'message',
+      action: 'read',
+      args,
+      sessionKey: 'main',
+    }, opts.timeoutMs || 30000);
+    if (resp.ok) {
+      const raw = resp.result;
+      const text = JSON.stringify(raw);
+      const marker = `桥接结果 #${taskId}`;
+      const matched = text.includes(marker);
+      return { ok: true, result: { matched, replyText: matched ? extractReply(raw, taskId) : null, raw } };
+    }
+    lastErr = resp.error;
+  }
+  const targetHint = to ? String(to).slice(0, 12) + '…' : '未设置';
+  return { ok: false, error: `${lastErr}（channel=${channel} target=${targetHint}）` };
 }
 
 /** 从 read 结果中提取匹配 taskId 的回复文本 */
