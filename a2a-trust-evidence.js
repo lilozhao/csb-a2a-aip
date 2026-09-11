@@ -28,6 +28,13 @@
  *   未启用签名时，哈希链挡不住"prev_hash/hash 都算对的完整伪造插入"。
  *   生产部署必须配 CSB_TRUST_LEDGER_KEY（Ed25519 PEM），否则 status().signed=false。
  *
+ * 签名纪元（2026-09-11 P0-① 闭合）：
+ *   配好私钥后，在条目上签 Ed25519 签名；公钥**优先从私钥派生**（自家账本自签自验，
+ *   无需额外配置）。只读/旁路节点可只配公钥：CSB_TRUST_LEDGER_PUBKEY（PEM 路径）。
+ *   ⚠️ verifyChain 装了公钥就要求**每一条**都有签名 —— 未签名的历史条目会让整链报
+ *   「缺少签名」。所以签名开启必须配一次纪元切换（旧账本归档，链从 GENESIS 重开），
+ *   不能在同一个账本里混签名/未签名条目（tests/trust-evidence.test.js [8] 用测试钉死）。
+ *
  * 维护者: 若兰 🌸 | 日期: 2026-09-11 (P0)
  */
 
@@ -56,6 +63,20 @@ const KEY_CANDIDATES = [
   path.join(HERE, 'keys', 'trust-ledger.pem'),
 ].filter(Boolean);
 
+/** 验签公钥（PEM）候选（只读节点用；有私钥时优先从私钥派生） */
+const PUBKEY_CANDIDATES = [
+  process.env.CSB_TRUST_LEDGER_PUBKEY,
+  path.join(HERE, 'keys', 'trust-ledger.pub.pem'),
+].filter(Boolean);
+
+/** 公钥指纹（sha256/SPKI 前 16 位十六进制）：换钥/配错钥时一眼看出来 */
+function keyFingerprint(publicKey) {
+  try {
+    const der = publicKey.export({ type: 'spki', format: 'der' });
+    return require('crypto').createHash('sha256').update(der).digest('hex').slice(0, 16);
+  } catch { return null; }
+}
+
 class TrustEvidence {
   constructor() {
     this._inited = false;
@@ -64,6 +85,8 @@ class TrustEvidence {
     this.collector = null;
     this.store = null;
     this.signed = false;
+    this.verified = false;   // 验签公钥已装？（与 signed 独立：只读节点 signed=false 但 verified=true）
+    this.keyFingerprint = null;
     this.securityPath = null;
     this.reason = 'not_initialized';
     this.stats = { hooked: 0, skipped: 0, errors: 0, lastError: null };
@@ -81,7 +104,7 @@ class TrustEvidence {
 
   /**
    * 惰性初始化（不抛）
-   * @param {Object} [opts] 测试注入：{ securityPath, ledgerPath, snapshotPath, privateKey, dataDir }
+   * @param {Object} [opts] 测试注入：{ securityPath, ledgerPath, snapshotPath, privateKey, publicKey, noDefaultKeys, dataDir }
    */
   init(opts = {}) {
     if (this._inited && !opts.force && !opts.securityPath) return this;
@@ -105,8 +128,11 @@ class TrustEvidence {
       const snapshotPath = opts.snapshotPath || SNAPSHOT_FILE;
 
       // 签名密钥（可选；缺失时明确标注为降级，不静默）
+      // noDefaultKeys: 不读默认密钥文件/env（测试隔离用；显式传入的 opts 密钥仍然生效）
+      const useDefaults = opts.noDefaultKeys !== true;
+      let keyError = null;   // 配了但配错 ≠ 没配，reason 不能混为一谈（测试 [8] 钉死）
       let privateKey = opts.privateKey || null;
-      if (!privateKey) {
+      if (!privateKey && useDefaults) {
         for (const k of KEY_CANDIDATES) {
           try {
             if (fs.existsSync(k)) { privateKey = fs.readFileSync(k, 'utf-8'); break; }
@@ -119,13 +145,35 @@ class TrustEvidence {
           this.signed = true;
         } catch (e) {
           privateKey = null;
-          this.reason = `bad_signing_key: ${e.message}`;
+          keyError = `bad_signing_key: ${e.message}`;
         }
       }
 
+      // 验签公钥：显式传入 > 从私钥派生（自家账本自签自验，零配置）> 只读公钥文件
+      // 注意统一归一成 KeyObject：字符串 PEM 直接交给指纹/验签会静默失败
+      let publicKey = null;
+      if (opts.publicKey) {
+        try { publicKey = require('crypto').createPublicKey(opts.publicKey); }
+        catch (e) { keyError = keyError || `bad_verify_key: ${e.message}`; }
+      }
+      if (!publicKey && privateKey) {
+        try { publicKey = require('crypto').createPublicKey(privateKey); } catch { publicKey = null; }
+      }
+      if (!publicKey && useDefaults) {
+        for (const k of PUBKEY_CANDIDATES) {
+          try {
+            if (fs.existsSync(k)) { publicKey = require('crypto').createPublicKey(fs.readFileSync(k, 'utf-8')); break; }
+          } catch (e) {
+            keyError = keyError || `bad_verify_key: ${e.message}`;
+          }
+        }
+      }
+      this.verified = !!publicKey;
+      this.keyFingerprint = publicKey ? keyFingerprint(publicKey) : null;
+
       try { fs.mkdirSync(path.dirname(ledgerPath), { recursive: true }); } catch { /* 落盘失败走内存 */ }
 
-      this.ledger = new EvidenceLedger({ ledgerPath, privateKey });
+      this.ledger = new EvidenceLedger({ ledgerPath, privateKey, publicKey });
       this.collector = new EvidenceCollector({ ledger: this.ledger });
       try {
         const { TrustStore } = require(path.join(secDir, 'lib', 'trust', 'trust-store.js'));
@@ -133,10 +181,12 @@ class TrustEvidence {
       } catch { this.store = null; }
 
       this.enabled = true;
-      this.reason = this.signed ? 'ok_signed' : 'ok_unsigned';
+      // 配错钥（keyError）优先于"没配钥"——否则诊断信息撒谎（测试 [8] 钉死）
+      this.reason = keyError || (this.signed ? 'ok_signed' : 'ok_unsigned');
       if (!this.signed) {
-        console.warn('[TrustEvidence] ⚠️ 账本未启用签名（已知局限：挡不住完整伪造插入）。'
-          + '生产部署请配 CSB_TRUST_LEDGER_KEY 指向 Ed25519 私钥 PEM。');
+        console.warn('[TrustEvidence] ⚠️ 账本未启用签名'
+          + (keyError ? `（密钥配了但不可用：${keyError}）` : '（已知局限：挡不住完整伪造插入）')
+          + '。生产部署请配 CSB_TRUST_LEDGER_KEY 指向 Ed25519 私钥 PEM。');
       }
       return this;
     } catch (e) {
@@ -208,11 +258,13 @@ class TrustEvidence {
       securityPath: this.securityPath,
       ledgerPath: this.enabled ? LEDGER_FILE : null,
       signed: this.signed,
+      verified: this.verified,
+      keyFingerprint: this.keyFingerprint,
       entries,
       chainValid,
       collectStats: this.collector ? this.collector.stats : null,
       hookStats: { ...this.stats },
-      degraded: !this.enabled || this.stats.errors > 0 || !this.signed,
+      degraded: !this.enabled || this.stats.errors > 0 || !this.signed || (this.verified && chainValid === false),
     };
   }
 }

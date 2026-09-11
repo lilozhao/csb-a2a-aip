@@ -143,3 +143,62 @@ $ status() → { enabled:true, entries:1, chainValid:true, signed:false, degrade
 ① 阿轩走 `trust-attest.js attest --to L2`（需一澜签字）→ 让"追溯认定"跑通一次真实链路
 ② UAC 接进 bridge 做 L3 双门（等级慢变量 + 授权快变量）
 ③ 配 Ed25519 账本签名（把 `signed=false` 消掉）
+
+---
+
+## 🔑 签名纪元切换（P0-① 完成 · 2026-09-11）
+
+### 做了什么
+
+1. **生成密钥对**（Ed25519）：
+   - 私钥 `keys/trust-ledger.pem`（签名用）
+   - 公钥 `keys/trust-ledger.pub.pem`（只读节点验签用）
+   - 两者都被 `.gitignore` 的 `*.pem` 覆盖 → **不会进仓**（已用 `git check-ignore` 验证）
+2. **零配置验签**：有私钥时**自动派生公钥**（自家账本自签自验），不必再配公钥。
+   只读/旁路节点可只配 `CSB_TRUST_LEDGER_PUBKEY`，验签但不签名。
+3. **纪元切换**：旧的未签名账本（1 条链路自检）归档至 `data/trust/archive/`，主账本从
+   `GENESIS` 重开，此后每条带签名。快照 `trust-store.json` 是派生缓存，已删除待重放重建。
+
+### 为什么必须做纪元切换（不是洁癖）
+
+`verifyChain()` 一旦装了验签公钥，就要求**每一条**都有 `signature`。
+同一个账本里混装"签名前"和"签名后"条目 → 整链判成「缺少签名 @seq=1」。
+这是**设计使然**（签名覆盖范围必须一致），不是 bug，所以只能用纪元切换解决。
+
+> 教训：**"先跑通、后开签名"会留一笔混装债**。接线与签名换代应当同批上线。
+> 该行为已被 `tests/trust-evidence.test.js` [8] 的用例钉死。
+
+### 签名真正买到了什么
+
+哈希链只能挡"改变已有条目"（改内容/删条目/断链）。攻击者若把 `prev_hash`/`hash`
+算得完全自洽地**插入新条目**，纯哈希链无解。签名之后无解变有解：
+**没有私钥就造不出合法 `signature`** → 伪造插入必在验签处被拒。
+
+测试 [8] 里有一条专门做这个攻击（自算哈希链 + 64 字节假签名）→ 必拒 ✅
+
+### 状态字段（诊断口径变了，注意）
+
+| 字段 | 含义 |
+|------|------|
+| `signed` | 本节点**会写**签名（有私钥） |
+| `verified` | 本节点**装了验签公钥**（与 signed 独立；只读节点 signed=false / verified=true） |
+| `keyFingerprint` | 公钥指纹（sha256/SPKI 前 16 位）—— 换钥/配错钥时一眼看出 |
+| `degraded` | 现在**也**包含"链验不过"（`verified && chainValid===false`）—— 账本被动了不能悄悄算正常 |
+
+### 顺带修掉的两个真 bug（都是测试逼出来的）
+
+1. **配错钥 ≠ 没配钥**：坏密钥时 `reason` 先写 `bad_signing_key: ...`，随后被
+   `ok_unsigned` 覆盖 → 诊断信息撒谎。已改为错误优先。
+2. **公钥未归一化**：`opts.publicKey` 传字符串 PEM 时直接交给指纹/验签 → 静默失败
+   （指纹恒 `null`）。已统一 `createPublicKey()` 归一成 KeyObject。
+
+> 这两个都不是"签名功能没写好"，是**诊断口径不可信**——和 `verifyChain().valid` 那次同类。
+> 自检指标撒谎比功能缺失更难发现。
+
+### 环境变量
+
+| 变量 | 用途 |
+|------|------|
+| `CSB_TRUST_LEDGER_KEY` | 签名私钥 **PEM 内容**（优先于默认文件路径） |
+| `CSB_TRUST_LEDGER_PUBKEY` | 验签公钥 PEM 路径（只读节点用） |
+| `CSB_TRUST_DATA_DIR` | 账本/快照目录（默认 `data/trust`） |
