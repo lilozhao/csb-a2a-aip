@@ -67,6 +67,14 @@ export A2A_BRIDGE_CHANNEL='feishu'      # [9/11] 确认回复读取用通道（�
 >   - 影响：重启后 env 未带 `A2A_BRIDGE_MAIN_TO` 时，adapter frame 校验与 confirm 默认 send 不再报「缺少主会话目标」。
 >   - 自检：`node scripts/check-bridge-config.js`（打印实际生效值 + 来源，脱敏）。
 >
+> **🔬 确认链路探针（无副作用，不依赖信任等级）**：
+> ```bash
+> node scripts/probe-bridge-confirm.js send          # 发一条 L3 确认探针到宿主 DM（返回 messageId）
+> node scripts/probe-bridge-confirm.js read <taskId> # 读回宿主回复（匹配「确认 #taskId」）
+> ```
+> 用途：把 send 与 read 分开单测，避免把「没送到」误判成「人没回」—— 2026-09-11 实测：send 返回
+> `messageId=om_xxx / chatId=ou_xxx`，read 返回 `matched:true`，确认链路闭环 ✅。
+>
 > **⚠️ 重启语义提醒**：`scripts/restart-a2a.js` 继承的是**当前进程**的环境变量 —— 若当前进程本来就没带某个变量，重启后依然没有。改了 `.env` / 启动脚本要生效，需用 `./start-v5.sh` 冷启（该脚本 `set -a` 自动 export `.env`）。
 
 > **2026-09-11 修复（v6 真机实拍）**：
