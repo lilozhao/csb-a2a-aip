@@ -113,6 +113,31 @@ node tests/trust-evidence.test.js     # 20 用例：四事件 / 防刷分 / 中�
 - 未装配 `recordEvidence`（老部署）→ 委托照常，不报错
 - L3 **超时**不记（系统未得答复，不归咎发起方；只有显式拒绝才记）
 
+## ✅ 首次实证（2026-09-11 21:06，不靠推理）
+
+服务重启后发一条明确标注为「链路自检」的入站消息（用独立主体名，不污染真实 Agent 证据）：
+
+```
+$ cat data/trust/trust-evidence.jsonl
+seq=1 action=message_ok subject=链路自检 polarity=1 weight=1 ref=task_1789131980365_a92857ce
+
+$ status() → { enabled:true, entries:1, chainValid:true, signed:false, degraded:true }
+```
+
+`trust-store.json` 同步派生：`level=L0, score=1, positiveWeight=1`（符合"需 ≥10 正向才 L2"）。
+**断链 B 从"数学上永不成立"变成"开始积累"** —— 这是这一环的全部意义。
+
+## ⚠️ 部署注意：启动入口必须单一
+
+接线当天踩到的第三个同源坑：`keepalive-a2a.sh` 直接 `node server_v5.js`，
+**绕过 `start-v5.sh` 的配置加载** → `.env` / `.env.a2a` 进不了进程
+（症状：日志反复「`A2A_GATEWAY_TOKEN` 未设置，跳过 OpenClaw 适配器」）。
+已改为统一走 `start-v5.sh`（唯一入口）。
+
+> 教训：**"配置没进进程"是一个家族，不是三个孤立 bug**
+> （确认读取前缀拼错 / 启动脚本漏加载 / 保活脚本绕过入口）。
+> 只要存在"绕过入口的捷径"，就一定会有漏配置的那天。入口要单一。
+
 ## 下一步（P1 预告）
 
 ① 阿轩走 `trust-attest.js attest --to L2`（需一澜签字）→ 让"追溯认定"跑通一次真实链路
