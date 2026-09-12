@@ -64,7 +64,8 @@ const REASON = Object.freeze({
 
 /** 默认配置 */
 const DEFAULTS = Object.freeze({
-  L3_CONFIRM_TIMEOUT_MS: 5 * 60 * 1000, // L3 确认超时：默认 5 分钟（可配）
+  // [9/12] L3 确认窗口也走环境变量——此前写死 5min，与 bridge-confirm 的两份常量打架
+  L3_CONFIRM_TIMEOUT_MS: Number(process.env.A2A_BRIDGE_CONFIRM_TIMEOUT_MS) || 5 * 60 * 1000,
   ENVELOPE_TIMEOUT_MS: 30 * 60 * 1000,  // 委托默认时限：30 分钟
 });
 

@@ -151,6 +151,51 @@ async function main() {
     if (saved !== undefined) process.env.A2A_BRIDGE_CONFIRM_SHOW_TASK = saved;
   });
 
+  // 11-14. [9/12] 确认窗口单一真相源（实拍：文案写 30 分钟、实际 5 分钟 → 超时误杀）
+  const { resolveConfirmWindow, buildConfirmMessage, confirmCapMs } = require('../a2a-bridge-confirm');
+
+  await test('确认窗口：委托方声明超过接收方上限 → 取上限，且文案说真话', async () => {
+    const saved = process.env.A2A_BRIDGE_CONFIRM_TIMEOUT_MS;
+    delete process.env.A2A_BRIDGE_CONFIRM_TIMEOUT_MS; // 默认上限 5min
+    const win = resolveConfirmWindow({ timeoutMs: 30 * 60 * 1000 });
+    assert.strictEqual(win.effectiveMs, 5 * 60 * 1000, '应取接收方上限');
+    assert.strictEqual(win.capped, true, '应标记为被封顶');
+    const msg = buildConfirmMessage({ taskId: 'w1', envelope: { scope: 'shell', task: 'x', timeoutMs: 30 * 60 * 1000 }, delegatorLabel: '若兰' });
+    assert.ok(msg.includes('- 时限：5 分钟'), '文案必须写实际生效的 5 分钟');
+    assert.ok(msg.includes('委托方声明 30 分钟'), '应披露被封顶的事实');
+    assert.ok(!msg.includes('时限：30 分钟'), '不得再写声明值冒充窗口');
+    if (saved !== undefined) process.env.A2A_BRIDGE_CONFIRM_TIMEOUT_MS = saved;
+  });
+
+  await test('确认窗口：委托方声明小于上限 → 取声明值', async () => {
+    const saved = process.env.A2A_BRIDGE_CONFIRM_TIMEOUT_MS;
+    delete process.env.A2A_BRIDGE_CONFIRM_TIMEOUT_MS;
+    const win = resolveConfirmWindow({ timeoutMs: 2 * 60 * 1000 });
+    assert.strictEqual(win.effectiveMs, 2 * 60 * 1000);
+    assert.strictEqual(win.capped, false);
+    if (saved !== undefined) process.env.A2A_BRIDGE_CONFIRM_TIMEOUT_MS = saved;
+  });
+
+  await test('确认窗口：env 可调接收方上限（A2A_BRIDGE_CONFIRM_TIMEOUT_MS）', async () => {
+    const saved = process.env.A2A_BRIDGE_CONFIRM_TIMEOUT_MS;
+    process.env.A2A_BRIDGE_CONFIRM_TIMEOUT_MS = String(10 * 60 * 1000);
+    assert.strictEqual(confirmCapMs(), 10 * 60 * 1000);
+    const win = resolveConfirmWindow({ timeoutMs: 30 * 60 * 1000 });
+    assert.strictEqual(win.effectiveMs, 10 * 60 * 1000);
+    if (saved === undefined) delete process.env.A2A_BRIDGE_CONFIRM_TIMEOUT_MS;
+    else process.env.A2A_BRIDGE_CONFIRM_TIMEOUT_MS = saved;
+  });
+
+  await test('确认窗口：无声明时用接收方上限，非法 env 回退默认', async () => {
+    const saved = process.env.A2A_BRIDGE_CONFIRM_TIMEOUT_MS;
+    process.env.A2A_BRIDGE_CONFIRM_TIMEOUT_MS = 'abc';
+    assert.strictEqual(confirmCapMs(), 5 * 60 * 1000, '非法值应回退 5 分钟');
+    assert.strictEqual(resolveConfirmWindow({}).effectiveMs, 5 * 60 * 1000);
+    assert.strictEqual(resolveConfirmWindow({ timeoutMs: 0 }).effectiveMs, 5 * 60 * 1000);
+    if (saved === undefined) delete process.env.A2A_BRIDGE_CONFIRM_TIMEOUT_MS;
+    else process.env.A2A_BRIDGE_CONFIRM_TIMEOUT_MS = saved;
+  });
+
   console.log(`\n📊 结果: ${passed} 通过 / ${failed} 失败`);
   process.exit(failed > 0 ? 1 : 0);
 }
