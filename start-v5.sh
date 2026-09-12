@@ -79,9 +79,19 @@ if [ -z "$A2A_SECURITY_HANDSHAKE_USER_PUBKEY" ]; then
   echo "⚠️  未配置统一用户公钥 → 用户验签可能不可用"
   HS_PROBLEMS=$((HS_PROBLEMS+1))
 fi
-# 账本签名（9/11 签名纪元）：没配 key 就是 signed=false，也要说清楚
-if [ -z "$CSB_TRUST_LEDGER_KEY" ]; then
-  echo "ℹ️  CSB_TRUST_LEDGER_KEY 未配置 → 信任账本以 signed=false 运行（签名纪元代码就位但未激活）"
+# 账本签名（9/11 签名纪元）：解析顺序必须与 a2a-trust-evidence.js 一致
+#   env CSB_TRUST_LEDGER_KEY（PEM 内容）> 默认文件 keys/trust-ledger.pem
+# [2026-09-12 修复] 此前只看 env → 明明有默认密钥文件也报 signed=false
+#   （假告警，与"诊断指标撒谎"同族：检测口径 ≠ 实际生效口径）
+LEDGER_KEY_FILE="$(pwd)/keys/trust-ledger.pem"
+if [ -n "$CSB_TRUST_LEDGER_KEY" ]; then
+  LEDGER_SIGN_STATE="✓已启用（来源 env CSB_TRUST_LEDGER_KEY）"
+elif [ -f "$LEDGER_KEY_FILE" ]; then
+  LEDGER_SIGN_STATE="✓已启用（来源 keys/trust-ledger.pem）"
+else
+  LEDGER_SIGN_STATE="✗未配置 → signed=false（账本仅链校验，挡不住格式完整的伪造插入）"
+  echo "ℹ️  账本签名未配置（env CSB_TRUST_LEDGER_KEY 与 keys/trust-ledger.pem 均无）→ 信任账本以 signed=false 运行"
+  echo "    修法: 生成 Ed25519 私钥到 keys/trust-ledger.pem，或启动前 export CSB_TRUST_LEDGER_KEY"
 fi
 
 # --check：只打印解析结果，不启动（其他实例排查用）
@@ -93,7 +103,7 @@ if [ "$1" = "--check" ]; then
   echo "  AID           : ${A2A_SECURITY_HANDSHAKE_AID:-（空）} $([ -f "$A2A_SECURITY_HANDSHAKE_AID" ] && echo '✓存在' || echo '✗缺失')"
   echo "  私钥          : ${A2A_SECURITY_HANDSHAKE_KEY:-（空）} $([ -f "$A2A_SECURITY_HANDSHAKE_KEY" ] && echo '✓存在' || echo '✗缺失')"
   echo "  用户公钥      : $([ -n "$A2A_SECURITY_HANDSHAKE_USER_PUBKEY" ] && echo '✓已配置' || echo '✗未配置')"
-  echo "  账本签名 key  : $([ -n "$CSB_TRUST_LEDGER_KEY" ] && echo '✓已配置' || echo '✗未配置（signed=false）')"
+  echo "  账本签名 key  : ${LEDGER_SIGN_STATE:-（未解析）}"
   echo ""
   [ "$HS_PROBLEMS" -gt 0 ] && echo "⚠️  共 $HS_PROBLEMS 项待处理（见上方提示）" || echo "✅ 握手配置完整"
   exit 0
