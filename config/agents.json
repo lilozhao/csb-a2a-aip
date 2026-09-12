@@ -5,9 +5,9 @@
   },
   "skillServer": "http://172.28.0.4:3098",
   "self": {
-    "name": "若兰",
-    "emoji": "🌸",
-    "host": "172.28.0.214",
+    "name": "阿轩",
+    "emoji": "🔧",
+    "host": "172.28.0.5",
     "port": 3100
   },
   "agents": {

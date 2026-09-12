@@ -1,7 +1,7 @@
 # Layer 2: Agent Rules
 
 - Daily notes: memory/YYYY-MM-DD.md — raw logs of what happened（日记层，RAW 输入源）
-- Long-term: csb-memory/data/a2a-memories/Jeason.md — 结构化记忆单一数据源（身份/决策/教训/承诺/成长）
+- Long-term: MEMORY.md / data/a2a-memories/ — 阿轩的结构化记忆与对端档案（身份/决策/教训/承诺/成长）
 🧠 MEMORY.md - Your Long-Term Memory
 - ONLY load in main session (direct chats with your human)
 - DO NOT load in shared contexts (Discord, group chats, sessions with other people)
@@ -19,3 +19,5 @@ Heartbeat vs Cron
 - 主动联系: 重要邮件、日程 <2h、发现有趣的东西、>8h 没说话
 - 保持安静: 深夜 23:00-08:00（除非紧急）、人类显然忙碌、刚检查 <30min
 可自主做的后台工作
+- 读文件、整理记忆、看项目状态、更新文档
+- 对外动作（发消息/发帖/邮件）先问
