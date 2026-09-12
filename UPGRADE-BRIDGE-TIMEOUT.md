@@ -54,7 +54,8 @@ node tests/bridge-adapter.test.js
 grep -n "A2A_BRIDGE_INJECT_TIMEOUT_MS\|MAX_INJECT_TIMEOUT_MS" adapters/openclaw-gateway.js
 
 # ③ 服务可达性（端口换成你自己的）
-curl -s -m 5 http://127.0.0.1:3100/health || echo "（无 /health 端点则跳过，看进程与日志即可）
+curl -s -m 5 http://127.0.0.1:3100/health || echo "（无 /health 端点则跳过，看进程与日志即可）"
+# 日志在 logs/server-v5.log（不在仓库根目录）
 ```
 
 ---
@@ -87,6 +88,7 @@ bash start-v5.sh
 1. **`identity.json` 的 `bridge.mainTo`** —— 9/11 踩过同款坑：adapter 路径与主链路读取源不一致 → "缺少主会话目标"
 2. **gateway 可达 + token 有效**（注入走 gateway HTTP）
 3. **先归档膨胀会话** —— 主会话越大注入越慢（实测：read 26s、shell >90s）
+4. **握手配置自检**：`sh start-v5.sh --check`（2026-09-12 新增）—— 详见 `UPGRADE-HANDSHAKE-CONFIG.md`
 
 ---
 
