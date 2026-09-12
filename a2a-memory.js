@@ -14,7 +14,11 @@
 
 const fs = require('fs');
 const path = require('path');
-const https = require('https');
+
+// [2026-09-12 修复] 蒸馏改走主路由 llm-router（B 方案：direct 本地优先 → 360 云兜底）
+// 旧实现用 https.request 直连 identity.llm，而该配置已从百炼 https 改为本地 FreeToken(http),
+// https 连 http 端口必然握手失败 → 蒸馏 100% 失败（服务周期性无痕死亡的伴随症状，第 7 次确认）
+const llmRouter = require('./llm-router.js');
 
 const MEMORY_DIR = process.env.A2A_DATA_DIR
   ? path.join(process.env.A2A_DATA_DIR, 'memory', 'a2a-memories')
@@ -26,14 +30,7 @@ if (!fs.existsSync(MEMORY_DIR)) {
   fs.mkdirSync(MEMORY_DIR, { recursive: true });
 }
 
-// 加载 LLM 配置
-let LLM = {};
-try {
-  const identity = JSON.parse(fs.readFileSync(IDENTITY_PATH, 'utf8'));
-  LLM = identity.llm || {};
-} catch(e) {
-  console.error('⚠️ 无法加载 identity.json:', e.message);
-}
+// [2026-09-12] 移除旧 LLM 全局配置加载——蒸馏已走 llm-router 主路由（见 distillConversation）
 
 // ===== 智能过滤 =====
 
@@ -125,43 +122,28 @@ ${existingMemory ? existingMemory.substring(0, 1500) : '（首次对话，无已
 3. 输出纯文本，不要 markdown 代码块
 `;
 
-  return new Promise((resolve) => {
-    const payload = JSON.stringify({
-      model: LLM.model || 'qwen3.6-plus',
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: 500,
-      temperature: 0.3,
-    });
-
-    const req = https.request({
-      hostname: LLM.host || 'token-plan.cn-beijing.maas.aliyuncs.com',
-      port: parseInt(LLM.port) || 443,
-      path: LLM.path || '/compatible-mode/v1/chat/completions',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${LLM.apiKey || ''}`,
-        'Content-Length': Buffer.byteLength(payload)
-      },
-      timeout: 15000,
-    }, (res) => {
-      let body = '';
-      res.on('data', c => body += c);
-      res.on('end', () => {
-        try {
-          const data = JSON.parse(body);
-          resolve(data.choices?.[0]?.message?.content?.trim() || '');
-        } catch(e) {
-          resolve('');
-        }
-      });
-    });
-
-    req.on('error', () => resolve(''));
-    req.on('timeout', () => { req.destroy(); resolve(''); });
-    req.write(payload);
-    req.end();
-  });
+  // [2026-09-12 修复] 走 llm-router 主路由（复用 B 方案适配器链）
+  // options: timeout 对齐 A2A_LLM_TIMEOUT_MS(30s)，maxTokens 500，temperature 0.3
+  const timeoutMs = parseInt(process.env.A2A_LLM_TIMEOUT_MS || '30000', 10);
+  try {
+    const identity = JSON.parse(fs.readFileSync(IDENTITY_PATH, 'utf8'));
+    const result = await llmRouter.call(
+      identity,
+      '你是一个记忆蒸馏器。只输出精炼的记忆要点，不要客套。',
+      prompt,
+      { maxTokens: 500, temperature: 0.3, timeout: timeoutMs }
+    );
+    if (result === null || result === undefined) {
+      console.warn('⚠️ 记忆蒸馏: LLM 路由返回空');
+      return '';
+    }
+    return String(result).trim();
+  } catch (e) {
+    // [2026-09-12 修复] 蒸馏异常不再外抛——上游 .catch(()=>{}) 会吞掉，
+    // 但这里显式捕获并记录，防止未处理异常连带进程抖动
+    console.error('⚠️ 记忆蒸馏异常:', e.message);
+    return '';
+  }
 }
 
 // ===== 主功能 =====
