@@ -26,8 +26,13 @@ heritage-registry.json
 # Temp files
 *.tmp
 *.pid
-.DS_Store*.bak
+.DS_Store
 *.jpeg
+
+# 备份文件/目录（本地防误还原，不入库）
+*.bak
+*.bak.*
+backups/
 
 # 运行时数据 - 不入库
 logs/
