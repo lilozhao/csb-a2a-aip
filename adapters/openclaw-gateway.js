@@ -45,7 +45,10 @@ function resolveGatewayAddr() {
   };
 }
 
-const DEFAULT_TIMEOUT_MS = 90 * 1000; // 主 agent 工具执行可能较久
+// [2026-09-12] 注入超时可配置：实测 90s 对多步任务不够（shell 类委托会 bridge_unavailable）
+//   - 默认提到 5 分钟；可用 A2A_BRIDGE_INJECT_TIMEOUT_MS 覆盖；上限 15 分钟（避免挂死）
+const DEFAULT_TIMEOUT_MS = parseInt(process.env.A2A_BRIDGE_INJECT_TIMEOUT_MS || '', 10) || 5 * 60 * 1000;
+const MAX_INJECT_TIMEOUT_MS = 15 * 60 * 1000;
 
 /** 主 agent 拒绝执行的关键词（T4 拒绝权检测） */
 const REFUSAL_PATTERNS = [
@@ -139,7 +142,11 @@ async function executeViaGateway(envelope, taskId, opts = {}) {
   const token = opts.token || resolveToken();
   const prompt = buildPrompt(envelope, taskId);
   const model = opts.model || process.env.A2A_MODEL || 'openclaw';
-  const timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT_MS;
+  // 超时取三者最大但封顶：调用方显式 opts > 信封声明（委托方给的时限）> 默认
+  const timeoutMs = Math.min(
+    opts.timeoutMs || Math.max(envelope?.timeoutMs || 0, DEFAULT_TIMEOUT_MS),
+    MAX_INJECT_TIMEOUT_MS
+  );
 
   const payload = JSON.stringify({
     model,
@@ -180,7 +187,7 @@ async function executeViaGateway(envelope, taskId, opts = {}) {
       });
     });
     req.on('error', (e) => reject(new Error(`gateway 连接失败: ${e.message}`)));
-    req.setTimeout(timeoutMs, () => { req.destroy(); reject(new Error(`gateway 注入超时（${timeoutMs}ms）`)); });
+    req.setTimeout(timeoutMs, () => { req.destroy(); reject(new Error(`gateway 注入超时（${timeoutMs}ms）——若任务较重，请调大 A2A_BRIDGE_INJECT_TIMEOUT_MS，或先归档膨胀会话`)); });
     req.write(payload);
     req.end();
   });

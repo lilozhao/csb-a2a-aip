@@ -34,9 +34,9 @@ function test(name, fn) {
 // ============================================
 function mockHttp(responseBody, statusCode = 200) {
   const original = http.request;
-  const calls = [];
+  const result = { calls: [], timeouts: [] };
   http.request = (options, cb) => {
-    calls.push(options);
+    result.calls.push(options);
     const mockRes = new (require('stream').Readable)();
     mockRes._read = () => {};
     mockRes.statusCode = statusCode;
@@ -49,13 +49,11 @@ function mockHttp(responseBody, statusCode = 200) {
       on: () => mockRes, // 错误/超时监听（不触发）
       write: () => {}, end: () => {},
       destroy: () => {},
-      setTimeout: () => {},
+      setTimeout: (t) => { result.timeouts.push(t); },
     };
   };
-  return {
-    calls,
-    restore: () => { http.request = original; },
-  };
+  result.restore = () => { http.request = original; };
+  return result;
 }
 
 // ============================================
@@ -191,6 +189,44 @@ test('gateway 返回错误 → 透传 error', async () => {
   } finally {
     mock.restore();
     if (old) process.env.OPENCLAW_GATEWAY_TOKEN = old; else delete process.env.OPENCLAW_GATEWAY_TOKEN;
+  }
+});
+
+console.log('\n[3.5] 注入超时（2026-09-12：90s 对多步任务不够 → 可配置 + 信封驱动 + 封顶）');
+
+test('信封声明更长时限 → 注入超时跟随信封（10 分钟）', async () => {
+  const mock = mockHttp({ choices: [{ message: { content: '✅' } }] });
+  const oldTok = process.env.OPENCLAW_GATEWAY_TOKEN; process.env.OPENCLAW_GATEWAY_TOKEN = 'tok';
+  try {
+    await adapter.inject({ taskId: 't1', envelope: { type: 'execute', scope: 'shell', target: 'x', task: 'x', timeoutMs: 600000 } }, { to: 'ou_x' });
+    assert.strictEqual(mock.timeouts[0], 600000, `期望 600000，实际 ${mock.timeouts[0]}`);
+  } finally {
+    mock.restore();
+    if (oldTok) process.env.OPENCLAW_GATEWAY_TOKEN = oldTok; else delete process.env.OPENCLAW_GATEWAY_TOKEN;
+  }
+});
+
+test('信封时限过大 → 封顶 15 分钟（防挂死）', async () => {
+  const mock = mockHttp({ choices: [{ message: { content: '✅' } }] });
+  const oldTok = process.env.OPENCLAW_GATEWAY_TOKEN; process.env.OPENCLAW_GATEWAY_TOKEN = 'tok';
+  try {
+    await adapter.inject({ taskId: 't2', envelope: { type: 'execute', scope: 'shell', target: 'x', task: 'x', timeoutMs: 60 * 60 * 1000 } }, { to: 'ou_x' });
+    assert.strictEqual(mock.timeouts[0], 15 * 60 * 1000, `期望 900000，实际 ${mock.timeouts[0]}`);
+  } finally {
+    mock.restore();
+    if (oldTok) process.env.OPENCLAW_GATEWAY_TOKEN = oldTok; else delete process.env.OPENCLAW_GATEWAY_TOKEN;
+  }
+});
+
+test('无信封时限 → 默认 5 分钟（原 90s 太短）', async () => {
+  const mock = mockHttp({ choices: [{ message: { content: '✅' } }] });
+  const oldTok = process.env.OPENCLAW_GATEWAY_TOKEN; process.env.OPENCLAW_GATEWAY_TOKEN = 'tok';
+  try {
+    await adapter.inject({ taskId: 't3', envelope: { type: 'execute', scope: 'read', target: 'x', task: 'x' } }, { to: 'ou_x' });
+    assert.strictEqual(mock.timeouts[0], 5 * 60 * 1000, `期望 300000，实际 ${mock.timeouts[0]}`);
+  } finally {
+    mock.restore();
+    if (oldTok) process.env.OPENCLAW_GATEWAY_TOKEN = oldTok; else delete process.env.OPENCLAW_GATEWAY_TOKEN;
   }
 });
 
