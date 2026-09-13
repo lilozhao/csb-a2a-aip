@@ -118,6 +118,20 @@ async function run() {
   ok('委托消息也写入收件箱', afterDel[afterDel.length - 1].kind === 'delegation');
   ok('委托消息不触发聊天通知', calls3.length === 1, `实际 ${calls3.length}`);
 
+  console.log('\n[3b] fire-and-forget：慢通知不得阻塞 A2A 响应');
+  const slowApi = new A2AStandardAPI({
+    identity: { name: '测试主体' },
+    taskStore: { getTask: () => ({ history: [] }) },
+    inbox,
+    chatNotifyHandler: () => new Promise(() => {}), // 永不 resolve（模拟主会话忙/挂起）
+    selfGuardConfig: { enabled: false },
+  });
+  slowApi._callLLM = async () => '';
+  const t0 = Date.now();
+  await slowApi._processTask('tpslow', { messageId: 'pslow', parts: [{ type: 'text', text: 'x' }] }, { sender: { name: 'x' } });
+  const dt = Date.now() - t0;
+  ok('慢通知不阻塞响应（<1s）', dt < 1000, `实际 ${dt}ms`);
+
   console.log('\n================================');
   console.log(`通过 ${pass} / ${pass + fail}`);
   console.log('================================');

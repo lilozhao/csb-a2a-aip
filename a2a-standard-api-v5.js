@@ -421,8 +421,13 @@ class A2AStandardAPI {
     }
 
     // 📣 [2026-09-13] Layer 2：非委托消息 → 主会话实时通知（默认关；护栏在 a2a-chat-notify.js）
+    //   ⚠️ 必须 fire-and-forget：绝不能 await。通知 = 向主会话注入一次 agent 循环，
+    //      耗时可达数十秒（主会话忙时更久，甚至挂起）；await 会把 A2A 请求的响应一起卡住，
+    //      导致调用方（curl 短超时）误判“发送失败”——而消息其实早已送达。
     if (msg && !msg.delegation && this._chatNotify) {
-      try { await this._chatNotify(taskId, msg, metadata); } catch { /* 通知失败不影响回复 */ }
+      Promise.resolve()
+        .then(() => this._chatNotify(taskId, msg, metadata))
+        .catch(() => { /* 通知失败不影响回复 */ });
     }
 
     let text = msg.parts.filter(p => p.text).map(p => p.text).join(' ');
