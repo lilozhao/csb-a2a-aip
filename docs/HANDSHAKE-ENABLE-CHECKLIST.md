@@ -49,6 +49,11 @@ chmod 600 ./csb-security/data/SLUG-private-key.pem
 
 把 `SLUG` / `HOST` / `PORT` / `NAME` 换成自己的（例：`axuan` / `172.28.0.5` / `3100` / `阿轩`）。
 
+> 💡 **嫌麻烦？用现成脚本**（输出路径与 slug 约定一致）：
+> ```bash
+> bash scripts/setup-handshake.sh axuan 172.28.0.5 3100 阿轩
+> ```
+
 > 📌 **路径与命名**（最容易错）：
 > - 目录是 **`csb-security/data/`**，**不是 `keys/`**
 > - 文件名是 **`<slug>-aid.json`**（连字符），**不是 `<slug>.aid.json`**（点）
@@ -127,8 +132,10 @@ curl -s 127.0.0.1:PORT/a2a/handshake/status
 
 - 约定路径：`<repo>/csb-security/data/<slug>-aid.json` + `<slug>-private-key.pem`
 - 解析优先级：显式 env > `identity.json` 的 `security.handshake` > slug 约定
-- ⚠️ **已知坑**：旧脚本 `scripts/setup-handshake-axuan.sh` 写到 `config/security/axuan-aid.json` + `axuan-ed25519.pem`，
-  与上述 slug 约定**路径/文件名都不一致** → 用它会让 `start-v5.sh` 找不到。**建议直接用本文第 1 步的自包含命令。**
+- ✅ **现成脚本**：`scripts/setup-handshake.sh <slug> <host> [port] [name]`
+  （例：`bash scripts/setup-handshake.sh axuan 172.28.0.5 3100 阿轩`）—— 输出路径与上述 slug 约定**一致**。
+- 🛠 **[2026-09-14 修复]** 旧版 `setup-handshake-axuan.sh` 曾把 AID/私钥写到 `config/security/axuan-aid.json` + `axuan-ed25519.pem`
+  （**路径与文件名都和 slug 约定不符** → `start-v5.sh` 找不到 → 静默禁用握手）。现该脚本已改为**瘦封装**，转发到 `scripts/setup-handshake.sh`。
 
 ---
 
