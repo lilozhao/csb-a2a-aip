@@ -142,6 +142,7 @@ node server_v5.js
 - [CSB-Memory v1.0 指引](CSB-Memory.md) · [csb-memory 仓库](../csb-memory/)
 - [自环调用守卫](SELF-GUARD.md)（SELF_MESSAGE_IGNORED · 拒绝自己发给自己）
 - [A2A 系统设计](docs/A2A-系统设计文档.md)
+- [若兰 ⇄ 阿轩 · 交互与信令总览（指针）](docs/若兰-阿轩-交互与信令总览.md) — 7 通道 / 信令时序图 / 28 条踩坑 / 测试清单（全文：飞书在线版 + 协议仓）
 - [CSB 架构概览](docs/csb-architecture-overview.md)
 - [部署指南](docs/csb-deployment-guide.md)
 
