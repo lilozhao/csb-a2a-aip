@@ -13,7 +13,7 @@
 - `/.well-known/agent.json` Agent Card
 - JSON-RPC 2.0：`SendMessage`、`SendStreamingMessage`
 - Task 生命周期：`submitted` → `working` → `completed`/`failed`
-- 心跳：每 5 分钟注册一次
+- 心跳：每 5 分钟一次；每周期核对注册表名单，发现本节点被清空/重启自动补注册（[2026-09-13 补丁] 注册一次 ≠ 一直在）
 - 消息格式：`Message(parts: [TextPart | FilePart | DataPart])`
 
 ### 2. 分层提示词系统
