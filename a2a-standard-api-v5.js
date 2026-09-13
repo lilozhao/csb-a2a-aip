@@ -60,6 +60,10 @@ class A2AStandardAPI {
     this._commandHandler   = options.commandHandler || null;
     // 主会话桥接处理器 (delegation 信封，RFC v0.2)
     this._bridgeHandler    = options.bridgeHandler || null;
+    // [2026-09-13] Layer 1：入站收件箱（所有入站消息，纯留痕）
+    this._inbox            = options.inbox || null;
+    // [2026-09-13] Layer 2：非委托消息的主会话实时通知（默认关，护栏在 a2a-chat-notify.js）
+    this._chatNotify       = options.chatNotifyHandler || null;
 
     // [2026-09-11] 自环调用守卫配置（env A2A_SELF_GUARD / A2A_SELF_GUARD_ALLOW_LOCAL / A2A_SELF_GUARD_RESPONSE）
     this.selfGuardConfig   = { ...selfGuard.loadConfig(), ...(options.selfGuardConfig || {}) };
@@ -402,12 +406,23 @@ class A2AStandardAPI {
   async _processTask(taskId, msg, metadata) {
     if (this._externalHandler) return this._externalHandler(taskId, msg);
 
+    // 📥 [2026-09-13] Layer 1：入站收件箱（所有入站消息，纯留痕，fail-safe）
+    //   根因：桥接只覆盖 delegation 信封，聊天消息此前主会话全程不知情（送达 ≠ 被感知）
+    if (this._inbox) {
+      try { this._inbox.record({ taskId, msg, metadata }); } catch { /* fail-safe：留痕失败不得反噬主链路 */ }
+    }
+
     // 🚀 BRIDGE: delegation 信封 → 主会话桥接（RFC v0.2 · M2）
     // 有信封且装配了 bridgeHandler → 走桥接；否则 fallthrough 原逻辑
     if (msg && msg.delegation && this._bridgeHandler) {
       const bridgeResp = await this._bridgeHandler(taskId, msg, metadata);
       if (bridgeResp) return bridgeResp; // {artifacts, message, __terminalState?}
       // bridgeHandler 返回 null（异常兜底）→ 继续原逻辑
+    }
+
+    // 📣 [2026-09-13] Layer 2：非委托消息 → 主会话实时通知（默认关；护栏在 a2a-chat-notify.js）
+    if (msg && !msg.delegation && this._chatNotify) {
+      try { await this._chatNotify(taskId, msg, metadata); } catch { /* 通知失败不影响回复 */ }
     }
 
     let text = msg.parts.filter(p => p.text).map(p => p.text).join(' ');

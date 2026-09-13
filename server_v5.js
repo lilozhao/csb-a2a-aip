@@ -23,6 +23,8 @@ const fs = require('fs');
 const { logConversation }         = require('./log_conversation');
 const { TaskStore }               = require('./a2a-task-store.js');
 const { A2AStandardAPI }          = require('./a2a-standard-api-v5.js');
+const inbox                       = require('./a2a-inbox.js');
+const { makeChatNotifyHandler }   = require('./a2a-chat-notify.js');
 const securityAdapter = require('./security-adapter.js');
 const { E2EEncryption, createEncryptionMiddleware } = securityAdapter;
 const { MetricsCollector, traceMiddleware, collectSystemMetrics } = require('./a2a-observability.js');
@@ -66,6 +68,15 @@ const A2A_VERSION = '5.0.0';
 const REGISTRY_URL = process.env.A2A_REGISTRY_URL || config.getRegistry('local');
 const HEARTBEAT_INTERVAL = parseInt(process.env.A2A_HEARTBEAT_INTERVAL_MS || '300000'); // 5 分钟
 let heartbeatTimer = null;
+
+// [2026-09-13 修复] AgentCard / 握手 的「对外地址」单一真相源。
+//   此前 AgentCard 硬编码 http://localhost:${port} → 远程 peer 拿到 localhost 地址，谁都连不上。
+//   优先级与 registerToRegistry 一致：env A2A_HOST > identity.publicHost > config.getSelf().host
+const A2A_ADVERTISE_HOST = (() => {
+  if (process.env.A2A_HOST) return process.env.A2A_HOST;
+  if (identity.publicHost) return identity.publicHost;
+  try { return config.getSelf().host; } catch { return 'localhost'; }
+})();
 
 async function registerToRegistry() {
   try {
@@ -225,6 +236,12 @@ const standardAPI = new A2AStandardAPI({
   negotiationEngine: loadedV3.negotiationEngine || null,
   rateLimiter,
   anomalyDetector,
+  // [2026-09-13] A2A 入站可见性：Layer 1 收件箱（纯留痕）+ Layer 2 主会话通知（默认关）
+  inbox,
+  chatNotifyHandler: makeChatNotifyHandler({
+    identity,
+    inject: (frame, opts) => require('./adapters/openclaw-gateway').inject(frame, opts),
+  }),
   supportedVersion: process.env.A2A_PROTOCOL_VERSION || '0.6',
   commandHandler: async (cmdJson, metadata) => {
     // 优先检查是否是委托消息
@@ -598,10 +615,10 @@ app.get('/a2a/aid', (req, res) => {
     }
     // 兜底：从本地身份生成最小 AID 视图
     return res.json({
-      agent_id: `${identity.name}@${process.env.A2A_HOST || 'localhost'}:${port}`,
+      agent_id: `${identity.name}@${A2A_ADVERTISE_HOST}:${port}`,
       name: identity.name,
       emoji: identity.emoji || '',
-      endpoint: `http://${process.env.A2A_HOST || 'localhost'}:${port}/a2a/json-rpc`,
+      endpoint: `http://${A2A_ADVERTISE_HOST}:${port}/a2a/json-rpc`,
       capabilities: identity.capabilities || {},
     });
   } catch (e) {
@@ -648,8 +665,8 @@ app.get('/.well-known/agent.json', (req, res) => {
     version: A2A_VERSION,
     protocolVersion: '0.6',
     endpoints: {
-      jsonrpc: `http://localhost:${port}/a2a/json-rpc`,
-      rest: { sendMessage: `http://localhost:${port}/message:send`, getTask: `http://localhost:${port}/tasks/`, listTasks: `http://localhost:${port}/tasks`, cancel: `http://localhost:${port}/tasks/:id/cancel`, stream: `http://localhost:${port}/a2a/stream/:id` },
+      jsonrpc: `http://${A2A_ADVERTISE_HOST}:${port}/a2a/json-rpc`,
+      rest: { sendMessage: `http://${A2A_ADVERTISE_HOST}:${port}/message:send`, getTask: `http://${A2A_ADVERTISE_HOST}:${port}/tasks/`, listTasks: `http://${A2A_ADVERTISE_HOST}:${port}/tasks`, cancel: `http://${A2A_ADVERTISE_HOST}:${port}/tasks/:id/cancel`, stream: `http://${A2A_ADVERTISE_HOST}:${port}/a2a/stream/:id` },
     },
     capabilities: standardAPI.getCapabilities(),
     skills: identity.skills || [],
