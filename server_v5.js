@@ -137,16 +137,51 @@ async function sendHeartbeat() {
   }
 }
 
+/**
+ * 核对：注册表名单里还有没有我。
+ * true = 在 / false = 不在 / null = 注册表不可达（不当作「不在」，避免网络抖动时刷注册）
+ * [2026-09-13 勘真补丁] 依据澈《A2A 的心跳：注册一次，不等于一直在》：注册成功 ≠ 一直在线。
+ */
+function verifyRegistration() {
+  const url = new URL(REGISTRY_URL);
+  const transport = url.protocol === 'https:' ? https : http;
+  return new Promise((resolve) => {
+    const req = transport.get(url.origin + '/agents', (res) => {
+      let data = '';
+      res.on('data', (c) => data += c);
+      res.on('end', () => {
+        try {
+          const agents = (JSON.parse(data).agents) || [];
+          resolve(agents.some((a) => a.name === identity.name));
+        } catch (e) {
+          resolve(null);
+        }
+      });
+    });
+    req.on('error', () => resolve(null));
+    req.setTimeout(8000, () => { req.destroy(); resolve(null); });
+  });
+}
+
 function startHeartbeatLoop() {
   // 启动时立即注册（捕获错误，避免注册表离线时崩溃）
   registerToRegistry().catch((e) => {
-    console.error(`[A2A] ⚠️ 初次注册失败，将持续重试: ${e.message || e}`);
+    console.error(`[A2A] ⚠️ 初次注册失败，将在下个心跳周期补注册: ${e.message || e}`);
   });
-  // 定时发送心跳
-  heartbeatTimer = setInterval(() => {
-    sendHeartbeat().catch(() => {});
+  // 定时发心跳，并周期性核对名单（注册表重启/清空/迁移后，「在线」会变成过期记录）
+  heartbeatTimer = setInterval(async () => {
+    try {
+      await sendHeartbeat();
+    } catch (e) {
+      console.warn(`[A2A] ⚠️ 心跳网络失败: ${e.message || e}`);
+    }
+    const listed = await verifyRegistration();
+    if (listed === false) {
+      console.warn('[A2A] ⚠️ 注册表里没有我（可能重启/清空）→ 补注册');
+      registerToRegistry().catch((e) => console.error(`[A2A] ⚠️ 补注册失败: ${e.message || e}`));
+    }
   }, HEARTBEAT_INTERVAL);
-  console.log(`[A2A] 💓 心跳已启动 (每 ${HEARTBEAT_INTERVAL / 1000}s → ${REGISTRY_URL})`);
+  console.log(`[A2A] 💓 心跳已启动 (每 ${HEARTBEAT_INTERVAL / 1000}s → ${REGISTRY_URL}，每周期核对名单)`);
 }
 
 function stopHeartbeatLoop() {
