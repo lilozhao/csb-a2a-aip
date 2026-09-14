@@ -310,8 +310,36 @@ async function handleInbound(msg, ctx) {
     return { kind: 'rejected', receipt, envelope };
   }
 
-  // 3. L3 门槛范围（write/shell）→ 用户确认（阿昭：超时降级=拒绝，不静默执行）
-  if (requiredLevel(envelope.scope) === 'L3') {
+  // 3. [P2 / 2026-09-15] UAC 免确认（可选钩子：**仅当装配方提供 ctx.checkUAC** —— A2A_BRIDGE_UAC=on 时才有）
+  //    红线：免确认的权力属接收方主人；判定钩子 fail-safe，任何不确定都回退 L3。
+  //    设计：docs/UAC-BRIDGE.md · 实现：a2a-bridge-uac.js checkUAC()
+  let autoApprove = null;
+  if (typeof ctx.checkUAC === 'function') {
+    let decision;
+    try {
+      decision = await ctx.checkUAC(envelope, { sender: ctx.sender, taskId });
+    } catch (e) {
+      decision = { hit: false, reason: 'check_uac_error', detail: e.message };
+    }
+    if (decision && decision.hit === true) {
+      autoApprove = decision;
+      console.log(`[UAC] taskId=${taskId} scope=${envelope.scope} AUTO_APPROVED policy=${decision.policyId} jti=${decision.uac && decision.uac.jti}`);
+      // 留痕：免确认放行必须可审计（发起方代表授权 + 接收方豁免策略）
+      await _recordEvidence(ctx, {
+        action: 'delegate_auto_approved',
+        subject: ctx.sender,
+        evidence: { ref: taskId, detail: `scope=${envelope.scope}; policy=${decision.policyId}; jti=${decision.uac && decision.uac.jti}` },
+        note: 'UAC 免确认放行',
+      });
+    } else {
+      // 带了 UAC 但未放行 —— 可观测（不阻塞，继续走 L3）
+      console.log(`[UAC] taskId=${taskId} scope=${envelope.scope} not_hit reason=${(decision && decision.reason) || 'unknown'}`);
+    }
+  }
+
+  // 4. L3 门槛范围（write/shell）→ 用户确认（阿昭：超时降级=拒绝，不静默执行）
+  //    UAC 命中则跳过本步（autoApprove）
+  if (requiredLevel(envelope.scope) === 'L3' && !autoApprove) {
     let confirm;
     try {
       confirm = ctx.confirmL3 ? await ctx.confirmL3(envelope, { taskId, sender: ctx.sender }) : { ok: false };
@@ -341,7 +369,7 @@ async function handleInbound(msg, ctx) {
     }
   }
 
-  // 4. 注入主会话执行（Session Injector；桥接不可用 → 降级事件留痕 + P0 诚实指路）
+  // 5. 注入主会话执行（Session Injector；桥接不可用 → 降级事件留痕 + P0 诚实指路）
   try {
     const result = await ctx.inject(envelope, taskId);
     // 被委托方主会话保留最终拒绝权（T4：委托不是命令）
@@ -389,6 +417,8 @@ async function handleInbound(msg, ctx) {
         reason: REASON.EXECUTED, // [P2 / 2026-09-14] 显式 reason=executed
         summary: result?.summary || '主会话执行完成',
         artifact: result?.artifact || null,
+        // [P2 / 2026-09-15] 回执里标明是否走了 UAC 免确认（可审计）
+        autoApproved: autoApprove ? { policyId: autoApprove.policyId, jti: (autoApprove.uac && autoApprove.uac.jti) || null } : null,
       },
     });
     // [9/11 接线] 信任证据：委托真正执行完成才记（正向 +2，采集器定权重）

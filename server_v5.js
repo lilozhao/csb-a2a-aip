@@ -365,6 +365,35 @@ const standardAPI = new A2AStandardAPI({
         return process.env.A2A_BRIDGE_DEFAULT_TRUST || 'L0';
       };
 
+      // [P2 / 2026-09-15] UAC 免确认钩子（**默认关**：A2A_BRIDGE_UAC=on 才装配）
+      //   装配了才传给 bridge；未装配 → handleInbound 看不到 ctx.checkUAC → 行为与今天完全一致
+      //   设计：docs/UAC-BRIDGE.md · 词条：免确认的权力属接收方主人（红线）
+      let checkUAC;
+      if (process.env.A2A_BRIDGE_UAC === 'on') {
+        try {
+          const uacBridge = require('./a2a-bridge-uac');
+          const fsp = require('fs');
+          const pathp = require('path');
+          const POLICY_PATH = process.env.A2A_BRIDGE_UAC_POLICY || pathp.join(__dirname, 'config', 'bridge-uac-policy.json');
+          const loadPolicy = () => { try { return JSON.parse(fsp.readFileSync(POLICY_PATH, 'utf8')); } catch { return null; } };
+          const jtiCache = new Set();
+          const rateHits = new Map();
+          const rateCheck = (peerId, now, rate) => {
+            const arr = (rateHits.get(peerId) || []).filter((t) => now - t < rate.windowSeconds * 1000);
+            if (arr.length >= rate.max) { rateHits.set(peerId, arr); return { ok: false, detail: `${arr.length}/${rate.max}` }; }
+            arr.push(now); rateHits.set(peerId, arr); return { ok: true };
+          };
+          checkUAC = (envelope, c) => uacBridge.checkUAC(envelope, {
+            policy: loadPolicy(), sender: c && c.sender, now: Date.now(), jtiCache, rateCheck,
+          });
+          const pol0 = loadPolicy();
+          console.log(`[UAC] 免确认钩子已装配：${POLICY_PATH} · enabled=${pol0 ? pol0.enabled === true : 'no-policy'} · peers=${(pol0 && pol0.peers && pol0.peers.length) || 0}`);
+        } catch (e) {
+          checkUAC = undefined;
+          console.warn('[UAC] 钩子装配失败，保持关闭:', e.message);
+        }
+      }
+
       const result = await bridge.handleInbound(msg, {
         sender,
         taskId,
@@ -390,6 +419,8 @@ const standardAPI = new A2AStandardAPI({
           if (action === 'user_declined') return trustEvidence.userDeclined(subject, evidence, 'a2a-bridge');
           return trustEvidence._safeCall('record', [{ subject, action, evidence, actor: 'a2a-bridge', note: evt?.note }]);
         },
+        // [P2 / 2026-09-15] UAC 免确认钩子（A2A_BRIDGE_UAC=on 才存在；否则 undefined → 行为不变）
+        ...(checkUAC ? { checkUAC } : {}),
       });
       return correlator.buildTaskResponse(result);
     } catch (e) {

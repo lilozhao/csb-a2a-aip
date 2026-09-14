@@ -186,6 +186,60 @@ test('验收用例3：L3 确认超时 → 拒绝 + confirm_timeout', async () =>
   assert.strictEqual(r.receipt.receipt.result.reason, REASON.CONFIRM_TIMEOUT);
 });
 
+test('验收用例8（P2·UAC）：钩子命中 → 跳过 confirmL3 自动放行 + 回执标 autoApproved', async () => {
+  let confirmed = false;
+  const actions = [];
+  const r = await handleInbound(
+    { delegation: { type: 'execute', scope: 'shell', target: 'git pull', uac: 'h.p.s', capabilities: ['pull'] } },
+    mkCtx({
+      confirmL3: async () => { confirmed = true; return { ok: true }; },
+      checkUAC: async () => ({ hit: true, reason: 'auto_approved', policyId: 'xiaoxia', capabilities: ['pull'], uac: { jti: 'jti-1', iss: 'user:x' } }),
+      recordEvidence: async (e) => { actions.push(e && e.action); },
+    })
+  );
+  assert.strictEqual(confirmed, false, 'UAC 命中时不应再调 confirmL3');
+  assert.strictEqual(r.kind, 'executed');
+  assert.deepStrictEqual(r.receipt.receipt.result.autoApproved, { policyId: 'xiaoxia', jti: 'jti-1' });
+  assert.ok(actions.includes('delegate_auto_approved'), '应留痕 auto_approved，实得 ' + JSON.stringify(actions));
+});
+
+test('验收用例9（P2·UAC）：钩子未命中 → 照旧走 L3', async () => {
+  let confirmed = false;
+  const r = await handleInbound(
+    { delegation: { type: 'execute', scope: 'shell', target: 'git pull', uac: 'h.p.s', capabilities: ['pull'] } },
+    mkCtx({
+      confirmL3: async () => { confirmed = true; return { ok: true }; },
+      checkUAC: async () => ({ hit: false, reason: 'uac_scope_insufficient' }),
+    })
+  );
+  assert.strictEqual(confirmed, true, '未命中必须回退 L3');
+  assert.strictEqual(r.kind, 'executed');
+  assert.strictEqual(r.receipt.receipt.result.autoApproved, null);
+});
+
+test('验收用例10（P2·UAC）：钩子抛错 → fail-safe 回退 L3（不中断）', async () => {
+  let confirmed = false;
+  const r = await handleInbound(
+    { delegation: { type: 'execute', scope: 'shell', target: 'git pull', uac: 'h.p.s' } },
+    mkCtx({
+      confirmL3: async () => { confirmed = true; return { ok: true }; },
+      checkUAC: async () => { throw new Error('boom'); },
+    })
+  );
+  assert.strictEqual(confirmed, true);
+  assert.strictEqual(r.kind, 'executed');
+});
+
+test('验收用例11（P2）：未装配 checkUAC → 行为完全不变（仍 L3）', async () => {
+  let confirmed = false;
+  const r = await handleInbound(
+    { delegation: { type: 'execute', scope: 'write', target: '写文件', uac: 'h.p.s', capabilities: ['pull'] } },
+    mkCtx({ confirmL3: async () => { confirmed = true; return { ok: true }; } })
+  );
+  assert.strictEqual(confirmed, true);
+  assert.strictEqual(r.kind, 'executed');
+});
+
 test('验收用例4：用户拒绝写委托 → user_declined，不执行', async () => {
   let injected = false;
   const r = await handleInbound(
