@@ -212,8 +212,14 @@ function createConfirmFlow(deps) { return new ConfirmFlow(deps); }
 // 来源：commit d113688——发送 → 轮询回复 → 超时自动拒（与 ConfirmFlow 类并存）
 // ============================================
 
+// [9/14 若兰批注] 接收方默认上限 5min（RFC v0.2 §4.3），但允许 env 覆盖
+// 与 a2a-bridge-core.js 的 L3_CONFIRM_TIMEOUT_MS 保持同一逻辑（避免双源）
+const _confirmDefaultMs = (() => {
+  const env = parseInt(process.env.A2A_BRIDGE_CONFIRM_TIMEOUT_MS, 10);
+  return Number.isFinite(env) && env > 0 ? env : 5 * 60 * 1000;
+})();
 const DEFAULTS = Object.freeze({
-  CONFIRM_TIMEOUT_MS: 5 * 60 * 1000, // RFC v0.2 §4.3（接收方默认上限）
+  CONFIRM_TIMEOUT_MS: _confirmDefaultMs, // [9/14] env > hardcoded 5min（与 bridge-core 同源）
   POLL_INTERVAL_MS: 5000,
 });
 

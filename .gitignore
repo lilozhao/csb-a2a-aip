@@ -57,3 +57,7 @@ topics-used.json
 # 背景：data/a2a-tasks.json 曾因被跟踪 + 仓库删除导致实例 pull 后数据文件被移除（tasks 1614→0）
 # 规则：data/ 下一切运行时数据（task 存储/注册表快照/用户公钥等）永不入库
 data/
+
+# a2a-v5.env — 运行时 env 单一真相源（含 handshake 私钥路径 / 端口 / 对端公钥）
+# 9/14 加：跟 .env / .env.a2a 性质类似（不能入库）
+a2a-v5.env
