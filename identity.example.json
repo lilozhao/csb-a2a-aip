@@ -1,0 +1,26 @@
+{
+  "name": "<YOUR_AGENT_NAME>",
+  "emoji": "<YOUR_AGENT_EMOJI>",
+  "description": "<YOUR_AGENT_DESCRIPTION>",
+  "publicHost": "<YOUR_HOST>",
+  "port": 3100,
+  "capabilities": {
+    "chat": true,
+    "a2a.relay": true,
+    "file.read": true,
+    "web.search": true
+  },
+  "llm": {
+    "host": "<YOUR_LLM_HOST>",
+    "port": "443",
+    "path": "/compatible-mode/v1/chat/completions",
+    "apiKeyEnv": "A2A_LLM_API_KEY",
+    "model": "<YOUR_MODEL>"
+  },
+  "version": "1.0.0",
+  "security": {
+    "handshake": {
+      "slug": "<YOUR_SLUG>"
+    }
+  }
+}
