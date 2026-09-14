@@ -72,7 +72,11 @@ let heartbeatTimer = null;
 
 async function registerToRegistry() {
   try {
-    const publicHost = identity.publicHost || config.getSelf().host;
+    // 若兰一页纸 #5：identity.publicHost 必填；缺则回落会串台
+    const publicHost = identity.publicHost || identity.host || config.getSelf?.()?.host;
+    if (!publicHost) {
+      throw new Error('[registerToRegistry] identity.json 缺 publicHost/host，且 config.getSelf() 也失败');
+    }
     const extras = aipIntegration ? (aipIntegration.getAdapter()?.getRegistrationExtras() || {}) : {};
     const body = JSON.stringify({
       name: identity.name,
@@ -116,7 +120,11 @@ async function registerToRegistry() {
 
 async function sendHeartbeat() {
   try {
-    const publicHost = identity.publicHost || config.getSelf().host;
+    // 若兰一页纸 #5：identity.publicHost 必填；缺则回落会串台
+    const publicHost = identity.publicHost || identity.host || config.getSelf?.()?.host;
+    if (!publicHost) {
+      throw new Error('[sendHeartbeat] identity.json 缺 publicHost/host，且 config.getSelf() 也失败');
+    }
     const body = JSON.stringify({ name: identity.name, host: publicHost, port: parseInt(port) });
     const url = new URL(REGISTRY_URL);
     return new Promise((resolve, reject) => {

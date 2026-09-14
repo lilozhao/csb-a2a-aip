@@ -4,12 +4,6 @@
     "public": "http://47.121.28.125:3099"
   },
   "skillServer": "http://172.28.0.4:3098",
-  "self": {
-    "name": "阿轩",
-    "emoji": "🔧",
-    "host": "172.28.0.5",
-    "port": 3100
-  },
   "agents": {
     "ruolan": {
       "name": "若兰",

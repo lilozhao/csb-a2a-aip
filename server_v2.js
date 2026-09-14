@@ -891,7 +891,7 @@ async function registerToRegistry() {
     // 优先查找 openclaw-net 网络的 IP (172.28.0.x)
     for (const iface of Object.values(ifaces)) {
       for (const alias of iface) {
-        if (alias.family === 'IPv4' && !alias.internal && alias.address.startsWith(config.getSelf().host.split('.').slice(0, 3).join('.') + '.')) {
+        if (alias.family === 'IPv4' && !alias.internal && alias.address.startsWith(((identity.publicHost || config.getSelf?.()?.host || '').split('.').slice(0, 3).join('.')) + '.')) {
           registerHost = alias.address;
           found = true;
           break;
@@ -924,7 +924,7 @@ async function registerToRegistry() {
     // 优先查找 openclaw-net 网络的 IP (172.28.0.x)
     for (const iface of Object.values(ifaces)) {
       for (const alias of iface) {
-        if (alias.family === 'IPv4' && !alias.internal && alias.address.startsWith(config.getSelf().host.split('.').slice(0, 3).join('.') + '.')) {
+        if (alias.family === 'IPv4' && !alias.internal && alias.address.startsWith(((identity.publicHost || config.getSelf?.()?.host || '').split('.').slice(0, 3).join('.')) + '.')) {
           registerHost = alias.address;
           found = true;
           break;

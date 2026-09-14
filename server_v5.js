@@ -71,16 +71,22 @@ let heartbeatTimer = null;
 
 // [2026-09-13 修复] AgentCard / 握手 的「对外地址」单一真相源。
 //   此前 AgentCard 硬编码 http://localhost:${port} → 远程 peer 拿到 localhost 地址，谁都连不上。
-//   优先级与 registerToRegistry 一致：env A2A_HOST > identity.publicHost > config.getSelf().host
+//   优先级（若兰一页纸 #3）：env A2A_HOST > identity.publicHost > identity.host > config.getSelf?.()?.host > 'localhost'
+//   注意：config.getSelf() 在新 loader.js 中三级优先——可能抛错；用 ?.() 可选链调用
 const A2A_ADVERTISE_HOST = (() => {
   if (process.env.A2A_HOST) return process.env.A2A_HOST;
   if (identity.publicHost) return identity.publicHost;
-  try { return config.getSelf().host; } catch { return 'localhost'; }
+  if (identity.host) return identity.host;
+  try { return config.getSelf?.()?.host || 'localhost'; } catch { return 'localhost'; }
 })();
 
 async function registerToRegistry() {
   try {
-    const publicHost = identity.publicHost || config.getSelf().host;
+    // 若兰一页纸 #4：要求本地 identity.json 必带 publicHost；缺则回落会串台
+    const publicHost = identity.publicHost || identity.host || config.getSelf?.()?.host;
+    if (!publicHost) {
+      throw new Error('[registerToRegistry] identity.json 缺 publicHost/host，且 config.getSelf() 也失败');
+    }
     const extras = aipIntegration ? (aipIntegration.getAdapter()?.getRegistrationExtras() || {}) : {};
     const body = JSON.stringify({
       name: identity.name,
@@ -124,7 +130,11 @@ async function registerToRegistry() {
 
 async function sendHeartbeat() {
   try {
-    const publicHost = identity.publicHost || config.getSelf().host;
+    // 若兰一页纸 #4：identity.publicHost 必填；缺则回落会串台
+    const publicHost = identity.publicHost || identity.host || config.getSelf?.()?.host;
+    if (!publicHost) {
+      throw new Error('[sendHeartbeat] identity.json 缺 publicHost/host，且 config.getSelf() 也失败');
+    }
     const body = JSON.stringify({ name: identity.name, host: publicHost, port: parseInt(port) });
     const url = new URL(REGISTRY_URL);
     return new Promise((resolve, reject) => {
