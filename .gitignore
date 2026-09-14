@@ -61,3 +61,9 @@ data/
 # a2a-v5.env — 运行时 env 单一真相源（含 handshake 私钥路径 / 端口 / 对端公钥）
 # 9/14 加：跟 .env / .env.a2a 性质类似（不能入库）
 a2a-v5.env
+
+# 9/14 若兰红线 P-1 · 卫生债清理
+# 本机快照 / 内网拓扑 / 老版本备份——不入仓
+*.bak
+*.bak.*
+known-agents.json
