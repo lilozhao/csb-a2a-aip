@@ -74,6 +74,11 @@ known-agents.json
 # 注意：.pem 私钥已在更上方的 config/security/*.pem 屏蔽
 config/security/*-aid.json
 
+# UAC（2026-09-15 · P1）：主人密钥（含私钥！）与本地豁免策略不入仓
+#   .uac/ 下一切密钥材料永不入库；策略文件只含公钥但属实例本地配置，同 a2a-v5.env 性质
+.uac/
+config/bridge-uac-policy.json
+
 # 2026-09-14 加固（试点小虾发现）：identity 全部变体一律不入仓
 # 2026-09-14 补：identity.<名>.json（如 identity.kai.json，A2A_IDENTITY_PATH 指向的那份）也进不来 —— 恺 复验发现
 /identity*
