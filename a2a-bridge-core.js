@@ -144,6 +144,12 @@ function validateEnvelope(msg) {
       expectedMarker: d.expectedMarker || null,
       nonce: d.nonce || d.expectedNonce || null,
       workingDir: d.workingDir || null,
+      // [P0 / 2026-09-15] UAC 豁免所需字段（仅定义与透传；**本阶段不接线**）
+      //   uac          : 发起方主人的代表授权凭证（JWT/EdDSA）
+      //   capabilities : 本次动作的能力标签（如 ["pull","test"]）
+      //   判定钩子见 a2a-bridge-uac.js checkUAC()（默认不调用）
+      uac: typeof d.uac === 'string' ? d.uac : null,
+      capabilities: Array.isArray(d.capabilities) ? d.capabilities : [],
     },
   };
 }

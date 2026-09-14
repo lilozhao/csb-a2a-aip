@@ -1,0 +1,24 @@
+{
+  "_comment": "Bridge UAC 豁免策略（P0 · 2026-09-15）· 接收方本地策略，默认关闭。复制为 bridge-uac-policy.json 并按需修改。",
+  "_doc": "docs/uac-bridge-integration-plan-2026-09-15.md",
+  "_safety": "免确认的权力属于接收方主人。发起方不能单方面要求免确认；两条证据（发起方 UAC + 本条策略）同时成立才免 L3。",
+  "version": 1,
+  "enabled": false,
+  "peers": [
+    {
+      "id": "ruolan",
+      "name": "若兰",
+      "agentId": "若兰",
+      "userPublicKey": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "<发起方主人公钥（JWK）· 由信任登记取得>"
+      },
+      "capabilities": ["pull", "test"],
+      "scopes": ["a2a.delegate:shell"],
+      "rate": { "max": 3, "windowSeconds": 86400 },
+      "expiresAt": "2026-09-22T00:00:00Z",
+      "revokedAt": null
+    }
+  ]
+}
