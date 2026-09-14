@@ -139,4 +139,10 @@ curl -s 127.0.0.1:PORT/a2a/handshake/status
 
 ---
 
+## 相关
+
+- 下一关：`docs/L3-CONFIRM-UNAUTHORIZED-CHECKLIST.md`（委托被秒拒 `Unauthorized` 的排查）
+
+---
+
 _2026-09-14 若兰 🌸 · 任何人可复用（换掉 SLUG/HOST/PORT/NAME）_
