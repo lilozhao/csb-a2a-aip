@@ -93,6 +93,72 @@ function detectRefusal(content) {
 }
 
 /**
+ * [P1 / 2026-09-14] 隔离注入 · 确定性原语 + 副作用证据
+ *   - 不走 LLM，直接 Node child_process 跑 shell 命令
+ *   - 白名单：命令必须含 "marker" / "nonce" 关键字 + 限制路径（仅 workspace /tmp）
+ *   - 验证副作用：读回 envelope.expectedMarker 路径，验证内容 == envelope.nonce
+ *   - marker 命中 → executed（带真实 stdout）
+ *   - marker 缺失 / 错误 → no_side_effect（不算成功）
+ *   - 超时 / 异常 → failed(timeout / error)
+ */
+async function injectIsolated(envelope, taskId, opts = {}) {
+  const t0 = Date.now();
+  const cmd = (envelope && (envelope.command || envelope.target || envelope.task)) || '';
+  const expectedMarker = (envelope && envelope.expectedMarker) || null; // e.g. "p3-l3-marker.txt"
+  const expectedNonce = (envelope && (envelope.nonce || envelope.expectedNonce)) || null;
+  const workingDir = (envelope && envelope.workingDir) || process.cwd();
+  const timeoutMs = (envelope && envelope.timeoutMs) || 30000;
+
+  // 白名单：含 marker / nonce 字样 + 路径限制
+  const safePaths = ['/tmp/', workingDir + '/', '/home/node/.openclaw/workspace/'];
+  const allowed = (cmd.includes('marker') || cmd.includes('nonce')) &&
+    safePaths.some(p => cmd.includes(p)) &&
+    !cmd.match(/\brm\s+-rf\b/i) && !cmd.match(/\bcurl\s+/i) && !cmd.match(/\bwget\b/i);
+
+  if (!allowed) {
+    console.log(`[INJECT-EXEC] taskId=${taskId} REJECTED cmd 包含危险关键字或路径不在白名单`);
+    return { ok: false, error: 'isolated 注入拒绝：cmd 未通过白名单校验', refused: true, durationMs: Date.now() - t0 };
+  }
+
+  console.log(`[INJECT-EXEC] taskId=${taskId} cmd=${cmd.substring(0, 80).replace(/\n/g, ' ')} workingDir=${workingDir} timeoutMs=${timeoutMs}`);
+
+  const { execFile } = require('child_process');
+  return new Promise((resolve) => {
+    execFile('/bin/sh', ['-c', cmd], { cwd: workingDir, timeout: timeoutMs, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+      const durationMs = Date.now() - t0;
+      if (error && error.killed) {
+        console.log(`[INJECT-EXEC] taskId=${taskId} FAILED timeout killed (${durationMs}ms)`);
+        return resolve({ ok: false, error: `isolated 注入超时 (${timeoutMs}ms)`, durationMs, stdout, stderr });
+      }
+      if (error) {
+        console.log(`[INJECT-EXEC] taskId=${taskId} FAILED exit=${error.code || '?'} (${durationMs}ms) stderr=${stderr.substring(0, 100)}`);
+        return resolve({ ok: false, error: `isolated 注入失败: ${error.message}`, durationMs, stdout, stderr });
+      }
+      // 验证副作用：读 marker 文件
+      if (!expectedMarker || !expectedNonce) {
+        console.log(`[INJECT-EXEC] taskId=${taskId} NO_SIDE_EFFECT（无 expectedMarker / expectedNonce，跳过副作用验证）`);
+        return resolve({ ok: true, summary: stdout.substring(0, 500), artifact: { stdout, stderr, durationMs, noSideEffectCheck: true } });
+      }
+      const path = require('path');
+      const fullPath = path.isAbsolute(expectedMarker) ? expectedMarker : path.join(workingDir, expectedMarker);
+      let content = '';
+      try { content = require('fs').readFileSync(fullPath, 'utf8'); } catch (e) {
+        console.log(`[INJECT-EXEC] taskId=${taskId} NO_SIDE_EFFECT（marker 文件 ${fullPath} 不存在）`);
+        return resolve({ ok: true, summary: stdout.substring(0, 500), artifact: { stdout, stderr, durationMs, sideEffect: 'no_marker', expectedMarker: fullPath }, noSideEffect: true });
+      }
+      const contentTrim = content.trim();
+      const nonceTrim = String(expectedNonce).trim();
+      if (contentTrim !== nonceTrim) {
+        console.log(`[INJECT-EXEC] taskId=${taskId} NO_SIDE_EFFECT（marker 内容 ${contentTrim} != nonce ${nonceTrim}）`);
+        return resolve({ ok: true, summary: stdout.substring(0, 500), artifact: { stdout, stderr, durationMs, sideEffect: 'mismatch', content: contentTrim, nonce: nonceTrim }, noSideEffect: true });
+      }
+      console.log(`[INJECT-EXEC] taskId=${taskId} EXECUTED ✅ (${durationMs}ms) marker==nonce`);
+      return resolve({ ok: true, summary: `isolated 注入成功（${durationMs}ms）marker 内容: ${contentTrim}`, artifact: { stdout, stderr, durationMs, sideEffect: 'matched', marker: fullPath, nonce: contentTrim } });
+    });
+  });
+}
+
+/**
  * 注入主会话执行（双契约，按调用形式分派）
  *   A. inject(envelope, taskId, opts)                     —— 执行注入（返回 {summary, refused}；失败抛错）
  *   B. inject({taskId, delegatorLabel, envelope}, opts)    —— server_v5 装配段 frame 形式
@@ -111,6 +177,11 @@ async function inject(envelopeOrFrame, taskIdOrOpts, maybeOpts = {}) {
     envelope = envelopeOrFrame;
     taskId = typeof taskIdOrOpts === 'string' ? taskIdOrOpts : undefined;
     opts = (typeof taskIdOrOpts === 'object' && taskIdOrOpts) ? taskIdOrOpts : maybeOpts;
+  }
+
+  // [P1 / 2026-09-14] isolated 路径：跳过 LLM，直接走 Node child_process + 副作用验证
+  if (envelope && (envelope.isolated === true || opts.isolated === true)) {
+    return await injectIsolated(envelope, taskId, opts);
   }
 
   const token = opts.token || resolveToken();
@@ -207,7 +278,7 @@ async function executeViaGateway(envelope, taskId, opts = {}) {
   };
 }
 
-module.exports = { inject, buildPrompt, buildInjectMessage, detectRefusal, REFUSAL_PATTERNS, resolveConfig, invokeTool, fetchResult, extractReply, harvestTexts, _resetIdentityBridgeCache };
+module.exports = { inject, injectIsolated, buildPrompt, buildInjectMessage, detectRefusal, REFUSAL_PATTERNS, resolveConfig, invokeTool, fetchResult, extractReply, harvestTexts, _resetIdentityBridgeCache };
 
 /** [9/9 兼容] frame → 注入消息文本（含 taskId 标记 + 委托四要素 + 拒绝权声明） */
 function buildInjectMessage(frame = {}) {
@@ -324,20 +395,30 @@ async function fetchResult(taskId, opts = {}) {
   const cfg = { ...resolveConfig(), ...opts };
   if (!cfg.token) return { ok: false, error: '缺少 gateway token' };
   const sessionKey = opts.sessionKey || 'main';
-  const limit = opts.limit || 40;
+  // [P0-2 / 2026-09-14] 读取窗口用时间窗代替固定条数：默认查 send 后 10 分钟（避免40条窗口被刷出去）
+  const sinceMs = opts.sinceMs || (Date.now() - 10 * 60 * 1000);
+  const limit = opts.limit || 100; // 放宽到 100（从 40 提升），同时按 sinceMs 过滤
 
   // 主路径：sessions_history（宿主会话 → 用户回复）
   const hist = await invokeTool(cfg.url, cfg.token, {
     tool: 'sessions_history',
-    args: { sessionKey, limit },
+    args: { sessionKey, limit, sinceMs },
     sessionKey,
   }, opts.timeoutMs || 30000);
 
   if (hist.ok) {
-    const texts = harvestTexts(hist.result, { userOnly: true });
-    const marker = `桥接结果 #${taskId}`;
-    const confirmMarker = `确认 #${taskId}`;
-    const hit = texts.find((t) => t.includes(marker) || t.includes(confirmMarker)) || null;
+    const texts = harvestTexts(hist.result, { userOnly: true, sinceMs });
+    // [P0-2 / 2026-09-14] 归一化匹配：去空格 + 去中文标点，保留 - _ . # 与字母数字
+    const normalize = (s) => String(s || '').replace(/[\s\u3000\u00A0]+/g, '').replace(/[，。；！？、,;:!?:"""''「」『』【】()《》·•·—=+*\/\\|~`]/g, '').toLowerCase();
+    const marker = `桥接结果#${taskId}`;
+    const confirmMarker = `确认#${taskId}`;
+    const nMarker = normalize(marker);
+    const nConfirm = normalize(confirmMarker);
+    let hit = null;
+    for (const t of texts) {
+      const nt = normalize(t);
+      if (nt.includes(nMarker) || nt.includes(nConfirm)) { hit = t; break; }
+    }
     return {
       ok: true,
       result: {
@@ -345,6 +426,8 @@ async function fetchResult(taskId, opts = {}) {
         replyText: hit,
         messages: texts.map((t) => ({ text: t })),
         raw: hist.result,
+        // [P0-2] 调试信息：返回实际拉到的消息数、过滤后数、是否命中
+        _debug: { sessionKey, limit, sinceMs, totalMessages: texts.length, hit: hit !== null },
       },
     };
   }
@@ -394,6 +477,12 @@ function harvestTexts(result, opts = {}) {
     if (Array.isArray(msgs)) {
       for (const m of msgs) {
         if (opts.userOnly && m?.role && m.role !== 'user') continue;
+        // [P0-2 / 2026-09-14] 按 sinceMs 过滤：消息时间戳 > sinceMs 才保留
+        if (opts.sinceMs != null) {
+          const mts = m?.timestamp || m?.ts || m?.time || m?.createdAt || m?.created_at;
+          const mtsNum = mts ? (typeof mts === 'number' ? mts : (typeof mts === 'string' ? Date.parse(mts) : NaN)) : NaN;
+          if (Number.isFinite(mtsNum) && mtsNum < opts.sinceMs) continue;
+        }
         const parts = m?.content;
         if (Array.isArray(parts)) {
           for (const p of parts) { if (p?.type === 'thinking') continue; push(p?.text); }

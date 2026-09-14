@@ -291,11 +291,16 @@ function buildConfirmMessage({ taskId, envelope, delegatorLabel, window }) {
 /** 解析宿主用户回复 → 确认/拒绝 */
 function parseConfirmReply(text, taskId) {
   if (!text || typeof text !== 'string') return { decision: null };
-  const hasId = text.includes(`#${taskId}`) || text.includes(taskId);
+  // [P0-2 / 2026-09-14] 归一化后再匹配（去空格 + 中文标点，保留 - _ . # 与字母数字）
+  const normalize = (s) => String(s || '').replace(/[\s\u3000\u00A0]+/g, '').replace(/[，。；！？、,;:!?:"""''「」『』【】()《》·•·—=+*\/\\|~`]/g, '').toLowerCase();
+  const nText = normalize(text);
+  const nTaskId = taskId || '';
+  // hasId：归一化后 taskId 在文本中
+  const hasId = nText.includes(nTaskId) || nText.includes('#' + nTaskId);
   if (!hasId) return { decision: null };
-  if (/确认|同意|放行|approve|yes|ok/i.test(text)) return { decision: 'approve' };
-  if (/拒绝|不同意|decline|refuse|no/i.test(text)) {
-    const reason = text.replace(/拒绝|不同意|decline|refuse/gi, '').replace(/[#\s]/g, ' ').trim().slice(0, 200);
+  if (/确认|同意|放行|approve|yes|ok/i.test(nText)) return { decision: 'approve' };
+  if (/拒绝|不同意|decline|refuse|no/i.test(nText)) {
+    const reason = nText.replace(/拒绝|不同意|decline|refuse/gi, '').slice(0, 200);
     return { decision: 'decline', reason: reason || '用户拒绝' };
   }
   return { decision: null };
@@ -345,6 +350,8 @@ async function confirmL3(envelope, ctx = {}, opts = {}) {
     const cfg = adapter.resolveConfig();
     const to = opts.to || cfg.mainTo;
     if (!to) return { ok: false, error: '缺少主会话目标（A2A_BRIDGE_MAIN_TO）' };
+    // [P0-1 / 2026-09-14] [CONFIRM-SEND] 调试日志：记录发送通道、目标、sessionKey、前 80 字符
+    console.log(`[CONFIRM-SEND] to=${to} sessionKey=main gatewayUrl=${cfg.url} preview=${text.substring(0, 80).replace(/\n/g, ' ')}`);
     return adapter.invokeTool(cfg.url, cfg.token, {
       tool: 'message', action: 'send',
       args: { to, message: text },
@@ -355,7 +362,16 @@ async function confirmL3(envelope, ctx = {}, opts = {}) {
   // 确认请求发出的是「确认 #<taskId>」，若读取时拼成 'confirm-'+tid，
   // fetchResult 内部查找标记会变成「确认 #confirm-<taskId>」→ 永不匹配。
   // 实测症状：用户已回复，轮询 5 分钟仍读不到（读取通道本身正常）。
-  const read = opts.read || ((tid) => adapter.fetchResult(tid, { to: opts.to }));
+  // [P0-2 / 2026-09-14] 发送时间：作为 sinceMs 下界，避免旧消息误命中
+  const sentAt = Date.now();
+  const read = opts.read || ((tid) => {
+    // [P0-1 / 2026-09-14] [CONFIRM-READ] 调试日志：记录读取 sessionKey、limit、sinceMs、查找标记
+    const to = opts.to || null;
+    const sinceMs = sentAt; // 只看 confirm 发送后的消息（避免旧消息误命中）
+    const remaining = Math.max(0, (sentAt + timeoutMs) - Date.now());
+    console.log(`[CONFIRM-READ] taskId=${tid} sessionKey=main to=${to || '(unset, will use cfg.mainTo)'} limit=100 sinceMs=${sinceMs} (sentAt, 仅看 send 后的消息) marker='桥接结果 #${tid}' OR '确认 #${tid}' remainingMs=${remaining}`);
+    return adapter.fetchResult(tid, { to: opts.to, sessionKey: 'main', sinceMs, limit: 100 });
+  });
 
   const sent = await send(buildConfirmMessage({ taskId, envelope, delegatorLabel, window: win }));
   if (!sent || sent.ok !== true) {

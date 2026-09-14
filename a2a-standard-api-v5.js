@@ -406,6 +406,16 @@ class A2AStandardAPI {
   async _processTask(taskId, msg, metadata) {
     if (this._externalHandler) return this._externalHandler(taskId, msg);
 
+    // 🔍 [P3-INGRESS] Phase 3 调试：记录 _processTask 入口的 message 结构（不破坏逻辑）
+    try {
+      const hasDelegation = !!(msg && msg.delegation);
+      const hasEnvelope = !!(metadata && metadata.envelope);
+      const partsCount = (msg && Array.isArray(msg.parts)) ? msg.parts.length : 0;
+      const firstPartType = (msg && msg.parts && msg.parts[0]) ? (msg.parts[0].type || 'no-type') : 'no-parts';
+      const scope = (metadata && metadata.scope) || (msg && msg.delegation && msg.delegation.scope) || 'none';
+      console.log(`[P3-INGRESS] taskId=${taskId} hasDelegation=${hasDelegation} hasEnvelope=${hasEnvelope} partsCount=${partsCount} firstPartType=${firstPartType} scope=${scope} from=${(metadata && metadata.sender && metadata.sender.name) || 'unknown'}`);
+    } catch (e) { /* debug 日志失败不影响主链路 */ }
+
     // 📥 [2026-09-13] Layer 1：入站收件箱（所有入站消息，纯留痕，fail-safe）
     //   根因：桥接只覆盖 delegation 信封，聊天消息此前主会话全程不知情（送达 ≠ 被感知）
     if (this._inbox) {
@@ -415,9 +425,16 @@ class A2AStandardAPI {
     // 🚀 BRIDGE: delegation 信封 → 主会话桥接（RFC v0.2 · M2）
     // 有信封且装配了 bridgeHandler → 走桥接；否则 fallthrough 原逻辑
     if (msg && msg.delegation && this._bridgeHandler) {
+      console.log(`[P3-MSG] taskId=${taskId} → bridgeHandler 启动 (has delegation)`);
       const bridgeResp = await this._bridgeHandler(taskId, msg, metadata);
-      if (bridgeResp) return bridgeResp; // {artifacts, message, __terminalState?}
+      if (bridgeResp) {
+        console.log(`[P3-INJECT] taskId=${taskId} → bridgeHandler 完成, artifacts=${(bridgeResp.artifacts||[]).length}, terminal=${!!bridgeResp.__terminalState}`);
+        return bridgeResp; // {artifacts, message, __terminalState?}
+      }
+      console.log(`[P3-MSG] taskId=${taskId} → bridgeHandler 返回 null, fallthrough`);
       // bridgeHandler 返回 null（异常兜底）→ 继续原逻辑
+    } else {
+      console.log(`[P3-MSG] taskId=${taskId} → 不走 bridgeHandler (msg.delegation=${!!(msg&&msg.delegation)}, hasBridgeHandler=${!!this._bridgeHandler})`);
     }
 
     // 📣 [2026-09-13] Layer 2：非委托消息 → 主会话实时通知（默认关；护栏在 a2a-chat-notify.js）
