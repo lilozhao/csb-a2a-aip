@@ -360,7 +360,11 @@ const standardAPI = new A2AStandardAPI({
         taskId,
         getTrustLevel: () => getTrustLevel(sender.url || sender.name),
         inject: async (envelope, tid) =>
-          gatewayAdapter.inject({ taskId: tid, delegatorLabel: senderLabel, envelope }, { to: bridgeMainTo }),
+          // [P1 / 2026-09-14] isolated 路径：env A2A_BRIDGE_ISOLATED_DEFAULT=true 或 envelope.isolated=true 时跳过 LLM 走确定原语
+          gatewayAdapter.inject({ taskId: tid, delegatorLabel: senderLabel, envelope }, {
+            to: bridgeMainTo,
+            isolated: process.env.A2A_BRIDGE_ISOLATED_DEFAULT === 'true' || envelope?.isolated === true
+          }),
         confirmL3: async (envelope, c) =>
           confirm.confirmL3(envelope, { taskId: c.taskId, sender: c.sender }, { to: bridgeMainTo }),
         recordDegrade: async (evt) => {
