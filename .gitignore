@@ -73,3 +73,7 @@ known-agents.json
 # 仓里留 <slug>-aid.example.json 模板；实例启动时由 setup-handshake.sh 生成实例专属 aid.json
 # 注意：.pem 私钥已在更上方的 config/security/*.pem 屏蔽
 config/security/*-aid.json
+
+# 2026-09-14 加固（试点小虾发现）：identity 全部变体一律不入仓
+identity.json*
+!identity.json.example
