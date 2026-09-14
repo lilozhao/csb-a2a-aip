@@ -8,6 +8,8 @@ logs/
 # Sensitive files - NEVER commit these
 identity.json
 identity.ruozhuo.json
+identity.ruolan.json
+identity.hermes.example.json
 # 🔒 v5.0.1: 握手私钥/密钥材料（参考 csb-security/.gitignore）
 data/mingde-private-key.pem
 data/*-private-key.pem
