@@ -12,7 +12,7 @@ const { sendMessageWithContext } = require('./client-v2.js');
 // ===== 飞书配置 =====
 const FEISHU = {
   appId: 'cli_a91c57cddd38dcd4',
-  appSecret: '1sCYfsC4c6kvXJQURQuD1lkLNzitWQyD',
+  appSecret: process.env.FEISHU_APP_SECRET || '',
   groupId: 'oc_4427768d0798b7545d4fb07b7518e710',
 };
 let _feishuToken = null;
@@ -32,6 +32,9 @@ const LLM = identity.llm || {};
 
 // ===== 飞书推送 =====
 async function getFeishuToken() {
+  if (!FEISHU.appSecret) {
+    throw new Error('缺少 FEISHU_APP_SECRET——已不再支持文件内联，请写入 .env 或环境变量');
+  }
   if (_feishuToken) return _feishuToken;
   return new Promise((resolve) => {
     const payload = JSON.stringify({ app_id: FEISHU.appId, app_secret: FEISHU.appSecret });
