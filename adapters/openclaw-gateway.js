@@ -50,10 +50,26 @@ function resolveGatewayAddr() {
 const DEFAULT_TIMEOUT_MS = parseInt(process.env.A2A_BRIDGE_INJECT_TIMEOUT_MS || '', 10) || 5 * 60 * 1000;
 const MAX_INJECT_TIMEOUT_MS = 15 * 60 * 1000;
 
-/** 主 agent 拒绝执行的关键词（T4 拒绝权检测） */
+/** 主 agent 拒绝执行的关键词（T4 拒绝权检测）
+ * [2026-09-15] 修「裸词误判」：原先对整个回复全域匹配「拒绝」等裸词，
+ *   导致**执行成功**的回执里出现统计数字（如「任务总数 466（完成 452 / 拒绝 4）」）
+ *   被误判为拒绝 → 假阴性 target_refused（恺实例 09-14/09-15 实测踩到）。
+ *  改法（与恺侧修复对齐）：
+ *    ① 只扫**开头 300 字窗口**（真拒绝都在开头，统计数字/长报告不会误伤）
+ *    ② **语式化**——「拒绝/无法 + 动作词」，而非裸词
+ *    ③ **显式标记优先**（⛔❌🚫 开头行直接判拒绝）
+ */
+const REFUSAL_HEAD_CHARS = 300;
 const REFUSAL_PATTERNS = [
-  /(?:拒绝|不能执行|无法执行|不会执行|无权|不允许|不盲从|超出.*能力|无法完成|抱歉.*不能)/,
-  /(?:declin|refus|can'?t execute|cannot execute|not allowed|unauthorized)/i,
+  /(?:^|\n)[\s>*#\-]*[⛔❌🚫]/,                                        // 显式拒绝标记（优先）
+  /(?:拒绝|婉拒|不予)(?:执行|受理|接受|处理|承接|响应)/,               // 语式化：拒绝 + 动作
+  /(?:不能|无法|不会|不便)(?:执行|受理|接受|处理|完成|承接)/,
+  /(?:无权|没有权限|不允许|不具备).{0,8}(?:执行|处理|受理|操作)/,
+  /(?:超出|超越).{0,6}(?:能力|权限|职责|范围)/,
+  /(?:抱歉|对不起|不好意思)[，,、\s].{0,12}(?:不能|无法|不便|不会|拒绝)/,
+  /(?:declin|refus)\w*\s*(?:to\s+)?(?:execute|perform|handle|the\s+(?:task|request|delegation))/i,
+  /(?:can'?t|cannot|unable\s+to)\s+execute/i,
+  /(?:not\s+allowed|unauthorized|out\s+of\s+scope)/i,
 ];
 
 function resolveToken() {
@@ -86,10 +102,12 @@ function buildPrompt(envelope, taskId) {
 
 /**
  * 检测主 agent 回复是否包含拒绝意图
+ * [2026-09-15] 只扫开头窗口（见 REFUSAL_PATTERNS 注释）：拒绝在开头，统计数字不在
  */
 function detectRefusal(content) {
   if (!content) return false;
-  return REFUSAL_PATTERNS.some((re) => re.test(content));
+  const head = String(content).slice(0, REFUSAL_HEAD_CHARS);
+  return REFUSAL_PATTERNS.some((re) => re.test(head));
 }
 
 /**
