@@ -67,3 +67,9 @@ a2a-v5.env
 *.bak
 *.bak.*
 known-agents.json
+
+# config/security/*-aid.json — 各 agent 的 AID 文档（含内网 endpoint / 内网 IP）
+# 9/14 若兰红线 P-1 · 卫生债清理
+# 仓里留 <slug>-aid.example.json 模板；实例启动时由 setup-handshake.sh 生成实例专属 aid.json
+# 注意：.pem 私钥已在更上方的 config/security/*.pem 屏蔽
+config/security/*-aid.json

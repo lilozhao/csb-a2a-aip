@@ -1,0 +1,18 @@
+{
+  "csb_version": "1.0",
+  "agent_id": "<YOUR_AGENT_NAME>@<YOUR_HOST>:3100",
+  "name": "<YOUR_AGENT_NAME>",
+  "emoji": "<YOUR_AGENT_EMOJI>",
+  "description": "<YOUR_AGENT_DESCRIPTION>",
+  "public_key": {
+    "crv": "Ed25519",
+    "x": "<BASE64URL_PUBLIC_KEY_X>",
+    "kty": "OKP",
+    "kid": "<YOUR_KEY_ID>"
+  },
+  "endpoint": "http://<YOUR_HOST>:3100/a2a/json-rpc",
+  "created_at": "<ISO_TIMESTAMP>",
+  "expires_at": "<ISO_TIMESTAMP>",
+  "trust_level": "L0",
+  "signature": "<BASE64_ED25519_SIGNATURE>"
+}
