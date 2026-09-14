@@ -60,6 +60,10 @@ const REASON = Object.freeze({
   CONFIRM_TIMEOUT: 'confirm_timeout',         // L3 确认超时（阿昭：超时降级=拒绝）
   TARGET_REFUSED: 'target_refused',           // 被委托方主会话拒绝（T4 拒绝权）
   BRIDGE_UNAVAILABLE: 'bridge_unavailable',   // 桥接不可用（走 P0 诚实指路）
+  // [P2 / 2026-09-14] 新增枚举值：补全 reason 分档（墨白工单 P2）
+  WINDOW_EXPIRED: 'window_expired',           // 窗口到期（语义上独立于 confirm_timeout·后者是 confirm 实际超时）
+  EXECUTED: 'executed',                       // 委托真正执行完成（副作用已验证）
+  NO_SIDE_EFFECT: 'no_side_effect',           // 委托跳成功但没产生副作用（marker != nonce）
 });
 
 /** 默认配置 */
@@ -354,10 +358,29 @@ async function handleInbound(msg, ctx) {
     if (result && result.ok === false) {
       throw new Error(result.error || 'inject 返回失败');
     }
+    // [P2 / 2026-09-14] noSideEffect 检查：injectIsolated 跳成功但没产生 marker → 报告 no_side_effect（不算 executed）
+    // 工单 P2: "拿不到证据就 failed(no_side_effect)"
+    if (result && result.noSideEffect === true) {
+      const sideEffect = result.artifact && result.artifact.sideEffect;
+      const detail = `注入跳成功但未产生有效副作用（sideEffect=${sideEffect || 'unknown'}，marker=${result.artifact?.expectedMarker || 'unset'}）`;
+      console.log(`[P2-NO-SIDE-EFFECT] taskId=${taskId} sideEffect=${sideEffect} reason=no_side_effect`);
+      const receipt = buildFailureReceipt({
+        delegator: senderLabel, scope: envelope.scope, startedAt,
+        reason: REASON.NO_SIDE_EFFECT, detail,
+      });
+      await _recordEvidence(ctx, {
+        action: 'no_side_effect',
+        subject: ctx.sender,
+        evidence: { ref: taskId, detail: `scope=${envelope.scope}; sideEffect=${sideEffect}` },
+        note: '执行跳成功但无副作用证据',
+      });
+      return { kind: 'rejected', receipt, envelope };
+    }
     const receipt = buildReceipt({
       delegator: senderLabel, scope: envelope.scope, startedAt,
       result: {
         status: 'completed',
+        reason: REASON.EXECUTED, // [P2 / 2026-09-14] 显式 reason=executed
         summary: result?.summary || '主会话执行完成',
         artifact: result?.artifact || null,
       },

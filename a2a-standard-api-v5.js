@@ -185,7 +185,9 @@ class A2AStandardAPI {
 
   async _sendMessage(params) {
     if (!params?.message) return { error: 'InvalidParams', details: 'Missing message field' };
-    if (!params.message.role || !params.message.parts) return { error: 'InvalidParams', details: 'Message must have role and parts' };
+    if (!params.message.parts) return { error: 'InvalidParams', details: 'Message must have parts' };
+    // [P3-3 / 2026-09-14] 兼容：message 无 role 时默认 user（若兰侧 9/14 07:34 后偶尔漏发 role）
+    if (!params.message.role) params.message.role = 'user';
 
     const msg = params.message;
     const returnImmediately = params.configuration?.returnImmediately === true;
@@ -214,7 +216,19 @@ class A2AStandardAPI {
     this.taskStore.addHistory(task.id, { role: msg.role, parts: msg.parts, messageId: msg.messageId || `msg_${Date.now()}` });
     this.taskStore.updateTaskStatus(task.id, TASK_STATE.SUBMITTED, 'Task created');
 
-    if (returnImmediately) return { task: this.taskStore.getTask(task.id) };
+    // [P3-1 / 2026-09-14] returnImmediately 不再卡 SUBMITTED：仍走 _processTask，仅不等响应体
+    //   原行为：returnImmediately=true 时直接返回（task 永远 SUBMITTED）
+    //   修复：仍调 _processTask，但响应提前返回（fire-and-forget，状态机会推进）
+    if (returnImmediately) {
+      // 启动后台处理（不 await）
+      setImmediate(() => {
+        this._processTask(task.id, msg, taskMetadata).catch((e) => {
+          console.error(`[P3-1] returnImmediately 后台处理出错 taskId=${task.id}:`, e.message);
+          this.taskStore.updateTaskStatus(task.id, TASK_STATE.FAILED, e.message);
+        });
+      });
+      return { task: this.taskStore.getTask(task.id) };
+    }
 
     // 实际处理 (外部注入或桩)
     this.taskStore.updateTaskStatus(task.id, TASK_STATE.WORKING, 'Processing');
@@ -420,6 +434,8 @@ class A2AStandardAPI {
     //   根因：桥接只覆盖 delegation 信封，聊天消息此前主会话全程不知情（送达 ≠ 被感知）
     if (this._inbox) {
       try { this._inbox.record({ taskId, msg, metadata }); } catch { /* fail-safe：留痕失败不得反噬主链路 */ }
+      // [P3-2 / 2026-09-14] markSeen：_processTask 实际消费后标记该 taskId 为 seen=true（避免 inbox 永远 seen:false）
+      try { this._inbox.markSeen((e) => e.taskId === taskId); } catch { /* fail-safe */ }
     }
 
     // 🚀 BRIDGE: delegation 信封 → 主会话桥接（RFC v0.2 · M2）
