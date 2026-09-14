@@ -9,7 +9,9 @@ const https = require('https');
 // 飞书配置 - 请通过环境变量设置
 const FEISHU_WEBHOOK = process.env.FEISHU_WEBHOOK_URL;
 const FEISHU_APP_ID = process.env.FEISHU_APP_ID || 'cli_a91c57cddd38dcd4';
-const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '1sCYfsC4c6kvXJQURQuD1lkLNzitWQyD';
+// 2026-09-14 密钥轮换：不再内联 App Secret（原明文已进远端仓库，须在飞书后台重置）
+// 来源：本机 .env（已 gitignore，chmod 600）或环境变量；缺失时快速失败
+const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
 const FEISHU_GROUP_ID = process.env.FEISHU_GROUP_ID || 'oc_4427768d0798b7545d4fb07b7518e710';
 
 let cachedAccessToken = null;
@@ -19,6 +21,9 @@ let tokenExpireTime = 0;
  * 获取飞书 access_token
  */
 async function getAccessToken() {
+  if (!FEISHU_APP_SECRET) {
+    throw new Error('缺少 FEISHU_APP_SECRET——已不再支持文件内联，请写入 .env 或环境变量');
+  }
   if (cachedAccessToken && Date.now() < tokenExpireTime) {
     return cachedAccessToken;
   }
