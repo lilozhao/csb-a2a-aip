@@ -134,6 +134,12 @@ function validateEnvelope(msg) {
       task: d.task || d.description || d.prompt || null,
       delegator: d.delegator || null,
       delegationId: d.id || null,
+      // [P1 / 2026-09-14] isolated 路径透传：避免 validateEnvelope 丢字段导致 injectIsolated 拿不到 expectedMarker/nonce
+      isolated: d.isolated === true,
+      command: d.command || d.target,
+      expectedMarker: d.expectedMarker || null,
+      nonce: d.nonce || d.expectedNonce || null,
+      workingDir: d.workingDir || null,
     },
   };
 }
