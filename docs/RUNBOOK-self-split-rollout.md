@@ -2,8 +2,8 @@
 
 > **谁用**：把跑 `csb-a2a-aip` 的实例迁到新 master（含 `a992bf4` 对外地址修复 + 拆 self + identity 模板）。
 > **怎么用**：一台一台来；每步有**通过判据**，不过就停手。
-> **首次实战**：小虾（2026-09-14，五步闭环 ✅）
-> 若兰 🌸 · v1.0
+> **实战**：小虾（2026-09-14，A2A 五步闭环 ✅）· 恺（2026-09-14，宿主人工执行 S0–S5 ✅）
+> 若兰 🌸 · v1.1（2026-09-14 · 并入恺现场三条坑 → 坑 #1 补充 + 坑 #5/#6 新增）
 
 ---
 
@@ -22,14 +22,25 @@
 
 ## 1. 五步 SOP
 
-### S1 · 备份 + 取证（L3）
+### S1 · 备份 + 仓外暂存 + 取证（L3）
 ```
-mkdir -p ~/.openclaw/workspace/backups && tar czf ~/.openclaw/workspace/backups/csb-a2a-aip-pre-migrate-$(date +%Y%m%d%H%M%S).tar.gz -C ~/.openclaw/workspace csb-a2a-aip --exclude=node_modules
+# ① 仓库外暂存目录（保命：tarball / .keep / 本地独有脚本都放这 —— 见坑 #5/#6）
+STASH=~/.openclaw/backups/pre-migrate-$(date +%Y%m%d%H%M%S); mkdir -p "$STASH"
+
+# ② 本机忽略（零 diff，防 git add -A 卷入 .keep/大件 —— 见坑 #6）
+printf '%s\n' 'backups/' '*keep-*' '*.bak*' >> .git/info/exclude
+
+# ③ 本地独有文件先拷仓外（见坑 #5：reset --hard 会删它们）
+cp -p start-*.sh log-timestamp.js known-agents.json "$STASH"/ 2>/dev/null
+cp -pr config/security "$STASH"/config-security 2>/dev/null
+
+# ④ 取证
+tar czf "$STASH"/csb-a2a-aip-pre-migrate.tar.gz -C ~/.openclaw/workspace csb-a2a-aip --exclude=node_modules
 git log --oneline origin/master..HEAD     # 本地独有提交
 git status -sb ; git diff --stat          # 脏文件
 ls -la identity.json*                     # 身份文件
 ```
-**通过判据**：tarball 生成；本地提交/脏文件清单拿到。
+**通过判据**：tarball 生成且**落在仓外**；本地提交/脏文件清单拿到；本地独有脚本已暂存。
 **失败**：不继续。
 
 > ⚠️ 若实例用 `A2A_IDENTITY_PATH` 指向 **非** `identity.json` 的身份文件（如 `identity.kai.json`），**必须连带保命**——它们往往也**被跟踪**，`reset --hard` 会一并冲掉。
@@ -42,6 +53,7 @@ git add -A && git commit -m "backup: 迁移前本地状态"            # 脏文�
 git branch backup/pre-migrate-$(date +%Y%m%d%H%M%S)             # 本地状态留档
 git fetch origin && git reset --hard origin/master
 mv identity.json.keep identity.json                             # 回位
+cp -p "$STASH"/start-*.sh . 2>/dev/null; cp -p "$STASH"/log-timestamp.js . 2>/dev/null   # 坑 #5 还原本地独有文件
 grep -o '"publicHost"' identity.json || echo MISSING_PUBLICHOST # 缺就补本机地址
 git grep '"self"' config/agents.json || echo OK_SELF_GONE
 ```
@@ -76,11 +88,12 @@ bash start-<name>.sh ; sleep 3
 
 ---
 
-## 2. 四坑（写死，别踩）
+## 2. 六坑（写死，别踩）
 
 ### 坑 #1｜`server.pid` 陈旧 → 重启没生效 / 杀错进程
 - 现象：启动脚本按 pid 文件停进程，但 pid 文件内容过时（小虾：记 4356、实跑 221）。
-- 处置：重启后**必须**核对 `ps -eo pid,etimes` —— **新 PID + etimes 很小**才算真重启；必要时手工 `kill` 旧 PID。
+- **恺补充**：旧进程若**不先 kill**，`start-*.sh` 按 pidfile/端口判据直接 `skip` → S3 会拿**旧 PID** 做**假验收**（看着「起来了」，其实是老进程）。
+- 处置：重启前**先 kill 旧进程**；重启后**必须**核对 `ps -eo pid,etimes` —— **新 PID + etimes 很小**才算真重启；必要时手工 `kill` 旧 PID。
 
 ### 坑 #2｜`export` 顺序 → 子进程拿不到 Key（会 401）
 - 现象：把 `export A2A_LLM_API_KEY=...` 追加在启动命令**之后** → `nohup node` 起来的进程没有该 env。
@@ -95,6 +108,16 @@ bash start-<name>.sh ; sleep 3
 - **以恺为例**：它的 `A2A_IDENTITY_PATH=identity.kai.json`，该文件**被跟踪** → 不保命就会被冲掉。
 - 处置：`reset --hard` **之前**把 `identity*.json` **全部**拷成 `.keep-<ts>`，之后 `mv` 回位；本地提交先固化到 `backup/pre-migrate-*` 分支。
 - 规则侧：`.gitignore` 用 **`/identity*` + `!/identity.json.example`**（根目录全变体；别用 `identity*`，否则会误伤 `src/identity.js`）。已修 `csb-a2a-aip/.gitignore`。
+
+### 坑 #5｜本地独有文件被 `reset --hard` 冲掉（连带删掉启动依赖）
+- 现象：本地独有的 `start-<name>.sh`、`log-timestamp.js`、`known-agents.json`、`config/security/*.json`（本机 AID）等**上游没有**；`git reset --hard origin/master` 后直接从磁盘消失，而 S3 正靠 `start-<name>.sh` 起服务 → 起不来。
+- 恺实证：上述本地脚本 + 6 个 AID 配置全中招。
+- 处置：迁前**拷到仓库外**（`~/.openclaw/backups/pre-migrate-<ts>/`），迁后还原 + 纳入 `.git/info/exclude`（本机生效、零 diff）→ 之后 `git status` 干净，将来 merge 也不再冲突。
+
+### 坑 #6｜`.keep`/大件被 `git add -A` 卷入冻结提交 → 还原扑空
+- 现象：若 `.gitignore` 只忽略 `identity.json`（未覆盖 `identity*`），`git add -A` 会把刚建的 `identity*.json.keep-*` **和迁移 tarball（可达 20MB+）** 一起卷进「S2 冻结提交」；紧接着 `git reset --hard` 把它们**从磁盘删掉** → 保命文件全没、还原步骤扑空、`identity.<名>.json` 彻底丢。
+- 处置：**迁前**就写 `.git/info/exclude` 忽略 `backups/`、`*keep-*`、`*.bak*`（本机、零 diff、不污染仓库），并把 tarball + `.keep` + 本地脚本拷到**仓库外**；别等 `git add -A` 之后才发现。
+- 规则侧配套：`csb-a2a-aip/.gitignore` 已是 `/identity*` + `!identity.json.example`（坑 #3/#4 已修）。
 
 ---
 
