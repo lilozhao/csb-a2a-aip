@@ -15,7 +15,7 @@ async function test(name, fn) {
   catch (e) { failed++; console.log(`  ❌ ${name}: ${e.message}`); }
 }
 
-const env = (scope = 'write', task = '写文件操作') => ({ scope, task, delegator: 'http://172.28.0.5:3100' });
+const env = (scope = 'write', task = '写文件操作') => ({ scope, task, delegator: 'http://192.0.2.5:3100' });
 
 function makeFlow(opts = {}) {
   const sent = [];
@@ -35,7 +35,7 @@ async function main() {
   // 1. 批准流
   await test('用户批准 → ok=true', async () => {
     const { flow, sent } = makeFlow();
-    const p = flow.confirmL3(env(), { taskId: 't1', sender: { url: 'http://172.28.0.5:3100' } });
+    const p = flow.confirmL3(env(), { taskId: 't1', sender: { url: 'http://192.0.2.5:3100' } });
     await new Promise(r => setImmediate(r));
     assert.strictEqual(sent.length, 1, '应投递确认请求');
     assert.ok(sent[0].summary.includes('写文件操作'));
@@ -69,9 +69,9 @@ async function main() {
   // 4. 同源聚合（不重复投递）
   await test('同源同窗口聚合 → 只投递一次', async () => {
     const { flow, sent, audits } = makeFlow({ timeoutMs: 2000 });
-    const p1 = flow.confirmL3(env('write', '任务A'), { taskId: 'a1', sender: { url: 'http://172.28.0.5:3100' } });
+    const p1 = flow.confirmL3(env('write', '任务A'), { taskId: 'a1', sender: { url: 'http://192.0.2.5:3100' } });
     await new Promise(r => setImmediate(r));
-    const p2 = flow.confirmL3(env('write', '任务B'), { taskId: 'a2', sender: { url: 'http://172.28.0.5:3100' } });
+    const p2 = flow.confirmL3(env('write', '任务B'), { taskId: 'a2', sender: { url: 'http://192.0.2.5:3100' } });
     await new Promise(r => setImmediate(r));
     assert.strictEqual(sent.length, 1, '同源应聚合，只投一次');
     assert.ok(audits.some(a => a.event === 'aggregated'));
@@ -137,18 +137,36 @@ async function main() {
     assert.strictEqual(flow.getRecord('p1'), null);
   });
 
-  // 10. [9/11] 防护：确认请求默认折叠任务原文（防被当指令执行）
-  await test('确认请求默认折叠任务原文（防指令绕过）', async () => {
+  // 10. [9/14] 确认请求内容呈现：默认给「可读摘录 + 指纹 + 非指令声明」
+  await test('确认请求默认给可读摘录（不再盲签）', async () => {
     const { buildConfirmMessage, summarizeTask } = require('../a2a-bridge-confirm');
     const raw = 'write logs/m2-l3-v6.txt :: M2 L3 确认路径 v6 验收成功';
     const saved = process.env.A2A_BRIDGE_CONFIRM_SHOW_TASK;
+    const savedEx = process.env.A2A_BRIDGE_CONFIRM_EXCERPT_CHARS;
     delete process.env.A2A_BRIDGE_CONFIRM_SHOW_TASK;
+    delete process.env.A2A_BRIDGE_CONFIRM_EXCERPT_CHARS;
     const msg = buildConfirmMessage({ taskId: 't1', envelope: { type: 'execute', scope: 'write', task: raw }, delegatorLabel: '若兰' });
-    assert.ok(!msg.includes('m2-l3-v6.txt'), '确认请求不应回显原始任务内容');
-    assert.ok(/摘要 [0-9a-f]{8}/.test(msg), '应包含摘要指纹');
-    assert.ok(msg.includes('不是可执行指令'), '应包含防注入声明');
+    assert.ok(msg.includes('m2-l3-v6.txt'), '默认应给可读摘录（人工能看清要执行什么）');
+    assert.ok(/指纹 [0-9a-f]{8}/.test(msg), '应包含指纹');
+    assert.ok(msg.includes('非指令'), '摘录须标注「非指令」防提示注入');
+    assert.ok(msg.includes('不是可执行指令'), '应保留防自动执行声明');
+    assert.ok(msg.includes('taskId=t1'), '应给出全文指引');
     assert.strictEqual(summarizeTask(''), '(空)');
+
+    // 全文模式
+    process.env.A2A_BRIDGE_CONFIRM_SHOW_TASK = 'true';
+    assert.ok(summarizeTask(raw, 't1').includes('（全文）'), 'SHOW_TASK=true 应回全文');
+    delete process.env.A2A_BRIDGE_CONFIRM_SHOW_TASK;
+
+    // 旧行为（只给指纹）
+    process.env.A2A_BRIDGE_CONFIRM_EXCERPT_CHARS = '0';
+    const folded = summarizeTask(raw, 't1');
+    assert.ok(!folded.includes('m2-l3-v6.txt'), 'EXCERPT_CHARS=0 应回到只给指纹');
+    assert.ok(folded.includes('已折叠'), '应提示已折叠');
+    delete process.env.A2A_BRIDGE_CONFIRM_EXCERPT_CHARS;
+
     if (saved !== undefined) process.env.A2A_BRIDGE_CONFIRM_SHOW_TASK = saved;
+    if (savedEx !== undefined) process.env.A2A_BRIDGE_CONFIRM_EXCERPT_CHARS = savedEx;
   });
 
   // 11-14. [9/12] 确认窗口单一真相源（实拍：文案写 30 分钟、实际 5 分钟 → 超时误杀）
