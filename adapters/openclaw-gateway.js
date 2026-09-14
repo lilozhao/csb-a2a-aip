@@ -110,10 +110,32 @@ async function injectIsolated(envelope, taskId, opts = {}) {
   const timeoutMs = (envelope && envelope.timeoutMs) || 30000;
 
   // 白名单：含 marker / nonce 字样 + 路径限制
+  // [P0-WL / 2026-09-14] 若兰批注指出：L3 测试命令是 `echo "<nonce>" > /tmp/<白名单文件名>`
+  //   形态（原工单 #P0 隐含支持，但逻辑隐式，未明确记载 → 后续开发者可能会加 `>` 到拒绝名单而不知道会坏 L3）。
+  //   修法：显式支持唯一允许的形态 "echo <字面量> > /tmp/<白名单文件名>"，RHS 路径 ∈ safePaths。
+  //   同时：保留旧 marker/nonce 字样 + safePaths 逻辑向后兼容。
   const safePaths = ['/tmp/', workingDir + '/', '/home/node/.openclaw/workspace/'];
-  const allowed = (cmd.includes('marker') || cmd.includes('nonce')) &&
-    safePaths.some(p => cmd.includes(p)) &&
-    !cmd.match(/\brm\s+-rf\b/i) && !cmd.match(/\bcurl\s+/i) && !cmd.match(/\bwget\b/i);
+  // 危险操作黑名单（即使满足下面三个条件也不能逃）
+  const DANGER_RE = /\b(rm\s+-rf|curl\s+|wget\s+|sudo\s+|chmod\s+|chown\s+)\b/i;
+  // 隔离 token 安全检查：不允许 `$()`（命令替换）、反引号、`;`（多语句）、追加重定向 `>>`、管道 `|`、重定向输入 `<`
+  //   `&&` / 单次 `>` 重定向 **允许**（若兰 L3 测试用例 `echo "<nonce>" > /tmp/<marker>` 依赖此）
+  //   （这些都是主会话允许但隔离子会话需要额外审查的）
+  const ISOLATED_FORBIDDEN_RE = /(\$\(|`|\$\{|;|\||>>|<)/;
+  // L3 测试经典形态：echo "<字面量>" > /tmp/<白名单文件名>
+  const ECHO_REDIRECT_RE = /^echo\s+"([^"$`;&|<>]+)"\s*>\s*(\/[^\s"$`;&|<>]+)\s*$/;
+  const matchEcho = cmd.match(ECHO_REDIRECT_RE);
+  let isEchoRedirectSafe = false;
+  if (matchEcho) {
+    const rPath = matchEcho[2];
+    // RHS 必须在 safePaths 之一里（以 /tmp/ 或 workingDir/ 开头）
+    isEchoRedirectSafe = safePaths.some(p => rPath === p.replace(/\/$/, '') || rPath.startsWith(p));
+  }
+  // 向后兼容：marker / nonce 字样 + safePaths（旧测试走这条）
+  const legacyAllowed = (cmd.includes('marker') || cmd.includes('nonce')) &&
+    safePaths.some(p => cmd.includes(p));
+
+  const allowed = !DANGER_RE.test(cmd) && !ISOLATED_FORBIDDEN_RE.test(cmd) &&
+    (isEchoRedirectSafe || legacyAllowed);
 
   if (!allowed) {
     console.log(`[INJECT-EXEC] taskId=${taskId} REJECTED cmd 包含危险关键字或路径不在白名单`);

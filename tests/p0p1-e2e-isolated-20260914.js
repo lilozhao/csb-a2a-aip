@@ -207,7 +207,7 @@ async function e2e_no_side_effect_mismatch() {
   try { actualContent = fs.readFileSync(marker, 'utf8').trim(); } catch (e) {}
   console.log('  marker actual content:', actualContent);
   
-  return result.kind === 'executed' && result.receipt.receipt && result.receipt.receipt.result && result.receipt.receipt.result.artifact && result.receipt.receipt.result.artifact.sideEffect === 'mismatch';
+  return result.kind === 'rejected' && result.receipt.receipt && result.receipt.receipt.result && result.receipt.receipt.result.reason === 'no_side_effect';
 }
 
 (async () => {
