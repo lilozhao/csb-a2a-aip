@@ -366,7 +366,7 @@ const standardAPI = new A2AStandardAPI({
             isolated: process.env.A2A_BRIDGE_ISOLATED_DEFAULT === 'true' || envelope?.isolated === true
           }),
         confirmL3: async (envelope, c) =>
-          confirm.confirmL3(envelope, { taskId: c.taskId, sender: c.sender }, { to: bridgeMainTo }),
+          confirm.confirmL3(envelope, { taskId: c.taskId, sender: c.sender, taskTs: envelope?.requestedAt }, { to: bridgeMainTo }),
         recordDegrade: async (evt) => {
           await audit.recordDegradeEvent({ ...evt, taskId });
         },

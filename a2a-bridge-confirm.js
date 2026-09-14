@@ -364,12 +364,17 @@ async function confirmL3(envelope, ctx = {}, opts = {}) {
   // 实测症状：用户已回复，轮询 5 分钟仍读不到（读取通道本身正常）。
   // [P0-2 / 2026-09-14] 发送时间：作为 sinceMs 下界，避免旧消息误命中
   const sentAt = Date.now();
+  // [P0-3 / 2026-09-14] 委托到达时间（task.ts）：作为 sinceMs 下界，覆盖“墨白提前确认”的场景。
+  //   修复后墨白在 send 后补回“确认 #<tid>”仍能命中（因为 sinceMs < 墨白消息的 ts）。
+  //   默认 fall back 到 sentAt（保持原逻辑）。
+  const taskTs = opts.taskTs || (envelope && envelope.requestedAt) || null;
+  const sinceMsDefault = (typeof taskTs === 'number' && taskTs > 0) ? taskTs : sentAt;
   const read = opts.read || ((tid) => {
     // [P0-1 / 2026-09-14] [CONFIRM-READ] 调试日志：记录读取 sessionKey、limit、sinceMs、查找标记
     const to = opts.to || null;
-    const sinceMs = sentAt; // 只看 confirm 发送后的消息（避免旧消息误命中）
+    const sinceMs = sinceMsDefault; // 委托到达时间（覆盖了“提前确认”场景）
     const remaining = Math.max(0, (sentAt + timeoutMs) - Date.now());
-    console.log(`[CONFIRM-READ] taskId=${tid} sessionKey=main to=${to || '(unset, will use cfg.mainTo)'} limit=100 sinceMs=${sinceMs} (sentAt, 仅看 send 后的消息) marker='桥接结果 #${tid}' OR '确认 #${tid}' remainingMs=${remaining}`);
+    console.log(`[CONFIRM-READ] taskId=${tid} sessionKey=main to=${to || '(unset, will use cfg.mainTo)'} limit=100 sinceMs=${sinceMs} (taskTs or sentAt) marker='桥接结果 #${tid}' OR '确认 #${tid}' remainingMs=${remaining}`);
     return adapter.fetchResult(tid, { to: opts.to, sessionKey: 'main', sinceMs, limit: 100 });
   });
 
