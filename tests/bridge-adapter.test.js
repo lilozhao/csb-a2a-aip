@@ -145,6 +145,23 @@ test('env 优先于 identity.json（可临时覆盖）', () => {
   }
 });
 
+test('A2A_IDENTITY_PATH 生效（与 server_v5 同源 · 2026-09-14 修复）', () => {
+  const tmp = path.join(__dirname, '..', '.test-identity-path.json');
+  const oldPath = process.env.A2A_IDENTITY_PATH;
+  const oldTo = process.env.A2A_BRIDGE_MAIN_TO; delete process.env.A2A_BRIDGE_MAIN_TO;
+  fs.writeFileSync(tmp, JSON.stringify({ bridge: { mainTo: 'ou_from_identity_path', channel: 'feishu' } }));
+  process.env.A2A_IDENTITY_PATH = tmp;
+  adapter._resetIdentityBridgeCache();
+  try {
+    assert.strictEqual(adapter.resolveConfig().mainTo, 'ou_from_identity_path', 'A2A_IDENTITY_PATH 未生效（仍读 identity.json）');
+  } finally {
+    adapter._resetIdentityBridgeCache();
+    try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+    if (oldPath) process.env.A2A_IDENTITY_PATH = oldPath; else delete process.env.A2A_IDENTITY_PATH;
+    if (oldTo) process.env.A2A_BRIDGE_MAIN_TO = oldTo;
+  }
+});
+
 test('resolveConfig 含 channel 字段（confirm 投递依赖）', () => {
   const cfg = adapter.resolveConfig();
   assert.ok('channel' in cfg, 'resolveConfig 应返回 channel');

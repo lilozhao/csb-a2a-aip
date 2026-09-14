@@ -344,7 +344,11 @@ function identityBridge() {
   if (_identityBridgeCache !== undefined) return _identityBridgeCache;
   _identityBridgeCache = { mainTo: '', channel: '' };
   try {
-    const idPath = path.join(__dirname, '..', 'identity.json');
+    // 与 server_v5.js:62 保持**同一读取源**（2026-09-14 修复）：
+    //   实例可用 A2A_IDENTITY_PATH 指定身份文件（如 identity.kai.json）；
+    //   此前这里硬编码 identity.json → 与主链路读的不是同一份 →
+    //   表现为“桥配置丢了”（2026-09-11 / 09-12 / 09-14 三次同因）。
+    const idPath = process.env.A2A_IDENTITY_PATH || path.join(__dirname, '..', 'identity.json');
     const id = JSON.parse(fs.readFileSync(idPath, 'utf-8'));
     if (id && id.bridge) {
       _identityBridgeCache = {
