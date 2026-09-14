@@ -32,9 +32,12 @@ ls -la identity.json*                     # 身份文件
 **通过判据**：tarball 生成；本地提交/脏文件清单拿到。
 **失败**：不继续。
 
+> ⚠️ 若实例用 `A2A_IDENTITY_PATH` 指向 **非** `identity.json` 的身份文件（如 `identity.kai.json`），**必须连带保命**——它们往往也**被跟踪**，`reset --hard` 会一并冲掉。
+
 ### S2 · 冻结 + 收敛（L3）
 ```
 cp -p identity.json identity.json.keep                          # 保命（见坑 #4）
+for f in identity*.json; do [ -f "$f" ] && cp -p "$f" "$f.keep-$(date +%Y%m%d%H%M%S)"; done   # 全部身份变体保命（含 A2A_IDENTITY_PATH 指向的那份，如 identity.<名>.json）
 git add -A && git commit -m "backup: 迁移前本地状态"            # 脏文件固化
 git branch backup/pre-migrate-$(date +%Y%m%d%H%M%S)             # 本地状态留档
 git fetch origin && git reset --hard origin/master
@@ -88,8 +91,10 @@ bash start-<name>.sh ; sleep 3
 - 处置：规则要覆盖 `identity.json*`（并 `!identity.json.example` 保留模板）；本地文件另加 `.git/info/exclude`。已修：`csb-a2a-aip/.gitignore`@`81f1b1c` + 协议主仓 checker@`2ca3a51`。
 
 ### 坑 #4｜本地 ahead + 身份文件 → `reset --hard` 会删身份
-- 现象：本地有独有提交时 `pull --ff-only` 被拒；而 `reset --hard` 会把**被跟踪的** `identity.json`（内含 **bridge 段**，L3 确认靠它投递）一起删掉 → 断桥。
-- 处置：`reset --hard` **之前**先 `cp identity.json identity.json.keep`，之后 `mv` 回位；本地提交先固化到 `backup/pre-migrate-*` 分支。
+- 现象：本地有独有提交时 `pull --ff-only` 被拒；而 `reset --hard` 会把**被跟踪的** `identity*.json`（内含 **bridge 段**，L3 确认靠它投递）一起删掉 → 断桥。
+- **以恺为例**：它的 `A2A_IDENTITY_PATH=identity.kai.json`，该文件**被跟踪** → 不保命就会被冲掉。
+- 处置：`reset --hard` **之前**把 `identity*.json` **全部**拷成 `.keep-<ts>`，之后 `mv` 回位；本地提交先固化到 `backup/pre-migrate-*` 分支。
+- 规则侧：`.gitignore` 用 **`/identity*` + `!/identity.json.example`**（根目录全变体；别用 `identity*`，否则会误伤 `src/identity.js`）。已修 `csb-a2a-aip/.gitignore`。
 
 ---
 
