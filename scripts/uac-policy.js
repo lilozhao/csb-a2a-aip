@@ -92,11 +92,14 @@ switch (cmd) {
   case 'list': {
     const pol = tk.normalizePolicy(tk.readJsonSafe(POLICY) || tk.emptyPolicy());
     if (has('--json')) { console.log(JSON.stringify(pol, null, 2)); break; }
+    // [2026-09-15] 小虾建议：list 带缩略 x + kid，免得取证时还要开文件
+    const shortX = (jwk) => { const x = (jwk && jwk.x) || ''; return x ? `${x.slice(0, 10)}…${x.slice(-4)}` : '(无公钥)'; };
     console.log(`📋 策略: ${POLICY}`);
     console.log(`   enabled=${pol.enabled}  peers=${pol.peers.length}`);
     for (const p of pol.peers) {
       const flags = [p.revokedAt ? 'REVOKED' : null, (p.expiresAt && Date.now() > Date.parse(p.expiresAt)) ? 'EXPIRED' : null].filter(Boolean).join(',');
       console.log(`   - ${p.agentId} · caps=[${(p.capabilities || []).join(',')}] · scopes=[${(p.scopes || []).join(',')}]${p.rate ? ` · rate=${p.rate.max}/${p.rate.windowSeconds}s` : ''}${p.expiresAt ? ` · exp=${p.expiresAt}` : ''}${flags ? ` · ${flags}` : ''}`);
+      console.log(`     x=${shortX(p.userPublicKey)}${p.userPublicKey && p.userPublicKey.kid ? ` · kid=${p.userPublicKey.kid}` : ''} · 指纹=${(() => { try { return tk.formatThumbprint(tk.thumbprint(p.userPublicKey)); } catch { return '(不可算)'; } })()}`);
     }
     break;
   }
