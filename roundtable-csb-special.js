@@ -11,7 +11,7 @@ const { sendMessageWithContext } = require('./client-v2.js');
 
 // ===== 飞书配置 =====
 const FEISHU = {
-  appId: 'cli_a91c57cddd38dcd4',
+  appId: process.env.FEISHU_APP_ID || '',
   appSecret: process.env.FEISHU_APP_SECRET || '',
   groupId: 'oc_4427768d0798b7545d4fb07b7518e710',
 };

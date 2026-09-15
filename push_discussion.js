@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 
 // 飞书配置
-const FEISHU_APP_ID = process.env.FEISHU_APP_ID || 'cli_a87a1f558bf9500d';
+const FEISHU_APP_ID = process.env.FEISHU_APP_ID || '';
 const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET;
 const FEISHU_GROUP_ID = process.env.FEISHU_GROUP_ID || 'oc_4427768d0798b7545d4fb07b7518e710';
 
