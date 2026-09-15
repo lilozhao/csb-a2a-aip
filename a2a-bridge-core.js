@@ -332,8 +332,10 @@ async function handleInbound(msg, ctx) {
         note: 'UAC 免确认放行',
       });
     } else {
-      // 带了 UAC 但未放行 —— 可观测（不阻塞，继续走 L3）
-      console.log(`[UAC] taskId=${taskId} scope=${envelope.scope} not_hit reason=${(decision && decision.reason) || 'unknown'}`);
+      // 带了 UAC 但未放行 —— 可观测（不阻塞，继续走 L3）；带上 detail（如 agent_mismatch/expired）
+      const _r = (decision && decision.reason) || 'unknown';
+      const _d = decision && decision.detail ? ` detail=${decision.detail}` : '';
+      console.log(`[UAC] taskId=${taskId} scope=${envelope.scope} not_hit reason=${_r}${_d}`);
     }
   }
 

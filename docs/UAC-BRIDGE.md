@@ -128,13 +128,33 @@ node tests/bridge-core.test.js           # 回归 25/25
 - 相关环境变量：`A2A_BRIDGE_UAC`（总开关，默认 off）· `A2A_BRIDGE_UAC_POLICY`（策略路径，默认 `config/bridge-uac-policy.json`）
 - 回归测试：`bridge-core.test.js` **29/29**（含用例 8/9/10/11：命中放行 / 未命中回退 / 钩子抛错 fail-safe / 未装配行为不变）
 
-## 10. FAQ
+## 10. ⚠️ 最容易签错的一件事：`sub` 到底是谁
+
+**UAC 的 `sub` 是「发起方本尊」（替主人办事的 agent，如 若兰），不是接收方。**
+接收方在白名单里用 `restrictions.allowed_agents` 限定（可选）。
+
+```bash
+# ✅ 正确：一澜授权「若兰」代表他去办事；只对「小虾」有效
+node scripts/uac-issue.js --agent 若兰 --agents 小虾 --scopes shell --ttl 30m
+#                               ↑ sub=发起方      ↑ allowed_agents=接收方
+```
+
+**签错的后果**：接收方 `verifyUAC(expectedAgentId=发起方)` → `agent_mismatch` → **静默回退 L3**
+（不报错、不拒绝，只是「免确认没生效」——最难查的一类）。
+`uac-issue.js` 已加护栏：`--agent` 与 `--agents` 撞车时高声警告。
+
+排查：接收方日志里找 `[UAC] taskId=... not_hit reason=... detail=...`（P2 起 detail 也会打出来）。
+
+## 11. FAQ
 
 - **没登记策略会怎样？** 一切照旧（走 L3）。
 - **登记了但 `enabled:false`？** 照旧。
 - **发起方硬塞 UAC？** 接收方没登记/没开 → 照旧。
 - **对方 UAC 过期了？** 照旧走 L3（不是拒绝）。
 - **免确认会不会被滥用？** 受 capability 白名单 + 频次 + TTL + 可撤销 + 留痕五重约束。
+- **带了 UAC 却还是弹 L3？** 看接收方日志那行 `[UAC] ... not_hit reason=`：
+  `no_uac`（信封没带）/ `peer_not_registered`（没登记）/ `uac_invalid`（签名·sub·时效·重放之一，看 detail）/
+  `uac_scope_insufficient` / `no_capabilities_declared` / `capability_not_allowed` / `rate_exceeded` / `policy_disabled`。
 
 ---
 _相关：#L3-CONFIRM-UNAUTHORIZED-CHECKLIST.md · TRUST-EVIDENCE-WIRING.md_

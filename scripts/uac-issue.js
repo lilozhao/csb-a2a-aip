@@ -42,6 +42,14 @@ try { ttl = tk.parseTtl(arg('--ttl', '1h')); } catch (e) { die(e.message); }
 const agents = (arg('--agents', '') || '').split(',').map((s) => s.trim()).filter(Boolean);
 const restrictions = agents.length ? { allowed_agents: agents } : null;
 
+// [2026-09-15 踩坑护栏] sub 是**发起方本尊**（替主人办事的那个 agent）；allowed_agents 是**接收方**。
+// 若两者撞在一起，八成是签错了（实际踩到：sub 签成接收方 → 对方验签 agent_mismatch → 静静回退 L3）
+if (agents.includes(agent)) {
+  console.warn(`⚠️  --agent(sub)="${agent}" 与 --agents(allowed_agents) 相同 —— 可疑！\n` +
+    `    sub 应为**发起方本尊**（如 若兰），allowed_agents 为**接收方**（如 小虾）。\n` +
+    `    签错会导致对方验签 agent_mismatch，静默回退 L3（不报错，易漏）。`);
+}
+
 const { token, payload } = tk.issueUAC({ keyStore, user, agent, scopes, ttl, restrictions });
 
 const out = arg('--out', null);
