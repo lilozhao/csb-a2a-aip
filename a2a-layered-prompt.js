@@ -17,14 +17,29 @@
 const fs = require('fs');
 const path = require('path');
 
-// 默认上下文目录
+// 默认上下文目录（仓库内**通用模板**）
 const CONTEXTS_DIR = path.join(__dirname, 'a2a-contexts');
+
+/**
+ * 解析实际使用的上下文目录（优先级从高到低）：
+ *   1. 环境变量 A2A_CONTEXTS_DIR
+ *   2. <repo>/a2a-contexts/local/ （**实例专属**，已 gitignore —— 放你自己的身份）
+ *   3. <repo>/a2a-contexts/       （通用模板，不含任何实例名字）
+ * [2026-09-15] 新增本机制：仓库里曾将某实例(阿轩)名字写进 01/03，被其他实例拉取后
+ *   注入导致「回执自称阿轩」（恺踩到）——根因即上下文模板混入具体身份。
+ */
+function resolveContextsDir() {
+  if (process.env.A2A_CONTEXTS_DIR) return process.env.A2A_CONTEXTS_DIR;
+  const local = path.join(CONTEXTS_DIR, 'local');
+  try { if (fs.statSync(local).isDirectory()) return local; } catch { /* 无 local 目录 */ }
+  return CONTEXTS_DIR;
+}
 
 /**
  * 读取上下文文件，返回内容或默认值
  */
 function readContext(filename, defaultValue = '') {
-  const filepath = path.join(CONTEXTS_DIR, filename);
+  const filepath = path.join(resolveContextsDir(), filename);
   try {
     return fs.readFileSync(filepath, 'utf-8').trim();
   } catch {

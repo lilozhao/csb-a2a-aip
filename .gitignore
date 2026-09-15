@@ -83,3 +83,7 @@ config/bridge-uac-policy.json
 # 2026-09-14 补：identity.<名>.json（如 identity.kai.json，A2A_IDENTITY_PATH 指向的那份）也进不来 —— 恺 复验发现
 /identity*
 !/identity.json.example
+
+# 2026-09-15 身份串号修复：通用模板 vs 实例专属
+# 实例专属上下文只放本地（a2a-contexts/local/），禁止提交
+a2a-contexts/local/
