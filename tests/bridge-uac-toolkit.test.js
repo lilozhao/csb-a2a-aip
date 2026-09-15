@@ -132,5 +132,33 @@ t('端到端⑤: scope 不匹配（UAC 只授 shell，委托 read）→ 不放�
   assert.strictEqual(r.reason, 'uac_scope_insufficient');
 });
 
+// ── 锚钥复用 / 锚指纹（2026-09-15 加：阿轩「无锚钥」踩坑 → 默认复用既有用户钥）──
+const fsx = require('fs');
+const ANCHOR_PEM = path.join(__dirname, '..', '..', 'csb-security', 'data', 'yilan-user-key.pem');
+const ANCHOR_PUB = path.join(__dirname, '..', 'data', 'users', 'yilan-user-pub.json');
+const anchorJwk = JSON.parse(fsx.readFileSync(ANCHOR_PUB, 'utf8'));
+
+t('thumbprint: RFC 7638 指纹与既有锚钥一致', () => {
+  assert.strictEqual(tk.thumbprint(anchorJwk), '8lci3XPY1CVVX8EOOemYtqVPTpuPbZyV6gUizA1fLGk');
+});
+t('thumbprint: 缺 x 抛错；formatThumbprint 4 字符分组', () => {
+  assert.throws(() => tk.thumbprint({ kty: 'OKP' }));
+  assert.strictEqual(tk.formatThumbprint('abcdefgh'), 'abcd efgh');
+});
+t('importUserKeyFromPem: 公钥=锚钥，且签发的 UAC 能被锚公钥验签', () => {
+  const imported = tk.importUserKeyFromPem(ANCHOR_PEM, { kid: 'user-yilan' });
+  assert.strictEqual(imported.publicJwk.x, anchorJwk.x);
+  const { token } = tk.issueUAC({ keyStore: imported, user: 'user:yilan@csb', agent: '若兰', scopes: ['a2a.delegate:shell'], ttl: 600 });
+  const r = uacLib.verifyUAC(token, { userPublicKey: anchorJwk, expectedAgentId: '若兰' });
+  assert.strictEqual(r.valid, true);
+});
+t('无锚钥互斥: 新造钥签的 UAC 用锚公钥验签 → bad_signature', () => {
+  const fresh = tk.generateUserKey({ kid: 'unanchored' });
+  const { token } = tk.issueUAC({ keyStore: fresh, user: 'user:yilan@csb', agent: '若兰', scopes: ['a2a.delegate:shell'], ttl: 600 });
+  const r = uacLib.verifyUAC(token, { userPublicKey: anchorJwk, expectedAgentId: '若兰' });
+  assert.strictEqual(r.valid, false);
+  assert.strictEqual(r.error, 'bad_signature');
+});
+
 console.log(`\n结果: ${passed} 通过 · ${failed} 失败\n`);
 process.exit(failed ? 1 : 0);

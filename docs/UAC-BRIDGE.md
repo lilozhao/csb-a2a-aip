@@ -1,7 +1,6 @@
 # UAC 接入 Bridge（免重复 L3 点头的自动放行）
 
-> 2026-09-15 · 若兰 🌸 · 状态：**P0 + P1 + P2 接线已交付（默认关闭）**
-> 模块：判定钩子 `a2a-bridge-uac.js` · 工具箱 `a2a-uac-toolkit.js` · CLI `scripts/uac-*.js`
+> 2026-09-15 · 若兰 🌸 · 状态：**P0 + P1 + P2 接线已交付（默认关闭）**> 模块：判定钩子 `a2a-bridge-uac.js` · 工具箱 `a2a-uac-toolkit.js` · CLI `scripts/uac-*.js`
 > 关联：`csb-security` 的 `lib/authz/uac.js`（签发/验签底座）· `docs/a2a-bridge-rfc-draft-2026-09-09.md`
 
 ---
@@ -79,7 +78,12 @@ capabilities ⊆ 策略白名单? ──no──▶ 不免
 ## 6. CLI 用法
 
 ```bash
-# ① 签发侧：生成主人密钥（私钥落 .uac/ 600；另出 *.pub.json 可外发）
+# ⓪ 签发侧（**推荐**）：复用既有锚钥（不要另造身份）
+node scripts/uac-keygen.js --from-pem anchor --kid user-yilan --force
+#   ↑ 导入 csb-security/data/yilan-user-key.pem（= data/users/yilan-user-pub.json）
+#   会打印**锚指纹**（RFC 7638）；把这个指纹交给人—人带外核对
+
+# ① 签发侧：仅当确实需要新钥时才生成（会打印「无锚」告警）
 node scripts/uac-keygen.js --out .uac/user-key.json --kid user-yilan-01
 
 # ② 签发侧：签 A 凭证
@@ -87,18 +91,31 @@ node scripts/uac-issue.js --key .uac/user-key.json --agent 小虾 \
   --scopes shell --ttl 5m [--agents 小虾] [--out .uac/uac.jwt] [--json]
 
 # ③ 接收侧：登记 B 规则（默认空/默认关；--enable 才开）
-node scripts/uac-policy.js add --peer 小虾 --pubkey <对方>.pub.json \
+node scripts/uac-policy.js add --peer 若兰 --pubkey <对方>.pub.json \
   --capabilities pull,test [--rate 3/86400] [--expires 7d] [--enable]
-node scripts/uac-policy.js list | revoke --peer 小虾 | remove --peer 小虾 | enable | disable
+node scripts/uac-policy.js list | revoke --peer 若兰 | remove --peer 若兰 | enable | disable
 ```
+
+## 6.1 锚定钥与锚指纹（2026-09-15 补 · 阿轩踩坑）
+
+> **登记公钥前必须先有「锚」**：接收方要能证明「这把公钥属于发起方主人」，
+> 而不是凭一句聊天里的确认就写进信任表。
+
+- ✅ **唯一用户钥**：`user-yilan`（2026-08-25 建立）
+  - 私钥 `csb-security/data/yilan-user-key.pem` · 公钥 `csb-a2a-aip/data/users/yilan-user-pub.json`
+  - 已在 阿轩 / 明德 的 CSB-Security 握手里用过（同一把 `user-yilan@csb`）
+  - **锚指纹**（RFC 7638 SHA-256）：`8lci 3XPY 1CVV X8EO OemY tqVP TpuP bZyV 6gUi zA1F LGk`
+- ❌ 反面教材：先用 `uac-keygen.js`（无 `--from-pem`）生成的新钥 **没有归属证据链**，
+  收货方无法对账 → 应停手，改用 `--from-pem anchor` 或补「指纹带外核 / 身份钥背书」
+- 三层证据（弱→强）：**指纹带外核**（人—人，最硬）→ **持有证明**（用私钥签 nonce）→ **身份钥背书**（用 `ruolan-aid` 签 key-attestation）
 
 ## 7. 测试
 
 ```bash
 cd csb-a2a-aip
 node tests/bridge-uac.test.js            # 判定钩子 17/17
-node tests/bridge-uac-toolkit.test.js    # 工具箱 + 端到端 17/17
-node tests/bridge-core.test.js           # 回归 25/25
+node tests/bridge-uac-toolkit.test.js    # 工具箱 + 端到端 + 锚钥复用 21/21
+node tests/bridge-core.test.js           # 回归 29/29
 ```
 
 ## 8. 安全约束（免确认必须带的刹车）

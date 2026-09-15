@@ -71,6 +71,41 @@ function jwkToPrivateKey(privateJwk) {
   return crypto.createPrivateKey({ key: privateJwk, format: 'jwk' });
 }
 
+/**
+ * [2026-09-15] 导入既有用户密钥（PEM）——用于**复用已锚定的主人钥**，而不是另造新钥。
+ * 背景：P1 的 keygen 默认会生成一把全新钥（无锚），收货方无法与既有身份链对账
+ *       （阿轩踩到：墨白点头 ≠ 这把公钥属于若兰）。故签发侧默认应复用既有用户钥。
+ * @param {string} pemPath PKCS8 PEM（如 csb-security/data/yilan-user-key.pem）
+ * @param {object} o  { kid }
+ */
+function importUserKeyFromPem(pemPath, { kid = null } = {}) {
+  const pem = fs.readFileSync(pemPath, 'utf8');
+  const privateKey = crypto.createPrivateKey(pem);
+  const publicKey = crypto.createPublicKey(privateKey);
+  return {
+    kid: kid || `user-key-${Date.now()}`,
+    createdAt: new Date().toISOString(),
+    importedFrom: pemPath,
+    publicJwk: publicKey.export({ format: 'jwk' }),
+    privateJwk: privateKey.export({ format: 'jwk' }),
+  };
+}
+
+/**
+ * RFC 7638 JWK thumbprint（SHA-256 → base64url）——**锚指纹**，供人—人带外核对。
+ * 收货方据此判断「登记的这把公钥」是否就是发起方主人手里那把。
+ */
+function thumbprint(jwk) {
+  if (!jwk || !jwk.x) throw new Error('thumbprint 需要 Ed25519 JWK（含 x）');
+  const canon = JSON.stringify({ crv: jwk.crv || 'Ed25519', kty: jwk.kty || 'OKP', x: jwk.x });
+  return crypto.createHash('sha256').update(canon).digest('base64url');
+}
+
+/** 指纹分组显示（每 4 字符一空格，便于口述/比对） */
+function formatThumbprint(t) {
+  return String(t).match(/.{1,4}/g).join(' ');
+}
+
 /** 解析 JWT payload（不验签，仅供人看/CLI 摘要） */
 function decodePayload(token) {
   try {
@@ -189,6 +224,6 @@ module.exports = {
   SCOPE_PREFIX, POLICY_VERSION,
   loadSecurity, readJsonSafe, writeJson,
   parseTtl, decodePayload,
-  generateUserKey, issueUAC,
+  generateUserKey, importUserKeyFromPem, thumbprint, formatThumbprint, issueUAC,
   emptyPolicy, normalizePolicy, findPeer, addPeer, revokePeer, removePeer, setEnabled,
 };
