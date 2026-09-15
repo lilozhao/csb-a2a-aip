@@ -227,6 +227,8 @@ const rateLimiter = new securityAdapter.RateLimiter({
 });
 
 const metrics = new MetricsCollector();
+// [2026-09-15] UAC 护栏告警：每进程只提一次（该段在 bridgeHandler 内、按请求执行）
+let _uacGuardWarned = false;
 // 不传 logPath：哈希链模式默认 data/audit/，legacy 模式默认 /tmp（各自合理落盘）
 const auditLogger = securityAdapter.createAuditLogger();
 
@@ -400,7 +402,8 @@ const standardAPI = new A2AStandardAPI({
           const pathp2 = require('path');
           const p2 = process.env.A2A_BRIDGE_UAC_POLICY || pathp2.join(__dirname, 'config', 'bridge-uac-policy.json');
           const pol2 = JSON.parse(fsp2.readFileSync(p2, 'utf8'));
-          if (pol2 && pol2.enabled === true) {
+          if (pol2 && pol2.enabled === true && !_uacGuardWarned) {
+            _uacGuardWarned = true;
             console.warn(`⚠️ [UAC] 策略已 enabled=true 但钩子未装配（A2A_BRIDGE_UAC≠on）`
               + ` → **免确认不会生效**，write/shell 仍走 L3。要生效请设 A2A_BRIDGE_UAC=on 并重启。`);
           }
