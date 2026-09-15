@@ -133,12 +133,19 @@ t('端到端⑤: scope 不匹配（UAC 只授 shell，委托 read）→ 不放�
 });
 
 // ── 锚钥复用 / 锚指纹（2026-09-15 加：阿轩「无锚钥」踩坑 → 默认复用既有用户钥）──
+// 注意：本组用例**完全自包含**（不读本机私钥、不依赖 data/ 下的 gitignored 文件）——
+//   否则其他实例跑必挂（佯 2026-09-15 复现：ENOENT yilan-user-key.pem / 无 data/users/*.pub.json）
 const fsx = require('fs');
-const ANCHOR_PUB = path.join(__dirname, '..', 'data', 'users', 'yilan-user-pub.json');
-const anchorJwk = JSON.parse(fsx.readFileSync(ANCHOR_PUB, 'utf8'));
+const ANCHOR_PUB = path.join(__dirname, '..', 'config', 'uac-peers', 'ruolan.pub.json');
+const ANCHOR_X = 'rpNYnf224QbmIuK1Ivrj7u7BMa5KnUFFCAe54Tm-_4U';
+const ANCHOR_TP = '8lci3XPY1CVVX8EOOemYtqVPTpuPbZyV6gUizA1fLGk';
+const anchorJwk = { crv: 'Ed25519', kty: 'OKP', x: ANCHOR_X };
 
-t('thumbprint: RFC 7638 指纹与既有锚钥一致', () => {
-  assert.strictEqual(tk.thumbprint(anchorJwk), '8lci3XPY1CVVX8EOOemYtqVPTpuPbZyV6gUizA1fLGk');
+t('thumbprint: RFC 7638 指纹与既有锚钥一致（含仓内锚公钥文件对账）', () => {
+  assert.strictEqual(tk.thumbprint(anchorJwk), ANCHOR_TP);
+  const f = JSON.parse(fsx.readFileSync(ANCHOR_PUB, 'utf8'));
+  assert.strictEqual(f.x, ANCHOR_X, '仓内 config/uac-peers/ruolan.pub.json 应与硬编码锚钥一致');
+  assert.strictEqual(f.kid, 'user-yilan');
 });
 t('thumbprint: 缺 x 抛错；formatThumbprint 4 字符分组', () => {
   assert.throws(() => tk.thumbprint({ kty: 'OKP' }));

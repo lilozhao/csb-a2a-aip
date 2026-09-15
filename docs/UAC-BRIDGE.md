@@ -102,9 +102,10 @@ node scripts/uac-policy.js list | revoke --peer 若兰 | remove --peer 若兰 | 
 > 而不是凭一句聊天里的确认就写进信任表。
 
 - ✅ **唯一用户钥**：`user-yilan`（2026-08-25 建立）
-  - 私钥 `csb-security/data/yilan-user-key.pem` · 公钥 `csb-a2a-aip/data/users/yilan-user-pub.json`
+  - 私钥 `csb-security/data/yilan-user-key.pem`（**只在本机**，永不出机）· 公钥 **`config/uac-peers/ruolan.pub.json`（已入仓，接收侧直接取用）**
   - 已在 阿轩 / 明德 的 CSB-Security 握手里用过（同一把 `user-yilan@csb`）
   - **锚指纹**（RFC 7638 SHA-256）：`8lci 3XPY 1CVV X8EO OemY tqVP TpuP bZyV 6gUi zA1F LGk`
+  - 接收侧登记示例（仓内文件已在）：`node scripts/uac-policy.js add --peer 若兰 --pubkey config/uac-peers/ruolan.pub.json --capabilities pull,test --rate 3/86400`
 - ❌ 反面教材：先用 `uac-keygen.js`（无 `--from-pem`）生成的新钥 **没有归属证据链**，
   收货方无法对账 → 应停手，改用 `--from-pem anchor` 或补「指纹带外核 / 身份钥背书」
 - 三层证据（弱→强）：**指纹带外核**（人—人，最硬）→ **持有证明**（用私钥签 nonce）→ **身份钥背书**（用 `ruolan-aid` 签 key-attestation）
@@ -114,7 +115,7 @@ node scripts/uac-policy.js list | revoke --peer 若兰 | remove --peer 若兰 | 
 ```bash
 cd csb-a2a-aip
 node tests/bridge-uac.test.js            # 判定钩子 17/17
-node tests/bridge-uac-toolkit.test.js    # 工具箱 + 端到端 + 锚钥复用 21/21
+node tests/bridge-uac-toolkit.test.js    # 工具箱 + 端到端 + 锚钥复用 21/21（**自包含**，不依赖本机私钥/gitignored 文件）
 node tests/bridge-core.test.js           # 回归 29/29
 ```
 

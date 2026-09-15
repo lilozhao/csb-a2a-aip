@@ -1,0 +1,8 @@
+{
+  "kid": "user-yilan",
+  "crv": "Ed25519",
+  "kty": "OKP",
+  "x": "rpNYnf224QbmIuK1Ivrj7u7BMa5KnUFFCAe54Tm-_4U",
+  "note": "若兰(签发侧)的『主人用户钥』公钥 —— 用于验证其签发的 UAC（A 凭证）。公钥，可入仓。",
+  "thumbprint_sha256": "8lci3XPY1CVVX8EOOemYtqVPTpuPbZyV6gUizA1fLGk"
+}
