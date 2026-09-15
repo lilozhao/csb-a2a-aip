@@ -360,7 +360,7 @@ function buildInjectMessage(frame = {}) {
 let _identityBridgeCache;
 function identityBridge() {
   if (_identityBridgeCache !== undefined) return _identityBridgeCache;
-  _identityBridgeCache = { mainTo: '', channel: '' };
+  _identityBridgeCache = { mainTo: '', channel: '', sessionKey: '' };
   try {
     // 与 server_v5.js:62 保持**同一读取源**（2026-09-14 修复）：
     //   实例可用 A2A_IDENTITY_PATH 指定身份文件（如 identity.kai.json）；
@@ -372,6 +372,10 @@ function identityBridge() {
       _identityBridgeCache = {
         mainTo: String(id.bridge.mainTo || ''),
         channel: String(id.bridge.channel || ''),
+        // [9/15] 宿主主会话键必须带 agent 前缀（agent:<id>:main）——写 'main' 会被
+        // gateway 当作别的 agent 的会话 → sessions_history 遭 agentToAgent 策略拒绝 →
+        // L3 确认恒超时。缺省不填，由 resolveConfig 决定兼容值。
+        sessionKey: String(id.bridge.sessionKey || ''),
       };
     }
   } catch { /* 文件缺失/损坏 → 保持空值，不阻塞主流程 */ }
@@ -388,7 +392,9 @@ function resolveConfig() {
   // 优先级：env（临时覆盖）→ identity.json（本地配置单源）
   const mainTo = process.env.A2A_BRIDGE_MAIN_TO || idBridge.mainTo || '';
   const channel = process.env.A2A_BRIDGE_CHANNEL || idBridge.channel || 'feishu';
-  return { url, token, mainTo, channel };
+  // [9/15] 宿主主会话键：env 覆盖 → identity.bridge.sessionKey → 'main'（旧行为兜底）
+  const sessionKey = process.env.A2A_BRIDGE_SESSION_KEY || idBridge.sessionKey || 'main';
+  return { url, token, mainTo, channel, sessionKey };
 }
 
 /** 调用 gateway /tools/invoke（格式：{tool, action, args, sessionKey}） */
@@ -438,7 +444,7 @@ function invokeTool(gatewayUrl, token, body, timeoutMs = 30000) {
 async function fetchResult(taskId, opts = {}) {
   const cfg = { ...resolveConfig(), ...opts };
   if (!cfg.token) return { ok: false, error: '缺少 gateway token' };
-  const sessionKey = opts.sessionKey || 'main';
+  const sessionKey = opts.sessionKey || cfg.sessionKey || 'main';
   // [P0-2 / 2026-09-14] 读取窗口用时间窗代替固定条数：默认查 send 后 10 分钟（避免40条窗口被刷出去）
   const sinceMs = opts.sinceMs || (Date.now() - 10 * 60 * 1000);
   const limit = opts.limit || 100; // 放宽到 100（从 40 提升），同时按 sinceMs 过滤

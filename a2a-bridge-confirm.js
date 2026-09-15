@@ -382,12 +382,18 @@ async function confirmL3(envelope, ctx = {}, opts = {}) {
     const cfg = adapter.resolveConfig();
     const to = opts.to || cfg.mainTo;
     if (!to) return { ok: false, error: '缺少主会话目标（A2A_BRIDGE_MAIN_TO）' };
+    // [9/15 修复] sessionKey 不能硬编码 'main'：gateway 把它解析成**别的 agent** 的会话
+    //   → sessions_history 被 tools.agentToAgent 策略拒（"Agent-to-agent history is
+    //   disabled"）→ 轮询永远读不到主人的「确认 #<tid>」→ L3 恒超时（实测 09-15）。
+    //   正确形态是带 agent 前缀的全键（如 agent:devops:main），由 identity.bridge.sessionKey
+    //   或 A2A_BRIDGE_SESSION_KEY 提供。
+    const sessionKey = cfg.sessionKey || 'main';
     // [P0-1 / 2026-09-14] [CONFIRM-SEND] 调试日志：记录发送通道、目标、sessionKey、前 80 字符
-    console.log(`[CONFIRM-SEND] to=${to} sessionKey=main gatewayUrl=${cfg.url} preview=${text.substring(0, 80).replace(/\n/g, ' ')}`);
+    console.log(`[CONFIRM-SEND] to=${to} sessionKey=${sessionKey} gatewayUrl=${cfg.url} preview=${text.substring(0, 80).replace(/\n/g, ' ')}`);
     return adapter.invokeTool(cfg.url, cfg.token, {
       tool: 'message', action: 'send',
       args: { to, message: text },
-      sessionKey: 'main',
+      sessionKey,
     }, opts.timeoutMs || 30000);
   });
   // [9/11 修复 A] 读取时不得再加 'confirm-' 前缀：
@@ -406,8 +412,9 @@ async function confirmL3(envelope, ctx = {}, opts = {}) {
     const to = opts.to || null;
     const sinceMs = sinceMsDefault; // 委托到达时间（覆盖了“提前确认”场景）
     const remaining = Math.max(0, (sentAt + timeoutMs) - Date.now());
-    console.log(`[CONFIRM-READ] taskId=${tid} sessionKey=main to=${to || '(unset, will use cfg.mainTo)'} limit=100 sinceMs=${sinceMs} (taskTs or sentAt) marker='桥接结果 #${tid}' OR '确认 #${tid}' remainingMs=${remaining}`);
-    return adapter.fetchResult(tid, { to: opts.to, sessionKey: 'main', sinceMs, limit: 100 });
+    const sessionKey = adapter.resolveConfig().sessionKey || opts.sessionKey || 'main';
+    console.log(`[CONFIRM-READ] taskId=${tid} sessionKey=${sessionKey} to=${to || '(unset, will use cfg.mainTo)'} limit=100 sinceMs=${sinceMs} (taskTs or sentAt) marker='桥接结果 #${tid}' OR '确认 #${tid}' remainingMs=${remaining}`);
+    return adapter.fetchResult(tid, { to: opts.to, sessionKey, sinceMs, limit: 100 });
   });
 
   const sent = await send(buildConfirmMessage({ taskId, envelope, delegatorLabel, window: win }));
