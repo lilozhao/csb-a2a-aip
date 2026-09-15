@@ -134,7 +134,6 @@ t('端到端⑤: scope 不匹配（UAC 只授 shell，委托 read）→ 不放�
 
 // ── 锚钥复用 / 锚指纹（2026-09-15 加：阿轩「无锚钥」踩坑 → 默认复用既有用户钥）──
 const fsx = require('fs');
-const ANCHOR_PEM = path.join(__dirname, '..', '..', 'csb-security', 'data', 'yilan-user-key.pem');
 const ANCHOR_PUB = path.join(__dirname, '..', 'data', 'users', 'yilan-user-pub.json');
 const anchorJwk = JSON.parse(fsx.readFileSync(ANCHOR_PUB, 'utf8'));
 
@@ -145,12 +144,23 @@ t('thumbprint: 缺 x 抛错；formatThumbprint 4 字符分组', () => {
   assert.throws(() => tk.thumbprint({ kty: 'OKP' }));
   assert.strictEqual(tk.formatThumbprint('abcdefgh'), 'abcd efgh');
 });
-t('importUserKeyFromPem: 公钥=锚钥，且签发的 UAC 能被锚公钥验签', () => {
-  const imported = tk.importUserKeyFromPem(ANCHOR_PEM, { kid: 'user-yilan' });
-  assert.strictEqual(imported.publicJwk.x, anchorJwk.x);
-  const { token } = tk.issueUAC({ keyStore: imported, user: 'user:yilan@csb', agent: '若兰', scopes: ['a2a.delegate:shell'], ttl: 600 });
-  const r = uacLib.verifyUAC(token, { userPublicKey: anchorJwk, expectedAgentId: '若兰' });
-  assert.strictEqual(r.valid, true);
+t('importUserKeyFromPem: 从 PEM 导入并可签发（自包含，不依赖任何本机私有资源）', () => {
+  const crypto = require('crypto');
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const dir = path.join(__dirname, '..', '.uac');
+  fsx.mkdirSync(dir, { recursive: true });
+  const tmp = path.join(dir, `.test-key-${process.pid}.pem`);
+  fsx.writeFileSync(tmp, pem, { mode: 0o600 });
+  try {
+    const imported = tk.importUserKeyFromPem(tmp, { kid: 'user-test' });
+    assert.strictEqual(imported.publicJwk.x, publicKey.export({ format: 'jwk' }).x, '导入公钥应与源 PEM 一致');
+    const { token } = tk.issueUAC({ keyStore: imported, user: 'user:yilan@csb', agent: '若兰', scopes: ['a2a.delegate:shell'], ttl: 600 });
+    const r = uacLib.verifyUAC(token, { userPublicKey: imported.publicJwk, expectedAgentId: '若兰' });
+    assert.strictEqual(r.valid, true);
+  } finally {
+    try { fsx.unlinkSync(tmp); } catch { /* 已清理 */ }
+  }
 });
 t('无锚钥互斥: 新造钥签的 UAC 用锚公钥验签 → bad_signature', () => {
   const fresh = tk.generateUserKey({ kid: 'unanchored' });
