@@ -392,6 +392,19 @@ const standardAPI = new A2AStandardAPI({
           checkUAC = undefined;
           console.warn('[UAC] 钩子装配失败，保持关闭:', e.message);
         }
+      } else {
+        // [2026-09-15 护栏] 策略已 enable 但钩子未装配（env 未开）= 免确认**不会生效**
+        //   踩坑：阿轩按操作单把 policy enable 了，但 A2A_BRIDGE_UAC 未/被注释 → 以为已生效
+        try {
+          const fsp2 = require('fs');
+          const pathp2 = require('path');
+          const p2 = process.env.A2A_BRIDGE_UAC_POLICY || pathp2.join(__dirname, 'config', 'bridge-uac-policy.json');
+          const pol2 = JSON.parse(fsp2.readFileSync(p2, 'utf8'));
+          if (pol2 && pol2.enabled === true) {
+            console.warn(`⚠️ [UAC] 策略已 enabled=true 但钩子未装配（A2A_BRIDGE_UAC≠on）`
+              + ` → **免确认不会生效**，write/shell 仍走 L3。要生效请设 A2A_BRIDGE_UAC=on 并重启。`);
+          }
+        } catch { /* 无策略文件：正常（未启用） */ }
       }
 
       const result = await bridge.handleInbound(msg, {
