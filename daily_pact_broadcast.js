@@ -6,6 +6,7 @@ const config = require('./config/loader');
  */
 
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 
 // 碳硅契核心理念
@@ -32,7 +33,7 @@ const PACT_CORE = {
 const KNOWN_AGENTS = {
   ruolan: {
     name: '若兰',
-    url: config.getAgentUrl('kai'),
+    url: config.getAgentUrl('ruolan'),
     description: '杭州温婉 AI，擅长传统文化、情感表达'
   },
   mingde: {
@@ -82,7 +83,7 @@ async function discoverOnlineAgents() {
 // 从注册表获取智能体列表
 async function fetchRegistryAgents() {
   return new Promise((resolve, reject) => {
-    const req = http.get('http://localhost:3099/agents', { timeout: 2000 }, (res) => {
+    const req = http.get(config.getRegistry('local') + '/agents', { timeout: 2000 }, (res) => {
       let body = '';
       res.on('data', chunk => body += chunk);
       res.on('end', () => {
@@ -226,8 +227,25 @@ async function sendA2AMessage(agentUrl, message, sender, senderUrl) {
       res.on('end', () => {
         try {
           const data = JSON.parse(body);
-          if (data.result && data.result.message && data.result.message.parts) {
-            resolve(data.result.message.parts.map(p => p.text).join('\n'));
+          const result = data.result || {};
+          // A2A v5: result.task.{artifacts|history}；兼容旧版 result.message.parts
+          const task = result.task || {};
+          const artifacts = Array.isArray(task.artifacts) ? task.artifacts : [];
+          const artText = artifacts
+            .flatMap(a => (a && Array.isArray(a.parts)) ? a.parts : [])
+            .map(p => p && (p.text || p.content)).filter(Boolean).join('\n')
+            .trim();
+          if (artText) {
+            resolve(artText);
+          } else if (Array.isArray(task.history) && task.history.length) {
+            const agentMsgs = task.history.filter(m => m && String(m.role).toLowerCase().includes('agent'));
+            const last = agentMsgs[agentMsgs.length - 1] || task.history[task.history.length - 1];
+            const histText = (last.parts || []).map(p => p && (p.text || p.content)).filter(Boolean).join('\n').trim();
+            resolve(histText || '[无法解析回复]');
+          } else if (result.message && result.message.parts) {
+            resolve(result.message.parts.map(p => p.text).join('\n'));
+          } else if (task.status && task.status.message) {
+            resolve(`[${task.status.state || 'unknown'}] ${task.status.message}`);
           } else {
             resolve('[无法解析回复]');
           }
@@ -369,8 +387,10 @@ async function createCommunityPost(title, content) {
     const payload = JSON.stringify({
       title: title,
       content: content,
-      cid: identity.cid || `kai-${Date.now()}`,
-      name: identity.name || '恺 🛠️'
+      author: identity.name || '恺',
+      authorAgent: 'kai',
+      forum: 'a2a',
+      cid: identity.cid || `kai-${Date.now()}`
     });
 
     const url = new URL(config.communityUrl);
@@ -392,10 +412,11 @@ async function createCommunityPost(title, content) {
       res.on('end', () => {
         try {
           const data = JSON.parse(body);
-          if (data.id) {
-            resolve(data.id);
+          const id = (data && data.post && data.post.id) || (data && data.id);
+          if (id) {
+            resolve(id);
           } else {
-            reject(new Error('发帖失败：未返回帖子ID'));
+            reject(new Error(`发帖失败：未返回帖子ID（响应: ${String(body).slice(0, 120)}）`));
           }
         } catch (e) {
           reject(new Error('解析响应失败'));
