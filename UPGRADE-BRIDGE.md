@@ -143,8 +143,11 @@ curl -s -X POST http://<接收方>:3100/a2a/json-rpc \
 **配置要点**：
 - `A2A_BRIDGE_MAIN_TO` = **宿主用户的**飞书 open_id（不是 bot 自己的）——确认请求投到这里，人才看得到、才能回复
 - `A2A_GATEWAY_URL` / `A2A_GATEWAY_PORT` = 本机 gateway **API** 地址（各实例端口不同）
-  - ⚠️ **控制台口 ≠ API 口**（2026-09-16 Jeason 踩坑）：把 `openclaw dashboard` 的控制台端口当 API 口 → 注入 `POST /v1/chat/completions` 得 **404** → `bridge_unavailable`
-  - ✅ 现场确认：`openclaw gateway status` 看 `Gateway: port=…`；再 `curl -sS -o /dev/null -w "%{http_code}" http://127.0.0.1:<port>/v1/models -H "Authorization: Bearer $OPENCLAW_GATEWAY_TOKEN"` → **200/401** = 真 API；**返回 HTML** = 控制台，端口错
+  - ✅ 现场确认：`openclaw gateway status` 看 `Gateway: port=…`（各实例不同）
+  - ⚠️ **注入返回 HTML/404 多半是 token 问题，不是端口**（2026-09-16 Jeason 踩坑）：gateway 对**未授权**请求会返 HTML/404 → 桥接报 `gateway 响应解析失败: "Not Found"`。
+    → 查 **A2A 服务进程**的 env 是否有 `OPENCLAW_GATEWAY_TOKEN`/`A2A_GATEWAY_TOKEN`：`cat /proc/<a2a_pid>/environ | tr '\0' '\n' | grep TOKEN`
+  - 验证（**带** token）：`curl -sS -o /dev/null -w "%{http_code}" http://127.0.0.1:<port>/v1/models -H "Authorization: Bearer $OPENCLAW_GATEWAY_TOKEN"` → **200** ✅
+    （外部探测**不带** token 看到 HTML/404 是假象，别据此判"端口错"）
 
 **验收判据**：确认请求出现在**人的 DM** 里 = 投递正确；只出现在 bot 自己的通道 = mainTo 配错。
 
