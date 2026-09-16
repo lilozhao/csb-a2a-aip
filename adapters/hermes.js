@@ -84,11 +84,35 @@ const ENV_ALLOWLIST = [
 ];
 const ENV_DENY_PREFIX = ['HERMES_S6_', 'S6_', 'S6-'];
 
-/** 构造干净的子进程环境（白名单 + 显式附加），绝不透传 s6/网关类变量 */
+const ENV_MODE = () => String(process.env.A2A_HERMES_ENV_MODE || 'denylist').trim().toLowerCase();
+
+/**
+ * 构造子进程环境
+ *
+ * ★★ 2026-09-16 策略改向（同一个坑两次了）：
+ *   原设计=**白名单**（只放行已知必要变量）→ 已被证伪两次：
+ *     ① 剥掉 `HERMES_WRITE_SAFE_ROOT`（写入护栏，K3）
+ *     ② 剥掉 `HERMES_LAZY_INSTALL_TARGET`（feishu 依赖懒安装路径）→ send 报平台层失败
+ *   根因：**白名单是盲的** —— 它不区分「脏变量」与「必需变量」，未知即破。
+ *   ⇒ 默认改为 **黑名单（denylist）**：透传全部 + 只剥**已知危险**（s6 类）；
+ *     需要时再叠加显式收窄（WRITE_SAFE_ROOT / ENV_DENY）。
+ *   `A2A_HERMES_ENV_MODE=allowlist` 可回到旧行为（给希望最严的宿主）。
+ */
 function buildChildEnv(cfg) {
-  const out = {};
-  for (const k of ENV_ALLOWLIST) {
-    if (process.env[k] !== undefined) out[k] = process.env[k];
+  const mode = (cfg && cfg.envMode) || ENV_MODE();
+  const denyExtra = (cfg && cfg.envDeny) || [];
+  const isDenied = (k) => ENV_DENY_PREFIX.some((p) => k.startsWith(p)) || denyExtra.includes(k);
+
+  let out = {};
+  if (mode === 'allowlist') {
+    for (const k of ENV_ALLOWLIST) {
+      if (process.env[k] !== undefined) out[k] = process.env[k];
+    }
+  } else {
+    // 默认：透传全量，只剥已知危险
+    for (const [k, v] of Object.entries(process.env)) {
+      if (!isDenied(k)) out[k] = v;
+    }
   }
   out.HERMES_HOME = cfg.home;
   // 写入护栏收窄（比「剥掉」与「照抄 /opt/data」都稳）：只允许写一个专用 scratch 目录
@@ -106,7 +130,7 @@ function buildChildEnv(cfg) {
   }
   // 兜底：清掉任何漏网的 s6 变量
   for (const k of Object.keys(out)) {
-    if (ENV_DENY_PREFIX.some((p) => k.startsWith(p))) delete out[k];
+    if (isDenied(k)) delete out[k];
   }
   return out;
 }
@@ -142,6 +166,11 @@ function resolveConfig(overrides = {}) {
     // 工具锁：墨丘实测②——`-t file` 能把它锁成无终端（回 NO_TOOL）
     tools: process.env.A2A_HERMES_TOOLS || '',                 // 显式覆盖（例：'file'）
     writeSafeRoot: process.env.A2A_HERMES_WRITE_SAFE_ROOT || '',   // 空=保留父进程原值
+    // 环境透传策略（见 buildChildEnv 注释）：denylist（默认，只剥已知危险）| allowlist
+    envMode: ENV_MODE(),
+    envDeny: (process.env.A2A_HERMES_ENV_DENY || '').split(',').map((s) => s.trim()).filter(Boolean),
+    // 确认读回腿：off（默认→路径 C 保守）| db（启用路径 A：直查 state.db）
+    confirmRead: String(process.env.A2A_HERMES_CONFIRM_READ || 'off').trim().toLowerCase(),
     // 按 scope 分档的工具集（墨丘实测：`file` 含 read/write/patch/search ≠ 只读）
     //   默认只读档取最保守值；非法名 fail-closed（rc=2）不会静默放宽
     //   ★ 绝对不含：terminal / code_execution / delegation / cronjob / memory（会写 MEMORY.md）
@@ -649,7 +678,9 @@ function _setDbRunner(fn) { _dbRunner = fn || defaultDbRunner; }
 
 async function fetchResult(taskId, opts = {}) {
   const cfg = resolveConfig(opts);
-  const p = opts.path || 'C';
+  // ★ 读回腿开关：不配 A2A_HERMES_CONFIRM_READ=db 就一律走路径 C（保守）
+  //   —— 这正是 2026-09-16 首轮 L3 超时的原因（投递腿 OK，读回腿没开）
+  const p = opts.path || (cfg.confirmRead === 'db' ? 'db' : 'C');
   if (p === 'db') {
     try { return await readFromStateDb(taskId, cfg, opts); }
     catch (e) { return { ok: false, error: `hermes: ${e.message}` }; }
@@ -685,7 +716,7 @@ function extractReply(raw, taskId) {
 module.exports = {
   inject, injectIsolated, buildPrompt, buildInjectMessage, detectRefusal, REFUSAL_PATTERNS,
   resolveConfig, fetchResult, extractReply, harvestTexts, invokeTool, buildSendArgs,
-  isEnabled, assertPromptSafe, FORBIDDEN_IN_PROMPT, buildChildEnv, makeSentinel, stripSentinel, toUtcIso,
+  isEnabled, assertPromptSafe, FORBIDDEN_IN_PROMPT, buildChildEnv, ENV_ALLOWLIST, makeSentinel, stripSentinel, toUtcIso,
   toEpochSeconds, resolveHermesBin, toolsForScope, buildArgs, DEFAULT_CONFIRM_SQL,
   normalizeTarget, usesStdin, sendExitHint,
   _setRunner, _setDbRunner, _resetIdentityBridgeCache,

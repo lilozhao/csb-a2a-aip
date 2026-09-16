@@ -132,25 +132,55 @@ function rawRunner(fn) { return async (call) => { lastCall = call; return fn(cal
     assert.strictEqual(r.summary, 'plain ok');
   });
 
-  await t('11. 环境白名单清洗：不透传 HERMES_S6_SUPERVISED_CHILD / S6_*', async () => {
+  await t('11. 环境黑名单（默认）：剥 s6 类、但**保留未知必需变量**（LAZY_INSTALL_TARGET 回归）', async () => {
+    resetEnv();
     on();
     process.env.HERMES_S6_SUPERVISED_CHILD = '1';
     process.env.S6_SVC_NAME = 'hermes-gateway';
-    process.env.A2A_HERMES_HOME = '/opt/data';
+    process.env.HERMES_HOME = '/opt/data';
+    process.env.HERMES_LAZY_INSTALL_TARGET = '/tmp/lark-fast';   // ← 墨丘实战被剥掉的依赖路径
+    process.env.HERMES_WRITE_SAFE_ROOT = '/opt/data';
     H._setRunner(okRunner('ok'));
     await H.inject(ENV, TID);
-    assert.strictEqual(lastCall.env.HERMES_S6_SUPERVISED_CHILD, undefined, 's6 变量必须被清掉');
+    assert.strictEqual(lastCall.env.HERMES_S6_SUPERVISED_CHILD, undefined, 's6 变量必须被剥');
     assert.strictEqual(lastCall.env.S6_SVC_NAME, undefined);
     assert.strictEqual(lastCall.env.HERMES_HOME, '/opt/data');
+    assert.strictEqual(lastCall.env.HERMES_LAZY_INSTALL_TARGET, '/tmp/lark-fast', '未知但必需的变量必须透传（白名单做不到这点）');
+    assert.strictEqual(lastCall.env.HERMES_WRITE_SAFE_ROOT, '/opt/data', '护栏变量保留');
     const keys = Object.keys(lastCall.env);
     assert.ok(keys.every((k) => !/^(HERMES_S6_|S6_)/.test(k)), '不得有漏网 s6 变量');
-    // 白名单外变量不应透传
-    assert.strictEqual(lastCall.env.A2A_BRIDGE_HERMES, undefined);
-    delete process.env.HERMES_S6_SUPERVISED_CHILD;
-    delete process.env.S6_SVC_NAME;
+    resetEnv();
   });
 
-  await t('12. ENV_EXTRA 显式附加 + 拒绝附加 s6 类键', async () => {
+  await t('11b. A2A_HERMES_ENV_MODE=allowlist 可回到旧行为（可显式收窄）', async () => {
+    resetEnv();
+    on();
+    process.env.A2A_HERMES_ENV_MODE = 'allowlist';
+    process.env.HERMES_LAZY_INSTALL_TARGET = '/tmp/lark-fast';
+    H._setRunner(okRunner('ok'));
+    await H.inject(ENV, TID);
+    assert.strictEqual(lastCall.env.HERMES_LAZY_INSTALL_TARGET, undefined, 'allowlist 模式下不透传');
+    assert.strictEqual(lastCall.env.A2A_BRIDGE_HERMES, undefined);
+    resetEnv();
+  });
+
+  await t('11c. A2A_HERMES_ENV_DENY 可叠加自定义剥离项', async () => {
+    resetEnv();
+    on();
+    process.env.A2A_HERMES_ENV_DENY = 'SOME_SECRET,OTHER';
+    process.env.SOME_SECRET = 'x';
+    process.env.OTHER = 'y';
+    process.env.KEEP_ME = 'z';
+    H._setRunner(okRunner('ok'));
+    await H.inject(ENV, TID);
+    assert.strictEqual(lastCall.env.SOME_SECRET, undefined);
+    assert.strictEqual(lastCall.env.OTHER, undefined);
+    assert.strictEqual(lastCall.env.KEEP_ME, 'z');
+    resetEnv();
+  });
+
+  await t('12. ENV_EXTRA 显式附加（仍用于补充分收窄/追加）+ 拒绝附加 s6 类键', async () => {
+    resetEnv();
     on();
     process.env.A2A_HERMES_ENV_EXTRA = 'MY_VAR=hello,HERMES_S6_X=bad';
     H._setRunner(okRunner('ok'));
@@ -255,13 +285,22 @@ function rawRunner(fn) { return async (call) => { lastCall = call; return fn(cal
     assert.throws(() => H.toUtcIso('not-a-date'), /无效时间/);
   });
 
-  await t('23. confirm 默认路径 C（保守不自动读）', async () => {
+  await t('23. confirm 读回腿开关：默认 C（保守）；A2A_HERMES_CONFIRM_READ=db 才走 A', async () => {
     resetEnv();
     const r = await H.fetchResult(TID);
     assert.strictEqual(r.ok, false);
     assert.match(r.error, /路径 C/);
     const r2 = await H.fetchResult(TID, { path: 'webhook' });
     assert.match(r2.error, /尚未实现/);
+    // ★ 首轮 L3 超时的根因：读回腿没开 → 开了才进路径 A
+    process.env.A2A_HERMES_CONFIRM_READ = 'db';
+    process.env.A2A_HERMES_DB_PATH = '/opt/data/state.db';
+    process.env.A2A_HERMES_CHAT_ID = 'oc-1';
+    H._setDbRunner(async () => ({ code: 0, stdout: `确认 #${TID}\n`, stderr: '' }));
+    const r3 = await H.fetchResult(TID);
+    assert.strictEqual(r3.ok, true, '开 CONFIRM_READ=db 后应走路径 A');
+    assert.deepStrictEqual(r3.reply, { action: 'approve' });
+    resetEnv();
   });
 
   await t('30. 默认 SQL（CHAT_ID 口径）：子查询限会话+外层裁时间；含 LIMIT + role；SINCE 用 epoch', async () => {

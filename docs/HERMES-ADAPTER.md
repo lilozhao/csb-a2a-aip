@@ -70,6 +70,12 @@ injectIsolated():
 | 主会话目标 | `A2A_BRIDGE_MAIN_TO` | identity.bridge.mainTo | 飞书 `ou_*`/`oc_*` |
 | 通道 | `A2A_BRIDGE_CHANNEL` | `feishu` | confirm 收回用 |
 | 会话键 | `A2A_BRIDGE_SESSION_KEY` | `main` | 读回用 |
+| **环境透传策略** | `A2A_HERMES_ENV_MODE` | **`denylist`** | 透传全量 + 只剥已知危险（s6 类）；`allowlist` 回旧行为 |
+| 叠加剥离项 | `A2A_HERMES_ENV_DENY` | 空 | 额外要剥的变量名（逗号分隔） |
+| **确认读回腿** | `A2A_HERMES_CONFIRM_READ` | **`off`** | `db` 才启用路径 A（直查 state.db）；不配则一律路径 C |
+
+> ⚠️ **`A2A_HERMES_CONFIRM_READ` 必须设为 `db` 才能跑 write/shell** —— 否则投递腿发出去了、读回腿却在路径 C（保守不回读）→ **L3 必然超时**（2026-09-16 首轮实测就是如此）。
+> ⚠️ **环境策略改向原因**：白名单（旧默认）被证伪两次 —— 剥掉写入护栏（K3）、剥掉 feishu 依赖懒安装路径。根因是**白名单是盲的**（未知即破）。默认改黑名单。
 | 子进程附加 env | `A2A_HERMES_ENV_EXTRA` | 空 | `K1=V1,K2=V2`；对白名单**外**的键**显式放行**（投递腿依赖，见 §5.2） |
 | 写护栏收窄 | `A2A_HERMES_WRITE_SAFE_ROOT` | 空（=保留父值） | 收窄子进程可写根（§十一安全更正） |
 
