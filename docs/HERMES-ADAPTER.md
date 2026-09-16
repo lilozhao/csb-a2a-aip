@@ -153,5 +153,29 @@ frame 双契约 / prompt 模板禁词校验 / 无 shell 拼接（含 `;` `&&` `$
 
 **测试**：→ **32/32**（新增默认 SQL 校验 / WRITE_SAFE_ROOT 保留与收窄 / 只读档默认值）
 
+## 十二、装配（P0-D · 2026-09-16）
+
+**新增 `adapters/select.js`** —— 注入适配器选择（与 `server_v5`、`a2a-bridge-confirm` 同源）：
+
+```
+优先级：env A2A_BRIDGE_ADAPTER  >  identity.adapter  >  identity.platform  >  默认 openclaw
+```
+
+**接线点（最小改动）**
+| 文件 | 改动 |
+|---|---|
+| `adapters/select.js` | **新增**：`resolveInjectAdapter()` / `resolveAdapterKind()` / `readIdentityAdapter()`（identity 读不到/坏 JSON → 不抛，回退 openclaw）|
+| `server_v5.js` | ① `chatNotifyHandler.inject` → `select.resolveInjectAdapter()` ② `bridgeHandler` 的 `gatewayAdapter` → 同源选择 ③ 注册表 `platform` 字段 → `identity.adapter \|\| identity.platform \|\| 'openclaw'` |
+| `a2a-bridge-confirm.js` | 默认 adapter 的 `require` → `select.resolveInjectAdapter()` |
+| `adapters/hermes.js` | 新增 `invokeTool()` **诚实失败**（P0 未实现投递）→ confirmL3 会记「发送失败」并**拒绝**，不会静默放行 |
+
+**零行为变化保证**
+- 未声明 `adapter/platform` 的实例（含若兰本机）→ 解析为 **openclaw**，路径完全照旧
+- 选到 hermes **≠ 已启用**：还有 `A2A_BRIDGE_HERMES=off`（默认关）→ 未开启时 inject 抛错 → C5 诚实降级
+- 回滚：`A2A_BRIDGE_ADAPTER=openclaw` 一行覆盖
+
+**测试**：`tests/adapters-select.test.js` → **8/8**（默认/env 优先/adapter/platform/未知回退/坏 JSON 不抛/接口面核实/invokeTool 诚实失败）
+**回归**：core 29 · uac 17 · confirm 14 · adapter 15 · hermes 32 —— 全绿
+
 ---
 _一句话：**Hermes 的 C4-H = 「本机 CLI 注入隔离回合」，接口与 OpenClaw 侧完全同形；默认关、参数数组禁 shell 拼接、禁重启类指令、三重判据（rc+非空+哨兵）、环境白名单、失败一律 C5。**_

@@ -377,6 +377,18 @@ async function injectIsolated(envelope, taskId, opts = {}) {
   return { ok: true, summary: r.summary, artifact: r.artifact, refused: r.refused };
 }
 
+/**
+ * 确认请求投递（confirmL3 用）—— **P0 未实现**
+ * Hermes 没有「向主人发消息」的现成通道（平台适配器 feishu 是 WS 入站；webhook 8644 未启用）。
+ * 诚实失败：返回 ok:false → confirmL3 会记「确认请求发送失败」→ 拒绝执行（绝不静默放行）。
+ */
+function invokeTool() {
+  return Promise.resolve({
+    ok: false,
+    error: 'hermes: 确认请求投递未实现（P0）—— Hermes 侧无现成外发通道，L3 写操作暂无法自动确认',
+  });
+}
+
 function buildInjectMessage(frame = {}) {
   const taskId = frame.taskId || 'unknown';
   const label = frame.delegatorLabel || '未知委托方';
@@ -497,7 +509,7 @@ function extractReply(raw, taskId) {
 
 module.exports = {
   inject, injectIsolated, buildPrompt, buildInjectMessage, detectRefusal, REFUSAL_PATTERNS,
-  resolveConfig, fetchResult, extractReply, harvestTexts,
+  resolveConfig, fetchResult, extractReply, harvestTexts, invokeTool,
   isEnabled, assertPromptSafe, FORBIDDEN_IN_PROMPT, buildChildEnv, makeSentinel, stripSentinel, toUtcIso,
   toEpochSeconds, resolveHermesBin, toolsForScope, buildArgs, DEFAULT_CONFIRM_SQL,
   _setRunner, _setDbRunner, _resetIdentityBridgeCache,

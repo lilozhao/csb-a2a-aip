@@ -93,7 +93,8 @@ async function registerToRegistry() {
       host: publicHost,
       port: parseInt(port),
       version: A2A_VERSION,
-      platform: 'openclaw',
+      // [2026-09-16] 平台声明跟随 identity.adapter/platform（未声明→openclaw，零变化）
+      platform: identity.adapter || identity.platform || 'openclaw',
       description: identity.description || '',
       skills: identity.skills || [],
       capabilities: identity.capabilities || { chat: true, vision: true, voice: true, selfie: true },
@@ -252,7 +253,8 @@ const standardAPI = new A2AStandardAPI({
   inbox,
   chatNotifyHandler: makeChatNotifyHandler({
     identity,
-    inject: (frame, opts) => require('./adapters/openclaw-gateway').inject(frame, opts),
+    // [2026-09-16] 按 identity.adapter/platform 选注入适配器（默认 openclaw）
+    inject: (frame, opts) => require('./adapters/select').resolveInjectAdapter().inject(frame, opts),
   }),
   supportedVersion: process.env.A2A_PROTOCOL_VERSION || '0.6',
   commandHandler: async (cmdJson, metadata) => {
@@ -318,7 +320,8 @@ const standardAPI = new A2AStandardAPI({
       const { TrustEvidence } = trustEvidence;
       const correlator = require('./a2a-bridge-correlator');
       const audit = require('./a2a-bridge-audit');
-      const gatewayAdapter = require('./adapters/openclaw-gateway');
+      // [2026-09-16] 注入适配器选择（P0-D）：hermes 宿主→ adapters/hermes；其余→ openclaw-gateway
+      const gatewayAdapter = require('./adapters/select').resolveInjectAdapter();
       const confirm = require('./a2a-bridge-confirm');
 
       // [9/10 修复] sender 规范化：message/send 的 sender 可能是字符串，bridge 需对象 {name,url}

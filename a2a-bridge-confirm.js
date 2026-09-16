@@ -373,7 +373,8 @@ async function confirmL3(envelope, ctx = {}, opts = {}) {
 
   let adapter = opts.adapter;
   if (!adapter) {
-    try { adapter = require('./adapters/openclaw-gateway.js'); }
+    // [2026-09-16] 按 identity.adapter/platform 选适配器（默认 openclaw，与 server_v5 同源）
+    try { adapter = require('./adapters/select.js').resolveInjectAdapter(); }
     catch (e) { return { ok: false, declined: true, detail: 'L3 确认器不可用（无 adapter）: ' + e.message }; }
   }
   const send = opts.send || (async (text) => {
