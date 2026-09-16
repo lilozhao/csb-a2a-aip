@@ -439,6 +439,7 @@ async function confirmL3(envelope, ctx = {}, opts = {}) {
 
   const deadline = Date.now() + timeoutMs;
   let lastError = null;
+  let loggedEmpty = false;   // “本轮读回为空”只打一次
   while (Date.now() < deadline) {
     await sleep(pollIntervalMs);
     let resp;
@@ -447,6 +448,14 @@ async function confirmL3(envelope, ctx = {}, opts = {}) {
     // ★ 容错：不同适配器返回形状不完全一致（openclaw 给 result，历史版 hermes 直接把文本挂在顶层）
     //   只认一种形状 = 静默“读了却不解析”（墨丘 2026-09-16 第三轮真因 #2）
     const texts = collectTexts(resp.result || resp);
+    // [2026-09-16] 空读回也要能区开：「根本没读/结构不对」vs「读了但还没那条」
+    //   只打一次，避免每 5s 刷屏
+    if (texts.length === 0) {
+      if (!loggedEmpty) {
+        loggedEmpty = true;
+        console.log(`[CONFIRM-READ] taskId=${tid} parsed=none reason=no_texts（collectTexts 为空）respKeys=${resp ? Object.keys(resp).join(',') : 'null'}`);
+      }
+    }
     for (const t of texts) {
       const parsed = parseConfirmReply(t, taskId);
       // [审计直接证据 / 2026-09-16 墨丘第三轮终验建议] 只要解析出结论就留痕
