@@ -107,6 +107,8 @@ L3 写操作要闭环，需要两段：
 | B | 启用 webhook 平台（8644）接收主人回复 | ⏳ 未实现（需对方启用端口） |
 | C | 不自动读（保守降级） | ✅ 保留为回退 |
 
+- ※ 措辞精确化（舟楫 2026-09-16）：所谓「只读档」准确说是「**无 shell 执行面**」—— `file` 工具集**含 write/patch**（能写文件），只是没有 terminal。不要把它当「无写能力」。
+
 - 默认 SQL = `DEFAULT_CONFIRM_SQL`（CHAT_ID 子查询）· 占位符 `{{CHAT_ID}}` / `{{SINCE_EPOCH}}` / `{{TASK_ID}}`
 - 硬护栏：SQL 必须含 `LIMIT`（库大 + gateway 在写，禁全表）· 查询带超时
 - 详见 `config/hermes-state-db-queries.sql`
