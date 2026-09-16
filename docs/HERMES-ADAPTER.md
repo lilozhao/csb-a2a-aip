@@ -229,6 +229,15 @@ env A2A_BRIDGE_ADAPTER  >  identity.injectAdapter  >  identity.bridge.injectAdap
 2. prompt 形状与 `buildPrompt()` **逐行同形**
 3. **哨兵可解码验证**：`BRIDGE-OK-` + taskId 末16位 + base36(ms)；尾缀还原 = 1789525850469ms，taskId 内嵌 = 1789525850436ms → **差 33ms** ⇒ 确系 `makeSentinel()` 当场生成（三重判据机制被外部验证过 ✓）
 
+### ⚠️ 首次验收暴露的真缺陷（已修 `2026-09-16 11:35`）
+第二封回执直接失败：`bridge_unavailable · 注入超时（120000ms）`。
+- **原因**：`hermes -z` 一个隔离回合本就很重（载入 AGENTS/memory + 完整 agent 回合）——首验 106.7s 已经贴着 120s 上限。
+- **两处修**：
+  1. 默认超时 **120s → 5min**（与 OpenClaw 侧 `A2A_BRIDGE_INJECT_TIMEOUT_MS` 默认对齐）
+  2. **超时改为跟随信封声明**（与 openclaw-gateway 同逻辑）：`opts > max(信封声明, 默认)`，封顶 15min
+     —— 之前只看自己配置，**完全忽略了委托方声明的窗口**（我们的 client 声明 30min，adapter 却 120s 就超）
+- **降级路径按设计诚实报错**（不是静默假成功）✓ 这是三重判据 + C5 的价值实证
+
 ### 另一处诚实证据（值得学）
 墨丘的只读档**没有 terminal / code_execution**，所以 `git rev-parse` / `node adapters/hermes.js` **跑不了**。
 它**没有把「跑不了」编成「跑出来的样子」**，而是改贴**文件级等价证据**（`.git/refs/heads/master` 内容、日志末行），并**逐条标注哪些是实读、哪些是快照替代**。

@@ -202,7 +202,7 @@ function rawRunner(fn) { return async (call) => { lastCall = call; return fn(cal
     process.env.A2A_HERMES_TIMEOUT_MS = '999999999';
     const cfg = H.resolveConfig();
     assert.strictEqual(cfg.mainTo, 'ou_env_wins');
-    assert.strictEqual(cfg.timeoutMs, 15 * 60 * 1000);
+    assert.strictEqual(cfg.timeoutMs, 15 * 60 * 1000, '14天/超大值应封顶 15min');
     // bin 会自动探测（本机若存在 /opt/hermes/.venv/bin/hermes 则返回绝对路径）→ 只断言非空
     assert.ok(typeof cfg.bin === 'string' && cfg.bin.length > 0, 'bin 应非空');
     assert.strictEqual(cfg.home, '/opt/data');
@@ -364,6 +364,23 @@ function rawRunner(fn) { return async (call) => { lastCall = call; return fn(cal
     const ti = lastCall.args.indexOf('-t');
     assert.ok(ti >= 0 && lastCall.args[ti + 1] === 'file', 'read 应自动带只读档');
     assert.strictEqual(r.artifact.tools, 'file');
+    resetEnv();
+  });
+
+  await t('35. 超时跟随信封声明（信封 30min → 封顶 15min；无声明→用默认 5min）', async () => {
+    resetEnv();
+    on();
+    const calls = [];
+    H._setRunner(async (call) => { calls.push(call.timeoutMs); return { code: 0, stdout: `ok\n${sentinelOf(call.args[call.args.length - 1])}`, stderr: '' }; });
+    // 信封声明 30min → 封顶 15min
+    await H.inject({ task: 'ls', scope: 'read', timeoutMs: 30 * 60 * 1000 }, TID);
+    assert.strictEqual(calls[0], 15 * 60 * 1000, '应封顶 15min');
+    // 无声明 → 默认 5min
+    await H.inject({ task: 'ls', scope: 'read' }, TID);
+    assert.strictEqual(calls[1], 5 * 60 * 1000, '默认应为 5min（原 120s 实测不够）');
+    // 显式 opts 优先
+    await H.inject({ task: 'ls', scope: 'read' }, TID, { timeoutMs: 420000 });
+    assert.strictEqual(calls[2], 420000);
     resetEnv();
   });
 

@@ -37,7 +37,10 @@ const fs = require('fs');
 const path = require('path');
 
 // ===== 超时 =====
-const DEFAULT_TIMEOUT_MS = parseInt(process.env.A2A_HERMES_TIMEOUT_MS || '', 10) || 120 * 1000;
+// [2026-09-16] 120s 实测不够：首验 106.7s 
+//   已贴上限，第二封（稍长）直接超时 → 默认提到 **5 分钟**
+//   （与 OpenClaw 侧 A2A_BRIDGE_INJECT_TIMEOUT_MS 默认 5min 对齐）
+const DEFAULT_TIMEOUT_MS = parseInt(process.env.A2A_HERMES_TIMEOUT_MS || '', 10) || 5 * 60 * 1000;
 const MAX_TIMEOUT_MS = 15 * 60 * 1000;
 const DB_TIMEOUT_MS = parseInt(process.env.A2A_HERMES_DB_TIMEOUT_MS || '', 10) || 5000; // 坑②：别让全表查询挂死
 
@@ -321,10 +324,18 @@ async function executeCli(envelope, taskId, opts = {}) {
   const tools = toolsForScope(scope, cfg);
   const args = buildArgs({ prompt, tools, cfg });
 
+  // [2026-09-16] 超时跟随信封声明（与 openclaw-gateway 同逻辑）：
+  //   opts 显式 > max(信封声明, 默认) > 默认；封顶 15min（防挂死）
+  const envelopeMs = (envelope && Number(envelope.timeoutMs)) || 0;
+  const effectiveTimeoutMs = Math.min(
+    opts.timeoutMs || Math.max(envelopeMs, cfg.timeoutMs),
+    MAX_TIMEOUT_MS
+  );
+
   const runner = opts._runner || _runner;
   const started = Date.now();
   const res = await runner({
-    bin: cfg.bin, args, cwd: cfg.cwd, env: buildChildEnv(cfg), timeoutMs: cfg.timeoutMs,
+    bin: cfg.bin, args, cwd: cfg.cwd, env: buildChildEnv(cfg), timeoutMs: effectiveTimeoutMs,
   });
   const durationMs = Date.now() - started;
   const { code, stdout, stderr } = res || {};
@@ -332,7 +343,7 @@ async function executeCli(envelope, taskId, opts = {}) {
   // ── 三重判据（墨丘实测①：rc 靠不住，失败会混进 stdout 且 rc=0）──
   const out = String(stdout || '').trim();
   if (code !== 0) {
-    throw new Error(`hermes -z 非零退出（code=${code}）${stderr ? ': ' + String(stderr).slice(0, 200) : ''}`);
+    throw new Error(`hermes -z 非零退出（code=${code}，超时上限 ${effectiveTimeoutMs}ms）${stderr ? ': ' + String(stderr).slice(0, 200) : ''}`);
   }
   if (!out) throw new Error('hermes -z 无输出（stdout 为空）');
   if (sentinel && !out.includes(sentinel)) {
@@ -342,7 +353,7 @@ async function executeCli(envelope, taskId, opts = {}) {
   const summary = stripSentinel(out, sentinel);
   return {
     summary,
-    artifact: { stdout, stderr, durationMs, via: 'hermes-cli', bin: cfg.bin, sentinel: sentinel || null, tools: tools || null, safeMode: !!cfg.safeMode },
+    artifact: { stdout, stderr, durationMs, via: 'hermes-cli', bin: cfg.bin, sentinel: sentinel || null, tools: tools || null, safeMode: !!cfg.safeMode, timeoutMs: effectiveTimeoutMs },
     refused: detectRefusal(summary),
   };
 }
