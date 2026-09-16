@@ -214,6 +214,46 @@ async function main() {
     else process.env.A2A_BRIDGE_CONFIRM_TIMEOUT_MS = saved;
   });
 
+  // 15. [P0-4 / 2026-09-16 · 墨丘 L3 终验] bridge 必须把读回 path **透传**给 adapter.fetchResult
+  await test('读回 path 透传：opts.readPath / env 均下传 adapter', async () => {
+    const { confirmL3 } = require('../a2a-bridge-confirm');
+    const calls = [];
+    const fakeAdapter = {
+      resolveConfig: () => ({ sessionKey: 'main' }),
+      invokeTool: async () => ({ ok: true }),
+      fetchResult: async (tid, o) => { calls.push(o); return { ok: false, error: 'n/a' }; },
+    };
+    // 显式 readPath（envelope.timeoutMs 声明窗口=30ms，避免默认 5min 上限）
+    const fastEnv = () => ({ ...env(), timeoutMs: 30 });
+    await confirmL3(fastEnv(), { taskId: 'rp1' }, {
+      adapter: fakeAdapter, send: async () => ({ ok: true }),
+      pollIntervalMs: 5, readPath: 'db',
+    });
+    assert.ok(calls.length >= 1, 'fetchResult 应被调用');
+    assert.strictEqual(calls[0].path, 'db', '显式 readPath 应下传');
+
+    // env 兜底
+    calls.length = 0;
+    const saved = process.env.A2A_BRIDGE_CONFIRM_READ_PATH;
+    process.env.A2A_BRIDGE_CONFIRM_READ_PATH = 'db';
+    await confirmL3(fastEnv(), { taskId: 'rp2' }, {
+      adapter: fakeAdapter, send: async () => ({ ok: true }),
+      pollIntervalMs: 5,
+    });
+    assert.strictEqual(calls[0].path, 'db', 'env 兜底应下传');
+    if (saved === undefined) delete process.env.A2A_BRIDGE_CONFIRM_READ_PATH;
+    else process.env.A2A_BRIDGE_CONFIRM_READ_PATH = saved;
+
+    // 未配置 → undefined（保持 adapter 保守默认，行为不变）
+    calls.length = 0;
+    delete process.env.A2A_BRIDGE_CONFIRM_READ_PATH;
+    await confirmL3(fastEnv(), { taskId: 'rp3' }, {
+      adapter: fakeAdapter, send: async () => ({ ok: true }),
+      pollIntervalMs: 5,
+    });
+    assert.strictEqual(calls[0].path, undefined, '未配置应保持 undefined');
+  });
+
   console.log(`\n📊 结果: ${passed} 通过 / ${failed} 失败`);
   process.exit(failed > 0 ? 1 : 0);
 }

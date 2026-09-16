@@ -414,8 +414,14 @@ async function confirmL3(envelope, ctx = {}, opts = {}) {
     const sinceMs = sinceMsDefault; // 委托到达时间（覆盖了“提前确认”场景）
     const remaining = Math.max(0, (sentAt + timeoutMs) - Date.now());
     const sessionKey = adapter.resolveConfig().sessionKey || opts.sessionKey || 'main';
-    console.log(`[CONFIRM-READ] taskId=${tid} sessionKey=${sessionKey} to=${to || '(unset, will use cfg.mainTo)'} limit=100 sinceMs=${sinceMs} (taskTs or sentAt) marker='桥接结果 #${tid}' OR '确认 #${tid}' remainingMs=${remaining}`);
-    return adapter.fetchResult(tid, { to: opts.to, sessionKey, sinceMs, limit: 100 });
+    // [P0-4 / 2026-09-16 · 墨丘 L3 终验] 读回路径必须**透传**给 adapter。
+    //   根因：本行原未传 path ⇒ hermes 适配器落到 `opts.path || (cfg.confirmRead==='db'?'db':'C')`
+    //   的保守默认 → 直接返回错误、**根本不进解析阶段**（[CONFIRM-READ] 只有轮询、无 parsed）。
+    //   该接口差异在 OpenClaw 系（gateway.fetchResult 自带实现、不看 path）被完全掩盖，只在 Hermes 系暴露。
+    //   默认仍保守：readPath 未配置 = undefined ⇒ adapter 回落原逻辑（行为不变）。
+    const readPath = opts.readPath || process.env.A2A_BRIDGE_CONFIRM_READ_PATH || undefined;
+    console.log(`[CONFIRM-READ] taskId=${tid} sessionKey=${sessionKey} to=${to || '(unset, will use cfg.mainTo)'} limit=100 sinceMs=${sinceMs} (taskTs or sentAt) path=${readPath || '(adapter default)'} marker='桥接结果 #${tid}' OR '确认 #${tid}' remainingMs=${remaining}`);
+    return adapter.fetchResult(tid, { to: opts.to, sessionKey, sinceMs, limit: 100, path: readPath });
   });
 
   const sent = await send(buildConfirmMessage({ taskId, envelope, delegatorLabel, window: win }));

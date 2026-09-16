@@ -110,6 +110,8 @@ L3 写操作要闭环，需要两段：
 - 默认 SQL = `DEFAULT_CONFIRM_SQL`（CHAT_ID 子查询）· 占位符 `{{CHAT_ID}}` / `{{SINCE_EPOCH}}` / `{{TASK_ID}}`
 - 硬护栏：SQL 必须含 `LIMIT`（库大 + gateway 在写，禁全表）· 查询带超时
 - 详见 `config/hermes-state-db-queries.sql`
+- **[P0-4 / 2026-09-16 · 墨丘 L3 终验] bridge 必须把读回 `path` 透传给 adapter**：`a2a-bridge-confirm.js` 原先调 `adapter.fetchResult` 时**未传 path** → hermes 回落到保守默认 `C`（直接返回错误、**不进解析阶段**）。该接口差异在 OpenClaw 系（`openclaw-gateway.fetchResult` 自带实现、不看 path）被完全掩盖，只在 Hermes 系暴露。
+  现 bridge 支持 `opts.readPath` + env `A2A_BRIDGE_CONFIRM_READ_PATH` 兜底（未配置 = `undefined`，**行为不变**，仍由 adapter 保守默认决定）。Hermes 宿主接 bridge 时：`A2A_HERMES_CONFIRM_READ=db` 或 `A2A_BRIDGE_CONFIRM_READ_PATH=db`。
 
 ### 5.2 投递腿（`invokeTool`）—— 本机 CLI（已按宿主校准）
 
@@ -181,7 +183,7 @@ frame 双契约 / prompt 模板禁词校验 / 无 shell 拼接（含 `;` `&&` `$
 | + | 副作用实测（跑前后）：`MEMORY.md`/`USER.md` **md5 未变** ✓；`state.db +278KB`（新增一条独立会话记录）；**主会话上下文不受污染** ✓ | 佐证「隔离回合」语义成立 |
 
 **测试**：`tests/hermes-adapter.test.js` → **25/25**（新增：三重判据 / 环境清洗 / 工具锁 / state.db 三护栏 / TZ / 语义边界）
-**回归**：bridge-core 29 · bridge-uac 17 · bridge-confirm 14 · bridge-adapter 15 —— 全绿
+**回归**：bridge-core 29 · bridge-uac 17 · bridge-confirm 15 · bridge-adapter 15 · hermes-adapter 44 —— 全绿
 
 ## 十、Q1 / Q4 补齐（2026-09-16 二轮实测 → 已改码）
 
