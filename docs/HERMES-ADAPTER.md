@@ -75,6 +75,18 @@ injectIsolated():
 
 > 备注（K14/§六.3）：远程命令审计日志路径 `A2A_CMD_AUDIT_LOG`（默认 `/home/node/.openclaw/workspace/logs/a2a_command.log`）；容器 home 不可写时设为可写目录，失败会降级为一条显式告警。
 
+> **★ 宿主必需 env · 投递腿（2026-09-16 五轮 · 墨丘实测）**
+> Hermes 侧 `send` 子命令依赖**懒安装目录**（墨丘实例 = `/tmp/lark-fast`）；而 `buildChildEnv()` 的**白名单清洗**会把它一并剥掉 → `hermes send` 报
+> `{"error":"Feishu dependencies not installed. Run `hermes setup`..."}`（`rc=1`，形似「目标无效 / 平台未配置」，**极易误判成 target 格式或凭证问题**）。
+> 定位依据：手动 `hermes send` 成功 ⇒ 排除 target（`normalizeTarget()` 补的 `feishu:oc_…` 正确）与凭证；根因是子进程 env 丢了依赖路径。
+> **解法（不改码，用现成的显式附加机制）**：
+> ```
+> A2A_HERMES_ENV_EXTRA=HERMES_LAZY_INSTALL_TARGET=/tmp/lark-fast
+> ```
+> ⇒ 这是 **K3「白名单是盲的」的**同款复发** —— 白名单不区分「多余的脏变量」与「关键的依赖路径变量」（上次是写入护栏 `HERMES_WRITE_SAFE_ROOT`，这次是依赖路径）。**宿主每多一个此类变量，都须逐条加入 `ENV_ALLOWLIST` 或 `A2A_HERMES_ENV_EXTRA`——不能默认白名单够用。**
+>
+> **⚠️ 宿主前置条件（持久化，非本次阻塞项）**：该懒安装目录若落在 `/tmp`（易失），且宿主进程带 `HERMES_DISABLE_LAZY_INSTALLS=1`（禁自动重装）→ **容器重启清空 `/tmp` 后 `send` 会永久失败且不自愈**。部署时应把该目录**落在持久卷**，并纳入宿主资产清单。
+
 ## 五、L3 confirm：**读回腿** + **投递腿**
 
 L3 写操作要闭环，需要两段：
