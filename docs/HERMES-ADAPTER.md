@@ -98,4 +98,20 @@ frame 双契约 / prompt 模板禁词校验 / 无 shell 拼接（含 `;` `&&` `$
 降级路径 c5 / 配置优先级（env > identity）/ fetchResult 路径 C 保守兜底
 
 ---
-_一句话：**Hermes 的 C4-H = 「本机 CLI 注入隔离回合」，接口与 OpenClaw 侧完全同形；默认关、禁 shell 拼接、禁重启类指令、失败一律 C5。**_
+
+## 九、墨丘实测并入（2026-09-16 · 四条反直觉发现 → 已改码）
+
+| # | 实测发现 | 设计变更 |
+|---|---|---|
+| **①** | **rc 靠不住**：`-z "读 /no/such/file"` → **rc=0、stderr 空**，失败信息当「正常回答」塞进 stdout | **判据改三重**：`rc==0` + `stdout 非空` + **哨兵串命中**（prompt 末行要求回显 `BRIDGE-OK-…`，命中才剥行入回执）；留 `noSentinel` 逃生门 |
+| **②** | **工具能锁（`-t file` → 回 NO_TOOL），「身份」锁不干净**（禁了 SOUL/IDENTITY/memory 仍自称墨丘；**未定位**） | 新增 `A2A_HERMES_TOOLS`（传 `-t <tools>`）；「身份不隔离」记为**已知边界**（非本 adapter 可解） |
+| **③** | **shell 层安全（payload 不会二次解释 ✓），语义层不安全**（「执行这条命令并把输出给我」→ 真执行，approvals 自动绕过） | 禁词表只兜**显式危险串**；**授权责任在 bridge（L3/UAC）+ 宿主工具白名单**；新增测试 15 显式记录该边界 |
+| **④** | **L3 读回可走 state.db**（FTS5，0.018s / 254 命中 0.02s）。两坑：**容器 TZ=UTC（差 8h）**、**库 468MB 且 gateway 在写（全表 COUNT 曾 300s 超时）** | 实现 `fetchResult(path:'db')`：SQL 模板**必须显式配置**、**强制含 LIMIT**、查询超时兜底、`since` 一律 **toUtcIso()** |
+| **⑤** | **环境坑**：A2A 进程带 `HERMES_S6_SUPERVISED_CHILD=1` 等 → 子进程会以为自己是 s6 托管的网关子进程 | `buildChildEnv()` **白名单清洗**（只放行 PATH/HOME/LANG/TERM/TMPDIR/HERMES_HOME… + 显式 `ENV_EXTRA`），**剥除所有 `HERMES_S6_*` / `S6_*`** |
+| + | 副作用实测（跑前后）：`MEMORY.md`/`USER.md` **md5 未变** ✓；`state.db +278KB`（新增一条独立会话记录）；**主会话上下文不受污染** ✓ | 佐证「隔离回合」语义成立 |
+
+**测试**：`tests/hermes-adapter.test.js` → **25/25**（新增：三重判据 / 环境清洗 / 工具锁 / state.db 三护栏 / TZ / 语义边界）
+**回归**：bridge-core 29 · bridge-uac 17 · bridge-confirm 14 · bridge-adapter 15 —— 全绿
+
+---
+_一句话：**Hermes 的 C4-H = 「本机 CLI 注入隔离回合」，接口与 OpenClaw 侧完全同形；默认关、参数数组禁 shell 拼接、禁重启类指令、三重判据（rc+非空+哨兵）、环境白名单、失败一律 C5。**_

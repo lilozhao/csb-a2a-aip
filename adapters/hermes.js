@@ -1,24 +1,31 @@
 #!/usr/bin/env node
 /**
  * ═══════════════════════════════════════════════════════
- * A2A Bridge · Hermes 注入适配器（C4-H · P0-C 骨架）
+ * A2A Bridge · Hermes 注入适配器（C4-H · P0-C）
  * ═══════════════════════════════════════════════════════
  *
  * 通道：**本机 CLI 注入**（与 OpenClaw 侧的 HTTP C1 对称）
  *   A2A server（同机）→ spawn(`hermes -z "<prompt>"`) → 取 stdout
- *   `-z` = 隔离回合：**不污染主会话**（宿主自述：Hermes 没有「注入当前思考」的通道）
+ *   `-z` = 隔离回合：不污染主会话
  *
- * 背景（2026-09-16 调研）：
- *   - Hermes Agent v0.20.0（Nous Research 开源框架）· s6-supervise 托管
- *   - 无入站 HTTP 端口；平台适配器（feishu WS）驱动主会话
- *   - 可用隔离原语：`hermes -z` / cron / delegate_task / webhook(8644, 未启用)
+ * 背景（2026-09-16 调研 + 墨丘实测反馈）：
+ *   - Hermes Agent v0.20.0（Nous Research 开源框架）· s6-supervise 托管 · 无入站 HTTP 口
  *   - ⚠️ 硬边界：重启必须在 gateway 进程之外执行（网关内调用会自杀 SIGTERM）
- *   → 详见 docs/hermes-injection-recon-2026-09-16.md · 契约 docs/HERMES-ADAPTER.md
  *
- * 状态：**P0-C 骨架 —— 默认关、不接线、零行为变化**
- *   开关：A2A_BRIDGE_HERMES=off（默认）｜开启后才可能注入
- *   接线（server_v5 装配 + 灰度）= P0-D，需先验证 4 个问号
+ * 墨丘实测四条（**已并入本文件设计**）：
+ *   ① **rc 靠不住**：`-z "读 /no/such/file"` → rc=0、stderr 空，失败信息混进 stdout。
+ *      ⇒ 判据三重：`rc==0` + `stdout 非空` + **哨兵串命中**（见 executeCli）
+ *   ② **工具能锁（-t file），"身份"锁不干净**（禁了 SOUL/IDENTITY/memory 仍自称墨丘）
+ *      ⇒ 已知边界，非本 adapter 可解；写入文档
+ *   ③ **shell 层安全，语义层不安全**：payload 不会被二次解释 ✓，但**委托内容即它的指令**
+ *      ⇒ 风险是「授权」不是「拼接」；禁词表挡显式危险串，挡不住「帮我清理一下目录」
+ *      ⇒ 责任仍在 bridge（L3/UAC）+ 宿主工具白名单；adapter 只做显式危险串兜底
+ *   ④ **L3 读回可走 state.db**（FTS5，0.018s；两个坑：容器 TZ=UTC 差 8h；库 468MB 勿全表 COUNT）
+ *      ⇒ 实现 path=db（需显式配置 SQL 模板，强制 LIMIT + 超时）
+ *   ⑤ **环境清洗**：A2A 进程带 HERMES_S6_SUPERVISED_CHILD=1 等 → spawn 必须白名单清洗，
+ *      否则子进程会以为自己是 s6 托管的网关子进程
  *
+ * 状态：**默认关、不接线、零行为变化**（接线 = P0-D）
  * 作者: 若兰 🌸 · 2026-09-16
  * ═══════════════════════════════════════════════════════
  */
@@ -32,8 +39,9 @@ const path = require('path');
 // ===== 超时 =====
 const DEFAULT_TIMEOUT_MS = parseInt(process.env.A2A_HERMES_TIMEOUT_MS || '', 10) || 120 * 1000;
 const MAX_TIMEOUT_MS = 15 * 60 * 1000;
+const DB_TIMEOUT_MS = parseInt(process.env.A2A_HERMES_DB_TIMEOUT_MS || '', 10) || 5000; // 坑②：别让全表查询挂死
 
-// ===== 拒绝检测（与 openclaw-gateway 完全同一份词表/窗口）=====
+// ===== 拒绝检测（与 openclaw-gateway 同一份词表/窗口）=====
 const REFUSAL_HEAD_CHARS = 300;
 const REFUSAL_PATTERNS = [
   /(?:^|\n)[\s>*#\-]*[⛔❌🚫]/,
@@ -48,9 +56,9 @@ const REFUSAL_PATTERNS = [
 ];
 
 /**
- * prompt 禁词（硬安全约束）
- * 来源：Hermes 硬边界——在网关内部调用 gateway 管理命令会把自己 SIGTERM。
- * P0 一律拒绝这类 prompt（宁可让宿主侧人工执行，也不冒自杀风险）。
+ * prompt 显式禁词（硬安全约束）
+ * 注意（墨丘实测③）：这只能挡**显式危险串**；挡不住语义化的破坏性指令
+ *   （如「帮我清理一下这个目录」）。语义层的授权责任在 bridge（L3/UAC）+ 宿主工具白名单。
  */
 const FORBIDDEN_IN_PROMPT = [
   { re: /hermes\s+gateway\s+(restart|stop|kill|reload)/i, why: '禁止在注入回合里操作 gateway 生命周期（网关内调用=自杀 SIGTERM）' },
@@ -58,6 +66,40 @@ const FORBIDDEN_IN_PROMPT = [
   { re: /\b(pkill|killall)\b|\bkill\s+-9\b|\bkill\s+-TERM\b/i, why: '禁止进程击杀类命令' },
   { re: /\bhermes\s+gateway\s+run\b/i, why: '禁止在注入回合内重启/顶替 gateway 进程' },
 ];
+
+// ===== spawn 环境白名单（墨丘实测⑤）=====
+// 坑：A2A 进程带 HERMES_S6_SUPERVISED_CHILD=1 / S6_* 等 → 直接透传会让子进程
+//      误以为自己是 s6 托管的网关子进程。只放行最小必要变量。
+const ENV_ALLOWLIST = [
+  'PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TERM', 'TMPDIR', 'SHELL', 'PWD',
+  'PYTHONUNBUFFERED', 'PYTHONIOENCODING', 'HERMES_HOME',
+];
+const ENV_DENY_PREFIX = ['HERMES_S6_', 'S6_', 'S6-'];
+
+/** 构造干净的子进程环境（白名单 + 显式附加），绝不透传 s6/网关类变量 */
+function buildChildEnv(cfg) {
+  const out = {};
+  for (const k of ENV_ALLOWLIST) {
+    if (process.env[k] !== undefined) out[k] = process.env[k];
+  }
+  out.HERMES_HOME = cfg.home;
+  // 显式附加：A2A_HERMES_ENV_EXTRA="K1=V1,K2=V2"
+  const extra = process.env.A2A_HERMES_ENV_EXTRA || '';
+  if (extra) {
+    for (const kv of extra.split(',')) {
+      const i = kv.indexOf('=');
+      if (i > 0) {
+        const k = kv.slice(0, i).trim();
+        if (!ENV_DENY_PREFIX.some((p) => k.startsWith(p))) out[k] = kv.slice(i + 1).trim();
+      }
+    }
+  }
+  // 兜底：清掉任何漏网的 s6 变量
+  for (const k of Object.keys(out)) {
+    if (ENV_DENY_PREFIX.some((p) => k.startsWith(p))) delete out[k];
+  }
+  return out;
+}
 
 // ===== 开关 =====
 function isEnabled() {
@@ -80,8 +122,6 @@ function _resetIdentityBridgeCache() { _identityCache = undefined; }
 
 /**
  * 配置解析（优先级：env > identity.json.bridge > 默认）
- * @returns {{enabled:boolean, bin:string, home:string, timeoutMs:number,
- *            mainTo:string, channel:string, sessionKey:string, cwd:string}}
  */
 function resolveConfig(overrides = {}) {
   const idb = identityBridge();
@@ -89,6 +129,9 @@ function resolveConfig(overrides = {}) {
     enabled: isEnabled(),
     bin: process.env.A2A_HERMES_BIN || 'hermes',
     home: process.env.A2A_HERMES_HOME || '/opt/data',
+    // 工具锁：墨丘实测②——`-t file` 能把它锁成无终端（回 NO_TOOL）
+    tools: process.env.A2A_HERMES_TOOLS || '',                 // 例：'file'；空=不传 -t
+    extraArgs: (process.env.A2A_HERMES_EXTRA_ARGS || '').trim().split(/\s+/).filter(Boolean),
     timeoutMs: Math.min(
       parseInt(process.env.A2A_HERMES_TIMEOUT_MS || '', 10) || DEFAULT_TIMEOUT_MS,
       MAX_TIMEOUT_MS
@@ -97,20 +140,25 @@ function resolveConfig(overrides = {}) {
     channel: process.env.A2A_BRIDGE_CHANNEL || idb.channel || 'feishu',
     sessionKey: process.env.A2A_BRIDGE_SESSION_KEY || idb.sessionKey || 'main',
     cwd: process.env.A2A_HERMES_CWD || path.join(__dirname, '..'),
+    // state.db 读回（path=db）
+    dbPath: process.env.A2A_HERMES_DB_PATH || '',
+    dbBin: process.env.A2A_HERMES_SQLITE3_BIN || 'sqlite3',
+    confirmSql: process.env.A2A_HERMES_CONFIRM_SQL_TEMPLATE || '',
   };
   return { ...cfg, ...overrides };
 }
 
 /**
- * 把 delegation 信封翻译成给 Hermes 的任务指令（与 openclaw 侧同格式，
- * 额外加一行「隔离回合」标记，便于宿主侧区分桥接回合）
+ * 把 delegation 信封翻译成给 Hermes 的任务指令
+ * @param {object} opts { sentinel?: string, tools?: string }
+ * 墨丘实测①：rc 不可靠 → 必须要求它**回显哨兵串**，adapter 据此判成功
  */
-function buildPrompt(envelope, taskId) {
+function buildPrompt(envelope, taskId, opts = {}) {
   const d = (envelope && envelope.delegation) || envelope || {};
   const scope = (envelope && envelope.scope) || d.scope || 'read';
   const task = (envelope && envelope.task) || d.task || d.description || d.prompt || '';
   const delegator = (envelope && envelope.delegator) || d.delegator || '未知委托方';
-  return [
+  const lines = [
     `【桥接委托 · Bridge Delegation · Hermes 隔离回合】`,
     `任务ID: ${taskId}`,
     `委托方: ${delegator}`,
@@ -122,7 +170,11 @@ function buildPrompt(envelope, taskId) {
     `2. 执行后请用简洁中文总结：做了什么 + 结果（含关键数据/输出）；`,
     `3. 若任务需要写操作或对外发送，先声明你将做什么再执行；`,
     `4. 本回合为隔离回合，不得操作 gateway 生命周期（重启/停止）或 s6 监管层。`,
-  ].join('\n');
+  ];
+  if (opts.sentinel) {
+    lines.push(`5. **最后一行**必须原样输出这个哨兵串（不得改动、不得加前后缀，这是回执是否成功的唯一凭证）：${opts.sentinel}`);
+  }
+  return lines.join('\n');
 }
 
 /** 禁词校验：命中即抛错（宁可拒绝，也不冒宿主自杀风险） */
@@ -133,30 +185,42 @@ function assertPromptSafe(prompt) {
   return true;
 }
 
-/** 拒绝意图检测（只扫开头窗口，避免长报告里的统计数字误判） */
 function detectRefusal(content) {
   if (!content) return false;
   const head = String(content).slice(0, REFUSAL_HEAD_CHARS);
   return REFUSAL_PATTERNS.some((re) => re.test(head));
 }
 
-// ===== 默认 runner（可被测试替换）=====
+/** 生成本次调用的哨兵串 */
+function makeSentinel(taskId) {
+  return `BRIDGE-OK-${String(taskId || 'x').replace(/[^\w-]/g, '').slice(-16)}-${Date.now().toString(36)}`;
+}
+
+/** 从输出里剥掉哨兵行 */
+function stripSentinel(text, sentinel) {
+  if (!sentinel) return text;
+  return String(text).split('\n').filter((l) => !l.includes(sentinel)).join('\n').trim();
+}
+
+/** 本地时间 → UTC ISO（墨丘实测④坑①：容器 TZ=UTC，按本地时间过滤会差 8 小时） */
+function toUtcIso(d) {
+  const dt = d instanceof Date ? d : new Date(d);
+  if (Number.isNaN(dt.getTime())) throw new Error(`toUtcIso: 无效时间 ${d}`);
+  return dt.toISOString(); // 始终 UTC
+}
+
+// ===== runner（可被测试替换）=====
 function defaultRunner({ bin, args, cwd, env, timeoutMs }) {
   return new Promise((resolve, reject) => {
     let child;
     try {
-      // 关键：shell:false + 参数数组 → 不做 shell 拼接（payload 里的 ; && $(...) 不会被执行）
+      // shell:false + 参数数组 → 不做 shell 拼接（墨丘实测③：payload 不会被二次解释）
       child = spawn(bin, args, { cwd, env, shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (e) {
       return reject(new Error(`spawn 失败: ${e.message}`));
     }
-    let stdout = '';
-    let stderr = '';
-    let killed = false;
-    const timer = setTimeout(() => {
-      killed = true;
-      try { child.kill('SIGKILL'); } catch (_) { /* ignore */ }
-    }, timeoutMs);
+    let stdout = '', stderr = '', killed = false;
+    const timer = setTimeout(() => { killed = true; try { child.kill('SIGKILL'); } catch (_) {} }, timeoutMs);
     child.stdout.on('data', (d) => { stdout += d; });
     child.stderr.on('data', (d) => { stderr += d; });
     child.on('error', (e) => {
@@ -176,42 +240,44 @@ function _setRunner(fn) { _runner = fn || defaultRunner; }
 // ===== 核心：CLI 注入 =====
 async function executeCli(envelope, taskId, opts = {}) {
   const cfg = resolveConfig(opts);
-  if (!cfg.enabled) {
-    throw new Error('A2A_BRIDGE_HERMES=off —— Hermes 注入未启用（默认关，零行为变化）');
-  }
-  const prompt = buildPrompt(envelope, taskId);
+  if (!cfg.enabled) throw new Error('A2A_BRIDGE_HERMES=off —— Hermes 注入未启用（默认关，零行为变化）');
+
+  const sentinel = opts.noSentinel ? null : (opts.sentinel || makeSentinel(taskId));
+  const prompt = buildPrompt(envelope, taskId, { sentinel, tools: cfg.tools });
   assertPromptSafe(prompt);
+
+  const args = [];
+  if (cfg.tools) args.push('-t', cfg.tools);   // 工具锁（实测②：-t file → NO_TOOL）
+  if (cfg.extraArgs.length) args.push(...cfg.extraArgs);
+  args.push('-z', prompt);
 
   const runner = opts._runner || _runner;
   const started = Date.now();
   const res = await runner({
-    bin: cfg.bin,
-    args: ['-z', prompt],
-    cwd: cfg.cwd,
-    env: { ...process.env, HERMES_HOME: cfg.home },
-    timeoutMs: cfg.timeoutMs,
+    bin: cfg.bin, args, cwd: cfg.cwd, env: buildChildEnv(cfg), timeoutMs: cfg.timeoutMs,
   });
   const durationMs = Date.now() - started;
   const { code, stdout, stderr } = res || {};
 
+  // ── 三重判据（墨丘实测①：rc 靠不住，失败会混进 stdout 且 rc=0）──
+  const out = String(stdout || '').trim();
   if (code !== 0) {
     throw new Error(`hermes -z 非零退出（code=${code}）${stderr ? ': ' + String(stderr).slice(0, 200) : ''}`);
   }
-  const summary = String(stdout || '').trim();
-  if (!summary) throw new Error('hermes -z 无输出（stdout 为空）');
+  if (!out) throw new Error('hermes -z 无输出（stdout 为空）');
+  if (sentinel && !out.includes(sentinel)) {
+    throw new Error('未命中哨兵串：rc==0 但未见哨兵 —— -z 的 rc 不可靠，失败信息可能被当正常回答塞进 stdout（墨丘实测①）');
+  }
 
+  const summary = stripSentinel(out, sentinel);
   return {
     summary,
-    artifact: { stdout, stderr, durationMs, via: 'hermes-cli', bin: cfg.bin },
+    artifact: { stdout, stderr, durationMs, via: 'hermes-cli', bin: cfg.bin, sentinel: sentinel || null, tools: cfg.tools || null },
     refused: detectRefusal(summary),
   };
 }
 
-/**
- * 注入（双契约，与 openclaw-gateway 完全同形）
- *   A. inject(envelope, taskId, opts)              → {summary, artifact?, refused?}；失败抛错
- *   B. inject({taskId, delegatorLabel, envelope}, opts) → {ok:true,result} | {ok:false,error}；不抛
- */
+/** 注入（双契约，与 openclaw-gateway 同形） */
 async function inject(envelopeOrFrame, taskIdOrOpts, maybeOpts = {}) {
   const isFrame = !!(envelopeOrFrame && envelopeOrFrame.envelope);
   let envelope, taskId, opts;
@@ -224,17 +290,11 @@ async function inject(envelopeOrFrame, taskIdOrOpts, maybeOpts = {}) {
     taskId = typeof taskIdOrOpts === 'string' ? taskIdOrOpts : undefined;
     opts = (typeof taskIdOrOpts === 'object' && taskIdOrOpts) ? taskIdOrOpts : maybeOpts;
   }
-
   if (isFrame) {
     try {
       const r = await executeCli(envelope, taskId, opts);
-      return {
-        ok: true,
-        summary: r.summary,
-        artifact: r.artifact,
-        refused: r.refused,
-        result: { sent: true, taskId, via: 'hermes-cli', ...r },
-      };
+      return { ok: true, summary: r.summary, artifact: r.artifact, refused: r.refused,
+               result: { sent: true, taskId, via: 'hermes-cli', ...r } };
     } catch (e) {
       return { ok: false, error: e.message };
     }
@@ -242,33 +302,82 @@ async function inject(envelopeOrFrame, taskIdOrOpts, maybeOpts = {}) {
   return await executeCli(envelope, taskId, opts); // 失败抛错 → bridge core 走 C5
 }
 
-/**
- * 隔离注入：Hermes 的 `-z` 本身就是隔离回合，故与 executeCli 同路径；
- * 额外强制「禁词校验」（不允许通过 isolated 绕过）。
- */
+/** 隔离注入：`-z` 本身即隔离；禁词不可绕过 */
 async function injectIsolated(envelope, taskId, opts = {}) {
   const r = await executeCli(envelope, taskId, { ...opts, isolated: true });
   return { ok: true, summary: r.summary, artifact: r.artifact, refused: r.refused };
 }
 
-/** 构造注入消息（frame 形式，对齐 openclaw 侧签名） */
 function buildInjectMessage(frame = {}) {
   const taskId = frame.taskId || 'unknown';
   const label = frame.delegatorLabel || '未知委托方';
   return buildPrompt(frame.envelope || {}, taskId).replace('未知委托方', label);
 }
 
-// ===== L3 confirm 读回（P0 默认走「路径 C：保守不自动读」）=====
+// ===== L3 confirm 读回 =====
 /**
- * P0 明确不做自动读回：写操作仍由宿主侧原流程确认。
- * 候选（P0-D 验证后再实现）：
- *   A. 直查 state.db（SQLite+FTS5）匹配 `确认 #<taskId>`
- *   B. 启用 webhook 平台（8644）接收主人回复
+ * path=db：直查 state.db（墨丘实测④：FTS5 可用，0.018s）
+ * 安全护栏：
+ *   - SQL 模板必须显式配置（A2A_HERMES_CONFIRM_SQL_TEMPLATE），含 {{TASK_ID}} / {{SINCE}}
+ *   - **必须含 LIMIT**（坑②：468MB 库 + gateway 在写，禁全表 COUNT → 曾 300s 超时）
+ *   - 查询超时兜底 DB_TIMEOUT_MS
  */
+function escapeSql(v) { return String(v == null ? '' : v).replace(/'/g, "''"); }
+
+async function readFromStateDb(taskId, cfg, opts = {}) {
+  if (!cfg.dbPath) return { ok: false, error: 'hermes: 未配置 A2A_HERMES_DB_PATH（state.db 路径）' };
+  if (!cfg.confirmSql) {
+    return { ok: false, error: 'hermes: 未配置 A2A_HERMES_CONFIRM_SQL_TEMPLATE —— 需按 state.db schema 填（可含 {{TASK_ID}} / {{SINCE}}）' };
+  }
+  if (!/\blimit\b/i.test(cfg.confirmSql)) {
+    return { ok: false, error: 'hermes: SQL 模板必须含 LIMIT（468MB 库禁全表查询，墨丘实测④坑②）' };
+  }
+  const since = opts.since ? `'${escapeSql(toUtcIso(opts.since))}'` : 'NULL';
+  const sql = cfg.confirmSql
+    .replace(/\{\{TASK_ID\}\}/g, escapeSql(taskId))
+    .replace(/\{\{SINCE\}\}/g, since);
+
+  const runner = opts._dbRunner || _dbRunner;
+  const r = await runner({ bin: cfg.dbBin, dbPath: cfg.dbPath, sql, timeoutMs: DB_TIMEOUT_MS });
+  if (!r || r.code !== 0) {
+    return { ok: false, error: `hermes: state.db 查询失败 ${r && r.stderr ? String(r.stderr).slice(0, 200) : ''}` };
+  }
+  const raw = String(r.stdout || '');
+  const reply = extractReply(raw, taskId);
+  return { ok: true, matched: reply.action !== 'none', reply, raw };
+}
+
+/** 默认 sqlite3 runner（可被测试替换） */
+function defaultDbRunner({ bin, dbPath, sql, timeoutMs }) {
+  return new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = spawn(bin, ['-readonly', dbPath, sql], { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (e) { return reject(new Error(`spawn sqlite3 失败: ${e.message}`)); }
+    let stdout = '', stderr = '', killed = false;
+    const timer = setTimeout(() => { killed = true; try { child.kill('SIGKILL'); } catch (_) {} }, timeoutMs);
+    child.stdout.on('data', (d) => { stdout += d; });
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.on('error', (e) => { clearTimeout(timer); reject(new Error(`无法执行 sqlite3: ${e.message}`)); });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (killed) return reject(new Error(`state.db 查询超时（${timeoutMs}ms）`));
+      resolve({ code, stdout, stderr });
+    });
+  });
+}
+let _dbRunner = defaultDbRunner;
+function _setDbRunner(fn) { _dbRunner = fn || defaultDbRunner; }
+
 async function fetchResult(taskId, opts = {}) {
   const cfg = resolveConfig(opts);
-  if (opts.path === 'db' || opts.path === 'webhook') {
-    return { ok: false, error: `hermes: confirm 读回路径「${opts.path}」尚未实现（P0 仅定义；见 HERMES-ADAPTER.md §五）` };
+  const p = opts.path || 'C';
+  if (p === 'db') {
+    try { return await readFromStateDb(taskId, cfg, opts); }
+    catch (e) { return { ok: false, error: `hermes: ${e.message}` }; }
+  }
+  if (p === 'webhook') {
+    return { ok: false, error: 'hermes: confirm 读回路径「webhook(8644)」尚未实现（见 HERMES-ADAPTER.md §五）' };
   }
   return {
     ok: false,
@@ -277,7 +386,7 @@ async function fetchResult(taskId, opts = {}) {
   };
 }
 
-/** 从回读结果抽取文本（对齐 openclaw 侧签名；P0 先做保守实现） */
+// ===== 工具函数 =====
 function harvestTexts(result, opts = {}) {
   if (!result) return [];
   if (Array.isArray(result)) return result.filter((x) => typeof x === 'string');
@@ -286,7 +395,6 @@ function harvestTexts(result, opts = {}) {
   return [];
 }
 
-/** 匹配「确认 #<taskId>」/「拒绝 #<taskId>」 */
 function extractReply(raw, taskId) {
   const s = String(raw || '');
   if (taskId && new RegExp(`确认\\s*#?\\s*${taskId}`).test(s)) return { action: 'approve' };
@@ -297,30 +405,16 @@ function extractReply(raw, taskId) {
 }
 
 module.exports = {
-  // 主接口（与 openclaw-gateway 同形）
-  inject,
-  injectIsolated,
-  buildPrompt,
-  buildInjectMessage,
-  detectRefusal,
-  REFUSAL_PATTERNS,
-  resolveConfig,
-  fetchResult,
-  extractReply,
-  harvestTexts,
-  // 安全/开关
-  isEnabled,
-  assertPromptSafe,
-  FORBIDDEN_IN_PROMPT,
-  // 测试钩子
-  _setRunner,
-  _resetIdentityBridgeCache,
-  _internals: { executeCli, defaultRunner },
+  inject, injectIsolated, buildPrompt, buildInjectMessage, detectRefusal, REFUSAL_PATTERNS,
+  resolveConfig, fetchResult, extractReply, harvestTexts,
+  isEnabled, assertPromptSafe, FORBIDDEN_IN_PROMPT, buildChildEnv, makeSentinel, stripSentinel, toUtcIso,
+  _setRunner, _setDbRunner, _resetIdentityBridgeCache,
+  _internals: { executeCli, defaultRunner, defaultDbRunner, readFromStateDb },
 };
 
 if (require.main === module) {
   const cfg = resolveConfig();
-  console.log('[hermes-adapter] enabled=%s bin=%s home=%s timeout=%dms channel=%s',
-    cfg.enabled, cfg.bin, cfg.home, cfg.timeoutMs, cfg.channel);
+  console.log('[hermes-adapter] enabled=%s bin=%s home=%s timeout=%dms tools=%s channel=%s',
+    cfg.enabled, cfg.bin, cfg.home, cfg.timeoutMs, cfg.tools || '(none)', cfg.channel);
   console.log('（P0 骨架：默认关、不接线。接线= P0-D）');
 }
