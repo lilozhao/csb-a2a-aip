@@ -309,6 +309,26 @@ async function main() {
     assert.strictEqual(b.ok, true, '旧形状（顶层 raw 字符串）也应能被容错解析');
   });
 
+  // 18. [2026-09-16 回归] 「ok:true 但读回为空」分支必须在**不抛异常**的前提下优雅超时
+  //   背景：为「空读回留痕」加日志时把 `${tid}` 写在轮询循环作用域外 → 首次空读 ReferenceError
+  //         → 异常冒泡 → 委托 REJECTED（且旧测试全绿，因为没覆盖这个分支）
+  await test('空读回分支不崩：ok=true 但 collectTexts 为空 → 优雅超时（不抛）', async () => {
+    const { confirmL3 } = require('../a2a-bridge-confirm');
+    let callCount = 0;
+    const emptyAdapter = {
+      resolveConfig: () => ({ sessionKey: 'main' }),
+      invokeTool: async () => ({ ok: true }),
+      // ★ 关键：ok:true 但结果里没有任何可取文本（正常时序的最常见状态：主人还没回）
+      fetchResult: async () => { callCount++; return { ok: true, matched: false, raw: '' }; },
+    };
+    const r = await confirmL3({ ...env(), timeoutMs: 30 }, { taskId: 'empty-1' }, {
+      adapter: emptyAdapter, send: async () => ({ ok: true }), pollIntervalMs: 5,
+    });
+    assert.strictEqual(r.ok, false, '应超时而不是抛错');
+    assert.strictEqual(r.timedOut, true);
+    assert.ok(callCount >= 1, '应确实轮询过');
+  });
+
   console.log(`\n📊 结果: ${passed} 通过 / ${failed} 失败`);
   process.exit(failed > 0 ? 1 : 0);
 }

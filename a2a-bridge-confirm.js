@@ -453,7 +453,9 @@ async function confirmL3(envelope, ctx = {}, opts = {}) {
     if (texts.length === 0) {
       if (!loggedEmpty) {
         loggedEmpty = true;
-        console.log(`[CONFIRM-READ] taskId=${tid} parsed=none reason=no_texts（collectTexts 为空）respKeys=${resp ? Object.keys(resp).join(',') : 'null'}`);
+        // ⚠️ 2026-09-16 修：此处原写成 `${tid}` —— `tid` 只是 read 回调的参数，
+        //   在轮询循环作用域内未定义 → **首次空读必 ReferenceError**（舟楫首测逮到）。
+        console.log(`[CONFIRM-READ] taskId=${taskId} parsed=none reason=no_texts（collectTexts 为空）respKeys=${resp ? Object.keys(resp).join(',') : 'null'}`);
       }
     }
     for (const t of texts) {
