@@ -605,9 +605,13 @@ async function readFromStateDb(taskId, cfg, opts = {}) {
   if (/\{\{CHAT_ID\}\}/.test(template) && !chatId) {
     return { ok: false, error: 'hermes: 需 A2A_HERMES_CHAT_ID（推荐值，不会过期；见 config/hermes-state-db-queries.sql ②）' };
   }
-  const sinceIso = opts.since ? `'${escapeSql(toUtcIso(opts.since))}'` : 'NULL';
+  // ★ 参数名对齐（墨丘 2026-09-16 第三轮）：bridge 传的是 `sinceMs`（毫秒），不是 `since`
+  //   两个都收，否则时间下界丢失（落 0 → 恒真 → 不致命但失真）
+  const sinceIn = opts.since
+    || (typeof opts.sinceMs === 'number' && opts.sinceMs > 0 ? new Date(opts.sinceMs) : null);
+  const sinceIso = sinceIn ? `'${escapeSql(toUtcIso(sinceIn))}'` : 'NULL';
   // ★ epoch 缺省用 0（"无下界"）而非 NULL：`timestamp >= NULL` 恒为 NULL ⇒ 条件恒假、一行也回不来
-  const sinceEpoch = opts.since ? String(toEpochSeconds(opts.since)) : '0';
+  const sinceEpoch = sinceIn ? String(toEpochSeconds(sinceIn)) : '0';
   const sql = template
     .replace(/\{\{TASK_ID\}\}/g, escapeSql(taskId))
     .replace(/\{\{SESSION_ID\}\}/g, escapeSql(sessionId))
@@ -622,7 +626,23 @@ async function readFromStateDb(taskId, cfg, opts = {}) {
   }
   const raw = String(r.stdout || '');
   const reply = extractReply(raw, taskId);
-  return { ok: true, matched: reply.action !== 'none', reply, raw };
+  const matched = reply.action !== 'none';
+  // ★★ 返回结构必须与**参照契约**（openclaw-gateway.fetchResult）对齐（墨丘 2026-09-16 第三轮）：
+  //   bridge 的读回循环调 `collectTexts(resp.result)` —— 而 collectTexts 首行是 `if (!result) return []`。
+  //   旧的 `{ok, matched, reply, raw}` **没有 result 字段** ⇒ collectTexts(undefined) ⇒ []
+  //   ⇒ docn“日志里 path=db 正常、却一条 parsed= 都没有”（致命，静默）。
+  return {
+    ok: true,
+    matched,
+    reply,
+    raw,
+    result: {
+      matched,
+      replyText: matched ? reply.action : null,
+      messages: [{ text: raw }],
+      raw,
+    },
+  };
 }
 
 /**

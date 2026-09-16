@@ -379,6 +379,25 @@ function rawRunner(fn) { return async (call) => { lastCall = call; return fn(cal
     resetEnv();
   });
 
+  await t('42. 返回结构对齐参照契约（bridge 读 resp.result）：result.messages/replyText；且接受 sinceMs', async () => {
+    resetEnv();
+    process.env.A2A_HERMES_DB_PATH = '/opt/data/state.db';
+    process.env.A2A_HERMES_CHAT_ID = 'oc-1';
+    let seenSql = '';
+    H._setDbRunner(async (call) => { seenSql = call.sql; return { code: 0, stdout: `确认 #${TID}\n`, stderr: '' }; });
+    const r = await H.fetchResult(TID, { path: 'db', sinceMs: 1789533809000 });   // ★ bridge 传的是 sinceMs
+    assert.strictEqual(r.ok, true);
+    // 参照契约：必须有 result，且 result.messages[0].text 含原文
+    assert.ok(r.result, '必须有 result 字段（否则 bridge 的 collectTexts(undefined) → []）');
+    assert.strictEqual(Array.isArray(r.result.messages), true);
+    assert.match(r.result.messages[0].text, new RegExp(TID));
+    assert.strictEqual(r.result.replyText, 'approve');
+    assert.strictEqual(r.result.matched, true);
+    // sinceMs（毫秒）也要被采纳为时间下界
+    assert.ok(seenSql.includes(`m.timestamp >= ${Math.floor(1789533809000 / 1000)}`), 'sinceMs 应转为 epoch 秒下界');
+    resetEnv();
+  });
+
   await t('25. injectIsolated 同构且禁词不可绕过', async () => {
     on();
     H._setRunner(okRunner('isolated ok'));

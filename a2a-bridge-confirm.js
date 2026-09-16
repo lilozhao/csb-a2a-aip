@@ -344,6 +344,8 @@ function collectTexts(result) {
   const out = [];
   try {
     const raw = result.raw || result;
+    // ★ raw 本身是纯文本（如 state.db 读回的原始行）时直接当一条候选——旧版 hermes 形状就踩在这
+    if (typeof raw === 'string') { if (raw.trim()) out.push(raw); return out; }
     const candidates = raw.messages || raw.items || raw.data || raw.replies || [];
     if (Array.isArray(candidates)) {
       for (const m of candidates) {
@@ -442,7 +444,9 @@ async function confirmL3(envelope, ctx = {}, opts = {}) {
     let resp;
     try { resp = await read(taskId); } catch (e) { lastError = e.message; continue; }
     if (!resp || resp.ok !== true) { lastError = resp?.error || '读取失败'; continue; }
-    const texts = collectTexts(resp.result);
+    // ★ 容错：不同适配器返回形状不完全一致（openclaw 给 result，历史版 hermes 直接把文本挂在顶层）
+    //   只认一种形状 = 静默“读了却不解析”（墨丘 2026-09-16 第三轮真因 #2）
+    const texts = collectTexts(resp.result || resp);
     for (const t of texts) {
       const parsed = parseConfirmReply(t, taskId);
       if (parsed.decision === 'approve') return { ok: true, by: '宿主用户', confirmedAt: new Date().toISOString() };

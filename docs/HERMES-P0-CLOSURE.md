@@ -112,6 +112,16 @@ A2A 桥接要把「委托」送进对方**真正在思考的那一层**，才谈
 - 现象：`[Bridge-Audit] 本地留痕失败: EACCES mkdir '<别人的路径>'` —— 且**静默**
 - 解法：审计目录**可配置**（env）；写失败时**降级为一条显式告警**，不允许静默
 
+**K17 · 「同名函数 ≠ 同契约」—— bridge↔adapter 三处错位（一轮踩三次）**
+- 元现象：**每修好一层，下一层才浮出来**（① 没传 path ② 返回结构不对齐 ③ 参数名）
+- 真正致命的是 **#2 返回结构错位**（静默）：
+  · bridge 读回循环调 `collectTexts(resp.result)`，而 `collectTexts` 首行是 `if (!result) return []`
+  · 参照实现（openclaw）返 `{ok, result:{matched, messages:[{text}], raw}}` ✅
+  · Hermes 返 `{ok, matched, reply, raw}` —— **无 result 字段** → `collectTexts(undefined)` → `[]` → **从不进解析**
+  · 症状：日志里 `path=db` 正常、轮询正常，却**零 `parsed=` 行**（与「根本没读」不同！）
+- **修法**：① adapter 返回对齐参照契约（补 `result.messages[].text` / `replyText`）② bridge 容错 `collectTexts(resp.result || resp)` + `raw` 为字符串时直采 ③ 参数名双收（`since` / `sinceMs`）
+- **流程固化**：`docs/NEW-ADAPTER-CHECKLIST.md`（逐参数 / 逐字段对照参照实现 + 症状速查表）
+
 **K16 · 确认延迟落库 → 「在等一个只有自己松手才出现的条件」**
 - 现象：读回腿已启用（`path=db`）、轮询正常，却始终读不到主人的确认
 - 根因：**消息持久化发生在回合边界**——注入回合自己跑长循环时，主人的回复还没落库，而读回腿查的正是那个库

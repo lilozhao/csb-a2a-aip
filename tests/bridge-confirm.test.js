@@ -286,6 +286,29 @@ async function main() {
     if (saved !== undefined) process.env.A2A_BRIDGE_CONFIRM_READ_PATH = saved;
   });
 
+  // 17. [2026-09-16 第三轮真因 #2] 返回结构容错：两种形状都必须能被解析
+  await test('读回形状容错：result.messages 形状与「旧形状（顶层 raw 字符串）」均能解析出 approve', async () => {
+    const { confirmL3 } = require('../a2a-bridge-confirm');
+    const fastEnv = () => ({ ...env(), timeoutMs: 40 });
+    const mk = (resp) => ({
+      resolveConfig: () => ({ sessionKey: 'main' }),
+      invokeTool: async () => ({ ok: true }),
+      fetchResult: async () => resp,
+    });
+    // A) 参照契约形状（hermes 修好后）
+    const a = await confirmL3(fastEnv(), { taskId: 'shape-a' }, {
+      adapter: mk({ ok: true, matched: true, reply: { action: 'approve' }, raw: '确认 #shape-a', result: { matched: true, replyText: 'approve', messages: [{ text: '确认 #shape-a' }], raw: '确认 #shape-a' } }),
+      send: async () => ({ ok: true }), pollIntervalMs: 5,
+    });
+    assert.strictEqual(a.ok, true, '参照契约形状应解析出 approve');
+    // B) 旧形状（只有顶层 raw 字符串，无 result）—— 也不该静默丢掉
+    const b = await confirmL3(fastEnv(), { taskId: 'shape-b' }, {
+      adapter: mk({ ok: true, matched: true, reply: { action: 'approve' }, raw: '确认 #shape-b' }),
+      send: async () => ({ ok: true }), pollIntervalMs: 5,
+    });
+    assert.strictEqual(b.ok, true, '旧形状（顶层 raw 字符串）也应能被容错解析');
+  });
+
   console.log(`\n📊 结果: ${passed} 通过 / ${failed} 失败`);
   process.exit(failed > 0 ? 1 : 0);
 }
