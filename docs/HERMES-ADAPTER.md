@@ -206,5 +206,33 @@ env A2A_BRIDGE_ADAPTER  >  identity.injectAdapter  >  identity.bridge.injectAdap
 **测试**：hermes **34/34**（新增 node:sqlite 端到端 / `{{CHAT_ID}}`）· select **10/10**
 **回归**：core 29 · uac 17 · confirm 14 · adapter 15 —— 全绿
 
+## 十四、首次端到端验收（墨丘 · 2026-09-16）✅ 通过 + ★ 两处口径修正
+
+任务 `task_1789525850436_bf072929` · scope=read（L2）· duration 106682ms · **COMPLETED** · 工具面 = `file,skills`（只读档生效）。
+
+### ★ 修正一（墨丘指出）：不要叫「注入主会话」
+> `-z` 隔离回合**同样载入 CWD 的 AGENTS.md / SOUL / memory**（其自身技能文档就写明「Tools, memory, rules, and AGENTS.md in the CWD are loaded as normal」）。
+> ⇒ 「能贴出记忆」只能证明**【新腿带记忆】**，**不能**证明【这条腿 = 主会话】。
+> 真正区分二者的是**会话连续性**（有无前序轮次）——而隔离回合**看不到任何前序轮次**。
+
+**正确口径**：**「端到端注入腿（带记忆的隔离回合）已通」**。C4-H 的本质是**另起一回合**，不是**续上主会话**。
+⇒ **能力边界**：适合**独立任务**（read / pull / test / 单次查询）；**不适合**依赖先前对话上下文的委托。
+
+### ★ 修正二：「身份不隔离」的根因**已定位** —— 而且它不是缺陷
+> 早前记为「已知边界·根因未定位」。现在解释清楚了：
+> **`-z` 本来就会载入 CWD 的 AGENTS.md / SOUL / memory** → 身份当然在。
+> ⇒ 这是**预期行为**，不是隔离漏洞。所谓「锁不干净」是**误判**。
+> （真正的隔离差异是：不带**会话历史**、不污染主会话上下文、结果不回写主记忆。）
+
+### 验收硬证据（三条，均指向「由 hermes.js 以 scope=read 生成」）
+1. 工具面 = `file,skills`，与 `toolsRead` 默认值**逐字吻合**，且**恰好没有** terminal / code_execution / delegation / cronjob / memory
+2. prompt 形状与 `buildPrompt()` **逐行同形**
+3. **哨兵可解码验证**：`BRIDGE-OK-` + taskId 末16位 + base36(ms)；尾缀还原 = 1789525850469ms，taskId 内嵌 = 1789525850436ms → **差 33ms** ⇒ 确系 `makeSentinel()` 当场生成（三重判据机制被外部验证过 ✓）
+
+### 另一处诚实证据（值得学）
+墨丘的只读档**没有 terminal / code_execution**，所以 `git rev-parse` / `node adapters/hermes.js` **跑不了**。
+它**没有把「跑不了」编成「跑出来的样子」**，而是改贴**文件级等价证据**（`.git/refs/heads/master` 内容、日志末行），并**逐条标注哪些是实读、哪些是快照替代**。
+——这比「给个漂亮结果」有价值得多。
+
 ---
 _一句话：**Hermes 的 C4-H = 「本机 CLI 注入隔离回合」，接口与 OpenClaw 侧完全同形；默认关、参数数组禁 shell 拼接、禁重启类指令、三重判据（rc+非空+哨兵）、环境白名单、失败一律 C5。**_
