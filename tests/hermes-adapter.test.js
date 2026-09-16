@@ -77,15 +77,17 @@ function rawRunner(fn) { return async (call) => { lastCall = call; return fn(cal
     assert.strictEqual(r.artifact.via, 'hermes-cli');
   });
 
-  await t('6. 调用参数：bin + ["-z", prompt]（默认无 -t）', async () => {
+  await t('6. 调用参数：bin（绝对路径）+ [-z prompt] + 默认 --safe-mode', async () => {
     on();
     process.env.A2A_HERMES_BIN = '/opt/hermes/.venv/bin/hermes';
     H._setRunner(okRunner('ok'));
     await H.inject(ENV, TID);
     assert.strictEqual(lastCall.bin, '/opt/hermes/.venv/bin/hermes');
-    assert.deepStrictEqual(lastCall.args.slice(0, 2), ['-z', lastCall.args[1]]);
-    assert.strictEqual(lastCall.args[0], '-z');
-    assert.ok(lastCall.args[1].includes(TID));
+    const i = lastCall.args.indexOf('-z');
+    assert.ok(i >= 0, '应有 -z');
+    assert.ok(lastCall.args[i + 1].includes(TID), 'prompt 应为 -z 的下一个参数');
+    assert.ok(lastCall.args.includes('--safe-mode'), '默认应开 safe-mode');
+    assert.ok(!lastCall.args.includes('--ignore-rules'), '默认不得开 ignore-rules');
     delete process.env.A2A_HERMES_BIN;
   });
 
@@ -94,8 +96,11 @@ function rawRunner(fn) { return async (call) => { lastCall = call; return fn(cal
     const evil = { task: 'echo hi ; touch /tmp/pwned-hermes-test && $(id)', scope: 'shell', delegator: 'X' };
     H._setRunner(okRunner('done'));
     await H.inject(evil, TID);
-    assert.strictEqual(lastCall.args.length, 2, '必须只有两个参数，不得被 shell 拆分');
-    assert.ok(lastCall.args[1].includes('touch /tmp/pwned-hermes-test'));
+    const i = lastCall.args.indexOf('-z');
+    const prompt = lastCall.args[i + 1];
+    assert.ok(prompt.includes('touch /tmp/pwned-hermes-test'), '恶意串应原样留在 prompt 文本里');
+    // 非 -z 后面那个参数一律是开关（短名），不得被当成命令拆分
+    assert.ok(lastCall.args.slice(0, i).every((a) => a.startsWith('-')), 'z 之前必须全是开关');
     assert.strictEqual(require('fs').existsSync('/tmp/pwned-hermes-test'), false);
   });
 
@@ -153,8 +158,8 @@ function rawRunner(fn) { return async (call) => { lastCall = call; return fn(cal
     process.env.A2A_HERMES_TOOLS = 'file';
     H._setRunner(okRunner('NO_TOOL'));
     await H.inject(ENV, TID);
-    assert.deepStrictEqual(lastCall.args.slice(0, 2), ['-t', 'file']);
-    assert.strictEqual(lastCall.args[2], '-z');
+    const ti = lastCall.args.indexOf('-t');
+    assert.ok(ti >= 0 && lastCall.args[ti + 1] === 'file', "应传 ['-t','file']");
     delete process.env.A2A_HERMES_TOOLS;
   });
 
@@ -266,6 +271,57 @@ function rawRunner(fn) { return async (call) => { lastCall = call; return fn(cal
     assert.strictEqual(r.ok, true);
     assert.strictEqual(r.summary, 'isolated ok');
     await assert.rejects(() => H.injectIsolated({ task: 'killall node' }, TID), /禁词/);
+  });
+
+  await t('26. Q1 实测：bin 解析优先绝对路径；显式 env 优先不猜', () => {
+    resetEnv();
+    process.env.A2A_HERMES_BIN = '/custom/hermes';
+    assert.strictEqual(H.resolveHermesBin(), '/custom/hermes');
+    delete process.env.A2A_HERMES_BIN;
+    const b = H.resolveHermesBin();
+    assert.ok(typeof b === 'string' && b.length > 0, '未显式时应回退候选/裸名');
+  });
+
+  await t('27. Q4-4：按 scope 选工具档（read→只读档；shell→写档；显式覆盖）', () => {
+    resetEnv();
+    process.env.A2A_HERMES_TOOLSETS_READ = 'file';
+    process.env.A2A_HERMES_TOOLSETS_WRITE = 'file,terminal';
+    const cfg = H.resolveConfig();
+    assert.strictEqual(H.toolsForScope('read', cfg), 'file');
+    assert.strictEqual(H.toolsForScope('notify', cfg), 'file');
+    assert.strictEqual(H.toolsForScope('shell', cfg), 'file,terminal');
+    assert.strictEqual(H.toolsForScope('write', cfg), 'file,terminal');
+    assert.strictEqual(H.toolsForScope('weird', cfg), '');
+    assert.strictEqual(H.toolsForScope('shell', { ...cfg, tools: 'explicit' }), 'explicit');
+    resetEnv();
+  });
+
+  await t('28. Q4-4：三个闸门顺序与默认（safe-mode 开 / ignore-rules 关）', () => {
+    resetEnv();
+    const base = H.resolveConfig();
+    assert.strictEqual(base.safeMode, true);
+    assert.strictEqual(base.ignoreRules, false);
+    const a1 = H.buildArgs({ prompt: 'P', tools: 'file', cfg: base });
+    assert.deepStrictEqual(a1, ['-t', 'file', '--safe-mode', '-z', 'P']);
+    process.env.A2A_HERMES_IGNORE_RULES = 'on';
+    process.env.A2A_HERMES_SAFE_MODE = 'off';
+    const cfg2 = H.resolveConfig();
+    const a2 = H.buildArgs({ prompt: 'P', tools: '', cfg: cfg2 });
+    assert.deepStrictEqual(a2, ['--ignore-rules', '-z', 'P']);
+    resetEnv();
+  });
+
+  await t('29. scope=read 注入时自动带只读工具档（端到端）', async () => {
+    resetEnv();
+    on();
+    process.env.A2A_HERMES_TOOLSETS_READ = 'file';
+    H._setRunner(okRunner('read ok'));
+    const r = await H.inject({ task: 'ls', scope: 'read', delegator: '若兰' }, TID);
+    assert.strictEqual(r.summary, 'read ok');
+    const ti = lastCall.args.indexOf('-t');
+    assert.ok(ti >= 0 && lastCall.args[ti + 1] === 'file', 'read 应自动带只读档');
+    assert.strictEqual(r.artifact.tools, 'file');
+    resetEnv();
   });
 
   H._setRunner(null); H._setDbRunner(null); resetEnv();

@@ -127,10 +127,16 @@ function resolveConfig(overrides = {}) {
   const idb = identityBridge();
   const cfg = {
     enabled: isEnabled(),
-    bin: process.env.A2A_HERMES_BIN || 'hermes',
+    bin: resolveHermesBin(),
     home: process.env.A2A_HERMES_HOME || '/opt/data',
     // 工具锁：墨丘实测②——`-t file` 能把它锁成无终端（回 NO_TOOL）
-    tools: process.env.A2A_HERMES_TOOLS || '',                 // 例：'file'；空=不传 -t
+    tools: process.env.A2A_HERMES_TOOLS || '',                 // 显式覆盖（例：'file'）
+    // 按 scope 分档的工具集（Q4-4：只读档可做）——需按宿主工具集清单填
+    toolsRead: process.env.A2A_HERMES_TOOLSETS_READ || '',
+    toolsWrite: process.env.A2A_HERMES_TOOLSETS_WRITE || '',
+    // 安全闸（Q4-4）：safe-mode 默认开；ignore-rules 默认关（开了不隔离身份且放宽规则）
+    safeMode: String(process.env.A2A_HERMES_SAFE_MODE || 'on').toLowerCase() !== 'off',
+    ignoreRules: String(process.env.A2A_HERMES_IGNORE_RULES || 'off').toLowerCase() === 'on',
     extraArgs: (process.env.A2A_HERMES_EXTRA_ARGS || '').trim().split(/\s+/).filter(Boolean),
     timeoutMs: Math.min(
       parseInt(process.env.A2A_HERMES_TIMEOUT_MS || '', 10) || DEFAULT_TIMEOUT_MS,
@@ -202,6 +208,50 @@ function stripSentinel(text, sentinel) {
   return String(text).split('\n').filter((l) => !l.includes(sentinel)).join('\n').trim();
 }
 
+/**
+ * 解析 hermes 可执行文件（墨丘 Q1 实测：`hermes` **不在** shell PATH，
+ * 但 A2A server 进程的 PATH 里有 `/opt/hermes/.venv/bin`）
+ * ⇒ 优先绝对路径，找不到再回退裸名
+ */
+const HERMES_BIN_CANDIDATES = [
+  '/opt/hermes/.venv/bin/hermes',
+  '/opt/hermes/bin/hermes',
+  '/usr/local/bin/hermes',
+];
+function resolveHermesBin() {
+  if (process.env.A2A_HERMES_BIN) return process.env.A2A_HERMES_BIN; // 显式优先，不猜
+  for (const p of HERMES_BIN_CANDIDATES) {
+    try { if (fs.existsSync(p)) return p; } catch (_) { /* ignore */ }
+  }
+  return 'hermes';
+}
+
+/**
+ * 按委托范围选工具档（墨丘 Q4-4：`-t/--toolsets` 可锁工具面；「只读档」可做）
+ * 优先级：显式 tools 覆盖 > 按 scope 分档 > 空（不传 -t）
+ */
+function toolsForScope(scope, cfg) {
+  if (cfg.tools) return cfg.tools;
+  const s = String(scope || '').toLowerCase();
+  if (s === 'read' || s === 'notify') return cfg.toolsRead || '';
+  if (s === 'write' || s === 'shell') return cfg.toolsWrite || '';
+  return '';
+}
+
+/**
+ * 构造 hermes 参数（顺序：工具锁 → 安全闸 → 额外参数 → -z）
+ *   默认 `--safe-mode` 开；`--ignore-rules` **默认关**（墨丘实测：开了仍不隔离身份，且会放宽规则）
+ */
+function buildArgs({ prompt, tools, cfg }) {
+  const args = [];
+  if (tools) args.push('-t', tools);
+  if (cfg.safeMode) args.push('--safe-mode');
+  if (cfg.ignoreRules) args.push('--ignore-rules');
+  if (cfg.extraArgs && cfg.extraArgs.length) args.push(...cfg.extraArgs);
+  args.push('-z', prompt);
+  return args;
+}
+
 /** 本地时间 → UTC ISO（墨丘实测④坑①：容器 TZ=UTC，按本地时间过滤会差 8 小时） */
 function toUtcIso(d) {
   const dt = d instanceof Date ? d : new Date(d);
@@ -246,10 +296,9 @@ async function executeCli(envelope, taskId, opts = {}) {
   const prompt = buildPrompt(envelope, taskId, { sentinel, tools: cfg.tools });
   assertPromptSafe(prompt);
 
-  const args = [];
-  if (cfg.tools) args.push('-t', cfg.tools);   // 工具锁（实测②：-t file → NO_TOOL）
-  if (cfg.extraArgs.length) args.push(...cfg.extraArgs);
-  args.push('-z', prompt);
+  const scope = (envelope && envelope.scope) || (envelope && envelope.delegation && envelope.delegation.scope) || '';
+  const tools = toolsForScope(scope, cfg);
+  const args = buildArgs({ prompt, tools, cfg });
 
   const runner = opts._runner || _runner;
   const started = Date.now();
@@ -272,7 +321,7 @@ async function executeCli(envelope, taskId, opts = {}) {
   const summary = stripSentinel(out, sentinel);
   return {
     summary,
-    artifact: { stdout, stderr, durationMs, via: 'hermes-cli', bin: cfg.bin, sentinel: sentinel || null, tools: cfg.tools || null },
+    artifact: { stdout, stderr, durationMs, via: 'hermes-cli', bin: cfg.bin, sentinel: sentinel || null, tools: tools || null, safeMode: !!cfg.safeMode },
     refused: detectRefusal(summary),
   };
 }
@@ -408,6 +457,7 @@ module.exports = {
   inject, injectIsolated, buildPrompt, buildInjectMessage, detectRefusal, REFUSAL_PATTERNS,
   resolveConfig, fetchResult, extractReply, harvestTexts,
   isEnabled, assertPromptSafe, FORBIDDEN_IN_PROMPT, buildChildEnv, makeSentinel, stripSentinel, toUtcIso,
+  resolveHermesBin, toolsForScope, buildArgs,
   _setRunner, _setDbRunner, _resetIdentityBridgeCache,
   _internals: { executeCli, defaultRunner, defaultDbRunner, readFromStateDb },
 };

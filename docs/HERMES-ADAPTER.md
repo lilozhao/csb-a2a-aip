@@ -113,5 +113,17 @@ frame 双契约 / prompt 模板禁词校验 / 无 shell 拼接（含 `;` `&&` `$
 **测试**：`tests/hermes-adapter.test.js` → **25/25**（新增：三重判据 / 环境清洗 / 工具锁 / state.db 三护栏 / TZ / 语义边界）
 **回归**：bridge-core 29 · bridge-uac 17 · bridge-confirm 14 · bridge-adapter 15 —— 全绿
 
+## 十、Q1 / Q4 补齐（2026-09-16 二轮实测 → 已改码）
+
+| 问题 | 实测 | 设计变更 |
+|---|---|---|
+| **Q1 可调性** | `hermes` **不在** 墨丘 shell PATH（`command -v` rc=1）；但 **A2A server 进程（pid 272）的 PATH 里有 `/opt/hermes/.venv/bin`**，且已带 `HERMES_HOME=/opt/data` | `resolveHermesBin()`：**优先绝对路径**（`/opt/hermes/.venv/bin/hermes` 等候选），env `A2A_HERMES_BIN` 显式优先 |
+| **Q4-1 注入** | prompt 里的 shell 语法**没被二次解释**（marker 未出现）✓；但「**明确要求执行的命令**」**真被执行**（`-z` 交给一个有完整工具权限的 agent，approvals 自动绕过）；它还主动提醒「这像是注入测试」😄 | 确认「风险在授权不在拼接」；⇒ **read 委托可轻，write/shell 必须 L3/UAC** |
+| **Q4-4 只读档** | 三个闸门：`-t/--toolsets`、`--ignore-rules`、`--safe-mode`；可做「只读档」 | 新增：`A2A_HERMES_TOOLSETS_READ` / `_WRITE`（**按 scope 自动选档**）· `A2A_HERMES_SAFE_MODE`（**默认 on**）· `A2A_HERMES_IGNORE_RULES`（**默认 off**）· `buildArgs()` 固定顺序 `-t → --safe-mode → --ignore-rules → -z` |
+
+**测试**：→ **29/29**（新增 bin 解析 / 按 scope 工具档 / 三闸门默认与顺序 / read 注入自动带只读档）
+
+**待墨丘补**：① 工具集清单（Q4-4 说已拿到，未发）② state.db 检索 SQL 示例（已请求）
+
 ---
 _一句话：**Hermes 的 C4-H = 「本机 CLI 注入隔离回合」，接口与 OpenClaw 侧完全同形；默认关、参数数组禁 shell 拼接、禁重启类指令、三重判据（rc+非空+哨兵）、环境白名单、失败一律 C5。**_
