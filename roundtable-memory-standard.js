@@ -11,9 +11,9 @@ const fs = require('fs');
 const { sendMessageWithContext } = require('./client-v2.js');
 
 // ===== 飞书配置 =====
+const { resolveFeishuCreds } = require('./feishu-creds.js');
 const FEISHU = {
-  appId: process.env.FEISHU_APP_ID || '',
-  appSecret: process.env.FEISHU_APP_SECRET || '',
+  ...resolveFeishuCreds(),
   groupId: 'oc_4427768d0798b7545d4fb07b7518e710',
 };
 let _feishuToken = null;

@@ -10,11 +10,11 @@ const path = require('path');
 const fs = require('fs');
 const { sendMessageWithContext } = require('./client-v2.js');
 
-// ===== 飞书配置 =====
+// ===== 飞书配置（env → openclaw.json → .env；见 feishu-creds.js）=====
+const { resolveFeishuCreds } = require('./feishu-creds.js');
 const FEISHU = {
-  appId: process.env.FEISHU_APP_ID || '',
-  appSecret: process.env.FEISHU_APP_SECRET || '',
-  groupId: 'oc_4427768d0798b7545d4fb07b7518e710',
+  ...resolveFeishuCreds(),
+  groupId: process.env.FEISHU_GROUP_ID || 'oc_4427768d0798b7545d4fb07b7518e710',
 };
 let _feishuToken = null;
 
@@ -72,7 +72,8 @@ async function pushToFeishu(title, content) {
       req.on('error',reject); req.setTimeout(15000,()=>{req.destroy();reject(new Error('timeout'));});
       req.write(body); req.end();
     });
-  } catch(e) { console.error('   ⚠️ 飞书推送失败:', e.message); }
+    return true;
+  } catch(e) { console.error('   ⚠️ 飞书推送失败:', e.message); return false; }
 }
 
 // ===== 话题池（从外部文件加载 + 轮换机制）=====
@@ -471,6 +472,7 @@ async function main() {
   console.log('  🎙️ 锵锵四人行 v4.1 — 飞书直播版');
   console.log('═══════════════════════════════════════\n');
 
+  let pushFailCount = 0;
   // 开场推送
   const now = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
   await pushToFeishu('🎙️ 锵锵四人行开始', [[
@@ -493,7 +495,7 @@ async function main() {
   const statusLines = REMOTE.map(k => {
     return [`${health[k] ? '✅' : '❌'} ${AGENTS[k].name}`];
   });
-  await pushToFeishu('🔍 Agent 状态', statusLines);
+  if (!await pushToFeishu('🔍 Agent 状态', statusLines)) pushFailCount++;
 
   const topics = generateTopics();
   console.log('📢 今日话题:\n');
@@ -563,8 +565,9 @@ async function main() {
       }
       postBlocks.push([{ tag:'text', text:line }]);
     }
-    await pushToFeishu(`🎙️ ${t.title}`, postBlocks);
-    console.log('   📨 已推送飞书\n');
+    const pushed = await pushToFeishu(`🎙️ ${t.title}`, postBlocks);
+    if (!pushed) pushFailCount++;
+    console.log(pushed ? '   📨 已推送飞书\n' : '   ⚠️ 飞书推送失败（详见上方报错）\n');
     await sleep(500);
   }
 
@@ -577,7 +580,7 @@ async function main() {
     const okCount = ['axuan','jeason','mingde'].filter(k => r[k]?.ok).length;
     summary.push([{ tag:'text', text:`  🌸 若兰 ✅ | ${okCount+1}/4 在线回应` }]);
   }
-  await pushToFeishu('📊 讨论结束', summary);
+  if (!await pushToFeishu('📊 讨论结束', summary)) pushFailCount++;
 
   // 终端汇总
   console.log('\n═══════════════════════════════════════');
@@ -592,7 +595,7 @@ async function main() {
     console.log('');
   }
 
-  console.log('📨 全部话题已推送飞书群 ✅');
+  console.log(pushFailCount === 0 ? '📨 全部话题已推送飞书群 ✅' : `⚠️ 有 ${pushFailCount} 条飞书推送失败（检查 FEISHU 凭据）`);
 
   // 📝 推送完整总结到碳硅契社区论坛（中文+英文）
   await postToCommunity(allResults);

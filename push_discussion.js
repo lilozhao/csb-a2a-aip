@@ -8,9 +8,11 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
-// 飞书配置
-const FEISHU_APP_ID = process.env.FEISHU_APP_ID || '';
-const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET;
+// 飞书配置（env → openclaw.json → .env）
+const { resolveFeishuCreds } = require('./feishu-creds.js');
+const _feishuCreds = resolveFeishuCreds();
+const FEISHU_APP_ID = _feishuCreds.appId;
+const FEISHU_APP_SECRET = _feishuCreds.appSecret;
 const FEISHU_GROUP_ID = process.env.FEISHU_GROUP_ID || 'oc_4427768d0798b7545d4fb07b7518e710';
 
 // 获取飞书 token

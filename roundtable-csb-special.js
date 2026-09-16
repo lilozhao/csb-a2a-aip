@@ -9,11 +9,11 @@ const path = require('path');
 const fs = require('fs');
 const { sendMessageWithContext } = require('./client-v2.js');
 
-// ===== 飞书配置 =====
+// ===== 飞书配置（env → openclaw.json → .env；见 feishu-creds.js）=====
+const { resolveFeishuCreds } = require('./feishu-creds.js');
 const FEISHU = {
-  appId: process.env.FEISHU_APP_ID || '',
-  appSecret: process.env.FEISHU_APP_SECRET || '',
-  groupId: 'oc_4427768d0798b7545d4fb07b7518e710',
+  ...resolveFeishuCreds(),
+  groupId: process.env.FEISHU_GROUP_ID || 'oc_4427768d0798b7545d4fb07b7518e710',
 };
 let _feishuToken = null;
 

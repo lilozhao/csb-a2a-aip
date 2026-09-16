@@ -9,10 +9,12 @@ const https = require('https');
 // 飞书配置 - 请通过环境变量设置
 const FEISHU_WEBHOOK = process.env.FEISHU_WEBHOOK_URL;
 // 2026-09-15 公网仓不再内联任何凭据/标识（App ID 一并 env-only）
-const FEISHU_APP_ID = process.env.FEISHU_APP_ID || '';
+const { resolveFeishuCreds } = require('./feishu-creds.js');
+const _feishuCreds = resolveFeishuCreds();
+const FEISHU_APP_ID = _feishuCreds.appId;
 // 2026-09-14 密钥轮换：不再内联 App Secret（原明文已进远端仓库，须在飞书后台重置）
 // 来源：本机 .env（已 gitignore，chmod 600）或环境变量；缺失时快速失败
-const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
+const FEISHU_APP_SECRET = _feishuCreds.appSecret;
 const FEISHU_GROUP_ID = process.env.FEISHU_GROUP_ID || 'oc_4427768d0798b7545d4fb07b7518e710';
 
 let cachedAccessToken = null;
