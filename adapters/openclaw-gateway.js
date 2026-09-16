@@ -318,7 +318,16 @@ async function executeViaGateway(envelope, taskId, opts = {}) {
   };
 }
 
-module.exports = { inject, injectIsolated, buildPrompt, buildInjectMessage, detectRefusal, REFUSAL_PATTERNS, resolveConfig, invokeTool, fetchResult, extractReply, harvestTexts, _resetIdentityBridgeCache };
+module.exports = {
+  inject, injectIsolated, buildPrompt, buildInjectMessage, detectRefusal, REFUSAL_PATTERNS,
+  resolveConfig, invokeTool, fetchResult, extractReply, harvestTexts, _resetIdentityBridgeCache,
+  // 【契约声明】机读约定（见 adapters/_contract.js 门禁）
+  CONTRACT: {
+    version: 1,
+    params: { fetchResult: ['taskId', 'sinceMs', 'limit', 'sessionKey'] },
+    fetchResultSuccessKeys: ['ok', 'result'],
+  },
+};
 
 /** [9/9 兼容] frame → 注入消息文本（含 taskId 标记 + 委托四要素 + 拒绝权声明） */
 function buildInjectMessage(frame = {}) {
@@ -446,7 +455,10 @@ async function fetchResult(taskId, opts = {}) {
   if (!cfg.token) return { ok: false, error: '缺少 gateway token' };
   const sessionKey = opts.sessionKey || cfg.sessionKey || 'main';
   // [P0-2 / 2026-09-14] 读取窗口用时间窗代替固定条数：默认查 send 后 10 分钟（避免40条窗口被刷出去）
-  const sinceMs = opts.sinceMs || (Date.now() - 10 * 60 * 1000);
+  // canonical 参数名 = sinceMs（毫秒）；兼容别名 since（ISO/Date，墨丘第三轮发现的命名错位）
+  const sinceMs = opts.sinceMs
+    || (opts.since ? new Date(opts.since).getTime() : 0)
+    || (Date.now() - 10 * 60 * 1000);
   const limit = opts.limit || 100; // 放宽到 100（从 40 提升），同时按 sinceMs 过滤
 
   // 主路径：sessions_history（宿主会话 → 用户回复）

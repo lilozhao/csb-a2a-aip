@@ -715,6 +715,7 @@ async function fetchResult(taskId, opts = {}) {
   // ★ 读回腿开关：不配 A2A_HERMES_CONFIRM_READ=db 就一律走路径 C（保守）
   //   —— 这正是 2026-09-16 首轮 L3 超时的原因（投递腿 OK，读回腿没开）
   const p = opts.path || (cfg.confirmRead === 'db' ? 'db' : 'C');
+  // canonical 参数名：sinceMs（毫秒）；since（ISO/Date）保留为兼容别名
   if (p === 'db') {
     try { return await readFromStateDb(taskId, cfg, opts); }
     catch (e) { return { ok: false, error: `hermes: ${e.message}` }; }
@@ -753,6 +754,8 @@ module.exports = {
   isEnabled, assertPromptSafe, FORBIDDEN_IN_PROMPT, buildChildEnv, ENV_ALLOWLIST, makeSentinel, stripSentinel, toUtcIso,
   toEpochSeconds, resolveHermesBin, toolsForScope, buildArgs, DEFAULT_CONFIRM_SQL,
   normalizeTarget, usesStdin, sendExitHint, confirmReadPath,
+  // 【契约声明】机读约定（见 adapters/_contract.js 门禁）—— fetchResult 成功返回**必须含 result**
+  CONTRACT: { version: 1, params: { fetchResult: ['taskId', 'sinceMs', 'limit', 'sessionKey'] }, fetchResultSuccessKeys: ['ok', 'result', 'matched', 'raw'], confirmReadPath: 'adapter.confirmReadPath()' },
   _setRunner, _setDbRunner, _resetIdentityBridgeCache,
   loadNodeSqlite, runWithNodeSqlite,
   _internals: { executeCli, defaultRunner, defaultDbRunner, runWithSqliteCli, readFromStateDb },

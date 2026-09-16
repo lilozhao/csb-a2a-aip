@@ -6,6 +6,15 @@
 
 ---
 
+## 〇、先跑门禁（机械化，不靠人眼）
+
+```bash
+node tests/adapter-contract.test.js      # 适配器契约门禁（含假适配器反向自检）
+```
+
+它查：方法齐备 · 纯函数行为（`buildInjectMessage`/`detectRefusal`/`resolveConfig`）· **`fetchResult` 成功返回必须含 `result`** · `CONTRACT` 声明 · canonical 参数名 `sinceMs` 被接受。
+契约定稿：`adapters/CONTRACT.md`（**single source of truth**）。
+
 ## 一、必须逐项对照的四处（缺一处 = 静默失败）
 
 | # | 对照项 | 怎么查 | 踩过的实例 |
