@@ -449,6 +449,11 @@ async function confirmL3(envelope, ctx = {}, opts = {}) {
     const texts = collectTexts(resp.result || resp);
     for (const t of texts) {
       const parsed = parseConfirmReply(t, taskId);
+      // [审计直接证据 / 2026-09-16 墨丘第三轮终验建议] 只要解析出结论就留痕
+      //   否则成功路径只有轮询行、无 parsed=，外部审计只能靠“执行了”倒推 approve
+      if (parsed.decision) {
+        console.log(`[CONFIRM-READ] parsed=${parsed.decision} taskId=${taskId} by=宿主用户 preview=${JSON.stringify(String(t).slice(0, 80))}`);
+      }
       if (parsed.decision === 'approve') return { ok: true, by: '宿主用户', confirmedAt: new Date().toISOString() };
       if (parsed.decision === 'decline') return { ok: false, declined: true, detail: parsed.reason || '用户拒绝', by: '宿主用户' };
     }
