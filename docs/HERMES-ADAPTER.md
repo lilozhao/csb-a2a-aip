@@ -91,19 +91,31 @@ L3 写操作要闭环，需要两段：
 - 硬护栏：SQL 必须含 `LIMIT`（库大 + gateway 在写，禁全表）· 查询带超时
 - 详见 `config/hermes-state-db-queries.sql`
 
-### 5.2 投递腿（`invokeTool`）—— 本机 CLI
+### 5.2 投递腿（`invokeTool`）—— 本机 CLI（已按宿主校准）
 
 ```
-spawn(HERMES_BIN, ['send','--to',<to>,'--text',<text>])   // argv 数组，禁 shell 拼接
+spawn(HERMES_BIN, ['send','--to','feishu:oc_xxx','--file','-','--json'])
+       + 文本走 stdin                          // argv 数组，禁 shell 拼接
 ```
+
+**校准要点（宿主源码级，2026-09-16）**
+| 事实 | 含义 |
+|---|---|
+| `send` **没有 `--text`** | 消息体是**位置参数**（`nargs='?'`）→ 用错形态直接 `rc=2` 用法错 |
+| 文本以 `-` 开头会被当 flag | → 默认改走 **stdin（`--file -`）**，也绕开多行/长度/转义问题 |
+| 目标要 `platform[:chat_id[:thread]]` | 裸 `oc_xxx` 会被当平台名解析失败 → **自动补 `feishu:` 前缀** |
+| 退出码**可信**（与 `-z` 不同） | `0`=投递成功 `1`=平台层失败 `2`=用法错 |
+| ⚠️ `rc=0` 也有两个坑 | `skipped:true`（cron 去重）/ human-mode 的 note 路径 → 故默认带 `--json`，解析 `success`/`skipped`；**拿不准一律当失败** |
 
 | 配置 | 默认 | 说明 |
 |---|---|---|
 | `A2A_HERMES_SEND` | **off** | 总闸（对外发消息 = 外发动作，需显式开启） |
-| `A2A_HERMES_SEND_ARGS` | `send,--to,{to},--text,{text}` | **按整 token 替换**，适配宿主真实 `hermes send` 语法 |
+| `A2A_HERMES_SEND_ARGS` | `send,--to,{to},--file,-,--json` | **按整 token 替换**；宿主语法不同时可全量改写（如 `send,--to,{to},{text}` 走位置参数） |
+
+**边界（重要）**：`hermes send` **不是**「往主会话上下文里插话」。它 (a) 向平台投递一条消息，(b) 给目标 chat 的会话转写**追加一条 role=assistant 的镜像**，**不触发回复回合**。
+⇒ 确认请求会以「该 Agent 自己说过的话」进入主人会话——可接受（主人本来就在那儿回），但要写进文档。
 
 - 失败一律诚实 `ok:false` → confirmL3 记「确认请求发送失败」→ **拒绝执行**（绝不静默放行）
-- ⚠️ **待宿主侧校准**：`hermes send` 的真实参数形态（默认模板为待定值，用 `A2A_HERMES_SEND_ARGS` 全量改写）
 
 ## 六、降级契约（C5）
 

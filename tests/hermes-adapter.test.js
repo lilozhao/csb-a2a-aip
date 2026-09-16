@@ -442,44 +442,78 @@ function rawRunner(fn) { return async (call) => { lastCall = call; return fn(cal
     assert.match(r.error, /A2A_HERMES_SEND/);
   });
 
-  await t('37. 确认投递腿：开启后 argv = [send,--to,<to>,--text,<text>]（整 token 替换）', async () => {
+  await t('37. 确认投递腿：默认 argv = [send,--to,<feishu:to>,--file,-,--json] + 文本走 stdin', async () => {
     resetEnv();
     process.env.A2A_HERMES_SEND = 'on';
     H._setRunner(async (call) => { lastCall = call; return { code: 0, stdout: 'msg_id=om_1', stderr: '' }; });
     const r = await H.invokeTool('x', 'tok', { args: { to: 'oc_x', message: '确认 #t1' } });
     assert.strictEqual(r.ok, true);
     assert.strictEqual(r.result.via, 'hermes-cli-send');
-    assert.deepStrictEqual(lastCall.args, ['send', '--to', 'oc_x', '--text', '确认 #t1']);
+    // ★ 校准后默认：send --to <feishu:oc_x> --file - --json（文本走 stdin；无 --text！）
+    assert.deepStrictEqual(lastCall.args, ['send', '--to', 'feishu:oc_x', '--file', '-', '--json']);
+    assert.strictEqual(lastCall.stdin, '确认 #t1', '文本应走 stdin');
     assert.ok(!lastCall.args.some((a) => a.includes('{')), '占位符应全部被替换');
+    assert.ok(!lastCall.args.includes('--text'), 'send 无 --text 参数（定了会 rc=2）');
+  });
+
+  await t('37b. 目标归一化：裸 chat_id 自动补平台前缀；已带平台则不动', () => {
+    resetEnv();
+    const cfg = H.resolveConfig();
+    assert.strictEqual(H.normalizeTarget(cfg, 'oc_abc'), 'feishu:oc_abc');
+    assert.strictEqual(H.normalizeTarget(cfg, 'feishu:oc_abc'), 'feishu:oc_abc');
+    assert.strictEqual(H.normalizeTarget(cfg, 'feishu:oc_a:t1'), 'feishu:oc_a:t1');
+    assert.strictEqual(H.normalizeTarget({ channel: '' }, 'oc_abc'), 'oc_abc');
+  });
+
+  await t('37c. rc=0 两个坑：skipped:true / success:false → 一律当失败（不得假成功）', async () => {
+    resetEnv();
+    process.env.A2A_HERMES_SEND = 'on';
+    H._setRunner(async () => ({ code: 0, stdout: '{"skipped":true,"reason":"dedupe"}', stderr: '' }));
+    const r1 = await H.invokeTool('x', 'tok', { args: { to: 'oc_x', message: 'hi' } });
+    assert.strictEqual(r1.ok, false);
+    assert.match(r1.error, /skipped/);
+    H._setRunner(async () => ({ code: 0, stdout: '{"success":false,"error":"channel not configured"}', stderr: '' }));
+    const r2 = await H.invokeTool('x', 'tok', { args: { to: 'oc_x', message: 'hi' } });
+    assert.strictEqual(r2.ok, false);
+    assert.match(r2.error, /success:false.*channel not configured/s);
+    H._setRunner(async () => ({ code: 0, stdout: '{"success":true,"message_id":"om_9"}', stderr: '' }));
+    const r3 = await H.invokeTool('x', 'tok', { args: { to: 'oc_x', message: 'hi' } });
+    assert.strictEqual(r3.ok, true);
+    assert.strictEqual(r3.result.handle, 'om_9', '应解析出投递句柄');
   });
 
   await t('38. 确认投递腿：自定义 A2A_HERMES_SEND_ARGS 生效（适配宿主真实语法）', async () => {
     resetEnv();
     process.env.A2A_HERMES_SEND = 'on';
-    process.env.A2A_HERMES_SEND_ARGS = 'send,--chat,{to},--body,{text},--plain';
+    process.env.A2A_HERMES_SEND_ARGS = 'send,--to,{to},{text}';
     H._setRunner(async (call) => { lastCall = call; return { code: 0, stdout: '', stderr: '' }; });
     await H.invokeTool('x', 'tok', { args: { to: 'oc_y', message: 'hi' } });
-    assert.deepStrictEqual(lastCall.args, ['send', '--chat', 'oc_y', '--body', 'hi', '--plain']);
+    // 位置参数形态（宿主语法不同时用）→ 不走 stdin
+    assert.deepStrictEqual(lastCall.args, ['send', '--to', 'feishu:oc_y', 'hi']);
+    assert.strictEqual(lastCall.stdin, undefined);
   });
 
-  await t('39. 确认投递腿：恶意文本只作为一个 argv token（不做 shell 拼接/拆分）', async () => {
+  await t('39. 确认投递腿：恶意文本走 stdin（不进 argv、不被 shell 拆分/执行）', async () => {
     resetEnv();
     process.env.A2A_HERMES_SEND = 'on';
     const evil = '确认 #t1 ; rm -rf /tmp/pwned-send && $(id)';
     H._setRunner(async (call) => { lastCall = call; return { code: 0, stdout: '', stderr: '' }; });
     await H.invokeTool('x', 'tok', { args: { to: 'oc_z', message: evil } });
-    assert.strictEqual(lastCall.args[4], evil, '文本应原样作为单个 token');
-    assert.strictEqual(lastCall.args.length, 5, '不得被拆分出额外 token');
+    // 默认走 stdin → 恶意串既不在 argv、也不会被 shell 拆分
+    assert.strictEqual(lastCall.stdin, evil);
+    assert.ok(!lastCall.args.some((a) => a.includes('rm -rf')), '恶意串不得进 argv');
+    assert.deepStrictEqual(lastCall.args, ['send', '--to', 'feishu:oc_z', '--file', '-', '--json']);
     assert.strictEqual(require('fs').existsSync('/tmp/pwned-send'), false);
   });
 
   await t('40. 确认投递腿：失败路径（非零退出 / 缺目标 / 空文本）→ ok:false', async () => {
     resetEnv();
     process.env.A2A_HERMES_SEND = 'on';
-    H._setRunner(async () => ({ code: 3, stdout: '', stderr: 'unknown command: send' }));
+    H._setRunner(async () => ({ code: 2, stdout: '', stderr: 'unrecognized arguments: --text' }));
     const r1 = await H.invokeTool('x', 'tok', { args: { to: 'oc_x', message: 'hi' } });
     assert.strictEqual(r1.ok, false);
-    assert.match(r1.error, /code=3.*unknown command/s);
+    assert.match(r1.error, /code=2/);
+    assert.match(r1.error, /用法错/);
     const r2 = await H.invokeTool('x', 'tok', { args: { message: 'hi' } });
     assert.strictEqual(r2.ok, false);
     const r3 = await H.invokeTool('x', 'tok', { args: { to: 'oc_x', message: '' } });

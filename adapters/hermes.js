@@ -287,14 +287,22 @@ function toEpochSeconds(d) {
 }
 
 // ===== runner（可被测试替换）=====
-function defaultRunner({ bin, args, cwd, env, timeoutMs }) {
+function defaultRunner({ bin, args, cwd, env, timeoutMs, stdin }) {
   return new Promise((resolve, reject) => {
     let child;
+    const wantStdin = typeof stdin === 'string';
     try {
       // shell:false + 参数数组 → 不做 shell 拼接（墨丘实测③：payload 不会被二次解释）
-      child = spawn(bin, args, { cwd, env, shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(bin, args, {
+        cwd, env, shell: false,
+        stdio: [wantStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+      });
     } catch (e) {
       return reject(new Error(`spawn 失败: ${e.message}`));
+    }
+    // 长文本/多行走 stdin（send --file -）：绕开 argv 长度与转义
+    if (wantStdin) {
+      try { child.stdin.end(String(stdin)); } catch (_) { /* ignore */ }
     }
     let stdout = '', stderr = '', killed = false;
     const timer = setTimeout(() => { killed = true; try { child.kill('SIGKILL'); } catch (_) {} }, timeoutMs);
@@ -401,14 +409,45 @@ async function injectIsolated(envelope, taskId, opts = {}) {
  */
 
 /**
+ * 目标归一化：Hermes 的 `-t/--to` 要 `platform[:chat_id[:thread]]` 形式
+ *   若给的是裸 chat_id（如 `oc_xxx`），自动补上 channel 前缀 → `feishu:oc_xxx`
+ *   （墨丘校准：裸 id 会被当成“平台名”解析失败）
+ */
+function normalizeTarget(cfg, to) {
+  const t = String(to || '').trim();
+  if (!t) return '';
+  if (t.includes(':')) return t;                 // 已带平台/线程
+  return cfg.channel ? `${cfg.channel}:${t}` : t;
+}
+
+/**
  * 构造投递 argv（**按整 token 替换 {to}/{text}**，不做 shell 拼接）
- * 默认模板：A2A_HERMES_SEND_ARGS = 'send,--to,{to},--text,{text}'
- * （语法以宿主实际 `hermes send --help` 为准，可用该 env 全量改写）
+ *
+ * ★ 默认模板已按墨丘校准修正（原 `--text` **不存在** ⇒ argparse 会报 rc=2）：
+ *   `hermes send --to <target> --file - --json`  + **文本走 stdin**
+ *   为什么走 stdin：`send` 的消息体是**位置参数**（nargs='?'），以 `-` 开头的文本会被当 flag；
+ *   且确认请求是多行（含摘录）——stdin 绕开 argv 长度与转义问题。
+ *   宿主语法不同时用 `A2A_HERMES_SEND_ARGS` 全量改写（如 `send,--to,{to},{text}` 走位置参数）。
  */
 function buildSendArgs(cfg, { to, text }) {
-  const raw = cfg.sendArgs && cfg.sendArgs.length ? cfg.sendArgs : ['send', '--to', '{to}', '--text', '{text}'];
+  const raw = cfg.sendArgs && cfg.sendArgs.length
+    ? cfg.sendArgs
+    : ['send', '--to', '{to}', '--file', '-', '--json'];
   const map = { '{to}': String(to), '{text}': String(text) };
   return raw.map((t) => (map[t] !== undefined ? map[t] : t));
+}
+
+/** 是否走 stdin（argv 含 `--file -`） */
+function usesStdin(args) {
+  const i = args.indexOf('--file');
+  return i >= 0 && args[i + 1] === '-';
+}
+
+/** 退出码语义（send_cmd.py:21-24）：0=投递成功 1=平台层失败 2=用法错 */
+function sendExitHint(code) {
+  if (code === 2) return '（用法错：参数形态与宿主不匹配，请核对 A2A_HERMES_SEND_ARGS）';
+  if (code === 1) return '（平台层失败：目标无效 / 平台未配置）';
+  return '';
 }
 
 async function invokeTool(url, token, body = {}, timeoutMs) {
@@ -422,24 +461,44 @@ async function invokeTool(url, token, body = {}, timeoutMs) {
   if (!to) return { ok: false, error: 'hermes: 缺投递目标 to（identity.bridge.mainTo / A2A_BRIDGE_MAIN_TO）' };
   if (!text) return { ok: false, error: 'hermes: 空确认文本，拒绝投递' };
 
-  const argv = buildSendArgs(cfg, { to, text });
+  const target = normalizeTarget(cfg, to);
+  const argv = buildSendArgs(cfg, { to: target, text });
+  const useStdin = usesStdin(argv);
   const runner = cfg._runner || _runner;
   let res;
   try {
     res = await runner({
       bin: cfg.bin, args: argv, cwd: cfg.cwd, env: buildChildEnv(cfg),
       timeoutMs: timeoutMs || cfg.timeoutMs,
+      stdin: useStdin ? String(text) : undefined,
     });
   } catch (e) {
     return { ok: false, error: `hermes send 异常: ${e.message}` };
   }
   if (!res || res.code !== 0) {
     const err = res && res.stderr ? String(res.stderr).slice(0, 200) : '';
-    return { ok: false, error: `hermes send 失败（code=${res && res.code}）${err ? ': ' + err : ''}` };
+    return { ok: false, error: `hermes send 失败（code=${res && res.code}）${sendExitHint(res && res.code)}${err ? ': ' + err : ''}` };
+  }
+  // ★ rc=0 也有两个坑（墨丘校准）：① `skipped:true`（cron 去重）② human-mode 的 note 路径
+  //   → 有 --json 时解析 success/skipped，拿不准一律当失败（宁可重发，不得假成功）
+  let parsed = null;
+  try { parsed = JSON.parse(String(res.stdout || '').trim()); } catch (_) { /* 非 JSON 模式 */ }
+  if (parsed && typeof parsed === 'object') {
+    if (parsed.skipped === true) {
+      return { ok: false, error: 'hermes send 被跳过（skipped:true，未实际投递）' };
+    }
+    if (parsed.success === false) {
+      return { ok: false, error: `hermes send 报 success:false${parsed.error ? ': ' + String(parsed.error).slice(0, 160) : ''}` };
+    }
   }
   return {
     ok: true,
-    result: { sent: true, to, via: 'hermes-cli-send', argv: argv.map((a) => (a === String(text) ? '<text>' : a)), stdout: String(res.stdout || '').slice(0, 200) },
+    result: {
+      sent: true, to: target, via: 'hermes-cli-send', stdin: useStdin,
+      argv: argv.map((a) => (a === String(target) ? '<to>' : a)),
+      handle: parsed && parsed.message_id ? String(parsed.message_id) : null,
+      stdout: String(res.stdout || '').slice(0, 200),
+    },
   };
 }
 
@@ -628,6 +687,7 @@ module.exports = {
   resolveConfig, fetchResult, extractReply, harvestTexts, invokeTool, buildSendArgs,
   isEnabled, assertPromptSafe, FORBIDDEN_IN_PROMPT, buildChildEnv, makeSentinel, stripSentinel, toUtcIso,
   toEpochSeconds, resolveHermesBin, toolsForScope, buildArgs, DEFAULT_CONFIRM_SQL,
+  normalizeTarget, usesStdin, sendExitHint,
   _setRunner, _setDbRunner, _resetIdentityBridgeCache,
   loadNodeSqlite, runWithNodeSqlite,
   _internals: { executeCli, defaultRunner, defaultDbRunner, runWithSqliteCli, readFromStateDb },
