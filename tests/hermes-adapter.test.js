@@ -575,6 +575,23 @@ function rawRunner(fn) { return async (call) => { lastCall = call; return fn(cal
     assert.strictEqual(require('fs').existsSync('/tmp/pwned-send'), false);
   });
 
+  await t('40b. 投递超时下限：confirm 传 30s，但 sendTimeoutMs 默认 120s → 取较大者（舟楫 9p 实测）', async () => {
+    resetEnv();
+    process.env.A2A_HERMES_SEND = 'on';
+    let seenTimeout = 0;
+    H._setRunner(async (call) => { seenTimeout = call.timeoutMs; assert.strictEqual(call.label, 'hermes send'); return { code: 0, stdout: '', stderr: '' }; });
+    await H.invokeTool('x', 'tok', { args: { to: 'oc_x', message: 'hi' } }, 30000);
+    assert.strictEqual(seenTimeout, 120 * 1000, '应取投递下限 120s（≥ confirm 传的 30s）');
+    // 显式 env 可调
+    process.env.A2A_HERMES_SEND_TIMEOUT_MS = '240000';
+    await H.invokeTool('x', 'tok', { args: { to: 'oc_x', message: 'hi' } }, 30000);
+    assert.strictEqual(seenTimeout, 240000);
+    // 调用方给更大的 → 用调用方的
+    await H.invokeTool('x', 'tok', { args: { to: 'oc_x', message: 'hi' } }, 300000);
+    assert.strictEqual(seenTimeout, 300000);
+    resetEnv();
+  });
+
   await t('40. 确认投递腿：失败路径（非零退出 / 缺目标 / 空文本）→ ok:false', async () => {
     resetEnv();
     process.env.A2A_HERMES_SEND = 'on';

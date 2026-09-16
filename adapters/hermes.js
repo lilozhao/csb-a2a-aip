@@ -191,6 +191,11 @@ function resolveConfig(overrides = {}) {
     ),
     // 确认投递（L3 写操作的「发确认请求」腿）—— 默认关
     sendEnabled: String(process.env.A2A_HERMES_SEND || 'off').trim().toLowerCase() === 'on',
+    // 投递超时下限（★ 2026-09-16 舟楫 9p 实测：首次 hermes send 可能远超 confirm 侧默认的 30s）
+    sendTimeoutMs: Math.min(
+      parseInt(process.env.A2A_HERMES_SEND_TIMEOUT_MS || '', 10) || 120 * 1000,
+      MAX_TIMEOUT_MS
+    ),
     sendArgs: (process.env.A2A_HERMES_SEND_ARGS || '').split(',').map((s) => s.trim()).filter(Boolean),
     mainTo: process.env.A2A_BRIDGE_MAIN_TO || idb.mainTo || '',
     channel: process.env.A2A_BRIDGE_CHANNEL || idb.channel || 'feishu',
@@ -330,7 +335,7 @@ function toEpochSeconds(d) {
 }
 
 // ===== runner（可被测试替换）=====
-function defaultRunner({ bin, args, cwd, env, timeoutMs, stdin }) {
+function defaultRunner({ bin, args, cwd, env, timeoutMs, stdin, label }) {
   return new Promise((resolve, reject) => {
     let child;
     const wantStdin = typeof stdin === 'string';
@@ -357,7 +362,7 @@ function defaultRunner({ bin, args, cwd, env, timeoutMs, stdin }) {
     });
     child.on('close', (code) => {
       clearTimeout(timer);
-      if (killed) return reject(new Error(`注入超时（${timeoutMs}ms）`));
+      if (killed) return reject(new Error(`${label || '注入'}超时（${timeoutMs}ms）`));
       resolve({ code, stdout, stderr });
     });
   });
@@ -508,15 +513,19 @@ async function invokeTool(url, token, body = {}, timeoutMs) {
   const argv = buildSendArgs(cfg, { to: target, text });
   const useStdin = usesStdin(argv);
   const runner = cfg._runner || _runner;
+  // ★ 取「调用方给的」与「投递超时下限」中较大者：confirm 链传 30000，
+  //   但 9p/冷启动下首次 send 可能更久（舟楫 2026-09-16 实测 30s 超时）
+  const effectiveSendTimeoutMs = Math.min(Math.max(timeoutMs || 0, cfg.sendTimeoutMs), MAX_TIMEOUT_MS);
   let res;
   try {
     res = await runner({
       bin: cfg.bin, args: argv, cwd: cfg.cwd, env: buildChildEnv(cfg),
-      timeoutMs: timeoutMs || cfg.timeoutMs,
+      timeoutMs: effectiveSendTimeoutMs,
       stdin: useStdin ? String(text) : undefined,
+      label: 'hermes send',
     });
   } catch (e) {
-    return { ok: false, error: `hermes send 异常: ${e.message}` };
+    return { ok: false, error: `hermes send 异常: ${e.message}（实际上限 ${effectiveSendTimeoutMs}ms）` };
   }
   if (!res || res.code !== 0) {
     const err = res && res.stderr ? String(res.stderr).slice(0, 200) : '';
