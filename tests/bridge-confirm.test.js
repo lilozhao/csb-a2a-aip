@@ -254,6 +254,38 @@ async function main() {
     assert.strictEqual(calls[0].path, undefined, '未配置应保持 undefined');
   });
 
+  // 16. [2026-09-16] 适配器**能力声明**：bridge 未显式配置时问 adapter
+  await test('读回 path：adapter 能力声明 confirmReadPath() 被采纳（宿主只配 adapter 侧 env）', async () => {
+    const { confirmL3 } = require('../a2a-bridge-confirm');
+    const calls = [];
+    const declaring = {
+      resolveConfig: () => ({ sessionKey: 'main' }),
+      invokeTool: async () => ({ ok: true }),
+      confirmReadPath: () => 'db',                      // ← 声明
+      fetchResult: async (tid, o) => { calls.push(o); return { ok: false, error: 'n/a' }; },
+    };
+    const fastEnv = () => ({ ...env(), timeoutMs: 30 });
+    const saved = process.env.A2A_BRIDGE_CONFIRM_READ_PATH;
+    delete process.env.A2A_BRIDGE_CONFIRM_READ_PATH;
+    await confirmL3(fastEnv(), { taskId: 'rp4' }, {
+      adapter: declaring, send: async () => ({ ok: true }), pollIntervalMs: 5,
+    });
+    assert.strictEqual(calls[0].path, 'db', '应采纳适配器声明的读回路径');
+
+    // 不声明的 adapter（如 openclaw-gateway）→ 仍不传 path（行为零变化）
+    calls.length = 0;
+    const silent = {
+      resolveConfig: () => ({ sessionKey: 'main' }),
+      invokeTool: async () => ({ ok: true }),
+      fetchResult: async (tid, o) => { calls.push(o); return { ok: false, error: 'n/a' }; },
+    };
+    await confirmL3(fastEnv(), { taskId: 'rp5' }, {
+      adapter: silent, send: async () => ({ ok: true }), pollIntervalMs: 5,
+    });
+    assert.strictEqual(calls[0].path, undefined, '未声明的 adapter 不得被传 path');
+    if (saved !== undefined) process.env.A2A_BRIDGE_CONFIRM_READ_PATH = saved;
+  });
+
   console.log(`\n📊 结果: ${passed} 通过 / ${failed} 失败`);
   process.exit(failed > 0 ? 1 : 0);
 }

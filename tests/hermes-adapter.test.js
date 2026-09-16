@@ -368,6 +368,17 @@ function rawRunner(fn) { return async (call) => { lastCall = call; return fn(cal
     assert.strictEqual(H.stripSentinel(`正文\n${s}`, s), '正文');
   });
 
+  await t('41. 能力声明 confirmReadPath()：默认 null（保守）；配 db → \'db\'；别名 CONFIRM_READ_PATH 也认', () => {
+    resetEnv();
+    assert.strictEqual(H.confirmReadPath(), null, '默认不声明 → 保持路径 C');
+    process.env.A2A_HERMES_CONFIRM_READ = 'db';
+    assert.strictEqual(H.confirmReadPath(), 'db');
+    resetEnv();
+    process.env.A2A_HERMES_CONFIRM_READ_PATH = 'db';   // 墨丘建议的别名
+    assert.strictEqual(H.confirmReadPath(), 'db');
+    resetEnv();
+  });
+
   await t('25. injectIsolated 同构且禁词不可绕过', async () => {
     on();
     H._setRunner(okRunner('isolated ok'));

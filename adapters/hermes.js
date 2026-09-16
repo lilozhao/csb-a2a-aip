@@ -170,7 +170,10 @@ function resolveConfig(overrides = {}) {
     envMode: ENV_MODE(),
     envDeny: (process.env.A2A_HERMES_ENV_DENY || '').split(',').map((s) => s.trim()).filter(Boolean),
     // 确认读回腿：off（默认→路径 C 保守）| db（启用路径 A：直查 state.db）
-    confirmRead: String(process.env.A2A_HERMES_CONFIRM_READ || 'off').trim().toLowerCase(),
+    // 两个 env 名等效：A2A_HERMES_CONFIRM_READ（adapter 侧）/ A2A_HERMES_CONFIRM_READ_PATH（宿主意愿，墨丘建议）
+    confirmRead: String(
+      process.env.A2A_HERMES_CONFIRM_READ || process.env.A2A_HERMES_CONFIRM_READ_PATH || 'off'
+    ).trim().toLowerCase(),
     // 按 scope 分档的工具集（墨丘实测：`file` 含 read/write/patch/search ≠ 只读）
     //   默认只读档取最保守值；非法名 fail-closed（rc=2）不会静默放宽
     //   ★ 绝对不含：terminal / code_execution / delegation / cronjob / memory（会写 MEMORY.md）
@@ -249,6 +252,17 @@ function detectRefusal(content) {
 /** 生成本次调用的哨兵串 */
 function makeSentinel(taskId) {
   return `BRIDGE-OK-${String(taskId || 'x').replace(/[^\w-]/g, '').slice(-16)}-${Date.now().toString(36)}`;
+}
+
+/**
+ * 【能力声明】本 adapter 偏好的确认读回路径
+ *   bridge（a2a-bridge-confirm）在未显式指定时会**问适配器**，因此宿主只配 adapter 侧 env 即可
+ *   返回 null = 不声明（保持保守路径 C）
+ *   —— 修因：openclaw-gateway 的 fetchResult 自带实现、不看 path，这层接口差异
+ *      在 OpenClaw 系被完全掩盖，只在 Hermes 系暴露（墨丘 2026-09-16 L3 终验）
+ */
+function confirmReadPath() {
+  return resolveConfig().confirmRead === 'db' ? 'db' : null;
 }
 
 /** 从输出里剥掉哨兵行 */
@@ -718,7 +732,7 @@ module.exports = {
   resolveConfig, fetchResult, extractReply, harvestTexts, invokeTool, buildSendArgs,
   isEnabled, assertPromptSafe, FORBIDDEN_IN_PROMPT, buildChildEnv, ENV_ALLOWLIST, makeSentinel, stripSentinel, toUtcIso,
   toEpochSeconds, resolveHermesBin, toolsForScope, buildArgs, DEFAULT_CONFIRM_SQL,
-  normalizeTarget, usesStdin, sendExitHint,
+  normalizeTarget, usesStdin, sendExitHint, confirmReadPath,
   _setRunner, _setDbRunner, _resetIdentityBridgeCache,
   loadNodeSqlite, runWithNodeSqlite,
   _internals: { executeCli, defaultRunner, defaultDbRunner, runWithSqliteCli, readFromStateDb },

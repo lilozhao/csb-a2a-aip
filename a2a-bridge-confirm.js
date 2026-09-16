@@ -419,7 +419,13 @@ async function confirmL3(envelope, ctx = {}, opts = {}) {
     //   的保守默认 → 直接返回错误、**根本不进解析阶段**（[CONFIRM-READ] 只有轮询、无 parsed）。
     //   该接口差异在 OpenClaw 系（gateway.fetchResult 自带实现、不看 path）被完全掩盖，只在 Hermes 系暴露。
     //   默认仍保守：readPath 未配置 = undefined ⇒ adapter 回落原逻辑（行为不变）。
-    const readPath = opts.readPath || process.env.A2A_BRIDGE_CONFIRM_READ_PATH || undefined;
+    // 优先级：调用方显式 opts > bridge 侧 env > **适配器能力声明** > 不指定（adapter 回落保守逻辑）
+    let adapterDeclaredPath = undefined;
+    try {
+      if (typeof adapter.confirmReadPath === 'function') adapterDeclaredPath = adapter.confirmReadPath() || undefined;
+      else if (typeof adapter.confirmReadPath === 'string') adapterDeclaredPath = adapter.confirmReadPath || undefined;
+    } catch (_) { /* 能力声明失败不影响保守默认 */ }
+    const readPath = opts.readPath || process.env.A2A_BRIDGE_CONFIRM_READ_PATH || adapterDeclaredPath || undefined;
     console.log(`[CONFIRM-READ] taskId=${tid} sessionKey=${sessionKey} to=${to || '(unset, will use cfg.mainTo)'} limit=100 sinceMs=${sinceMs} (taskTs or sentAt) path=${readPath || '(adapter default)'} marker='桥接结果 #${tid}' OR '确认 #${tid}' remainingMs=${remaining}`);
     return adapter.fetchResult(tid, { to: opts.to, sessionKey, sinceMs, limit: 100, path: readPath });
   });
