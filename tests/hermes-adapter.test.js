@@ -6,9 +6,20 @@
  * 依赖：无网络、无外部二进制（runner 全部注入假实现）
  * 用法: node tests/hermes-adapter.test.js
  * 更新 2026-09-16：并入墨丘实测四条（rc靠不住 / 环境清洗 / 工具锁 / state.db 两个坑）
+ * 更新 2026-09-16b：修复 operator .env 污染导致的 4 个假红（#19/#30/#31/#34）
  */
 'use strict';
 const assert = require('assert');
+
+// ── 隔离 operator 的 .env ─────────────────────────────────────────────
+// Hermes 会把 /opt/data/.env 载入 session 环境；测试进程若继承了它（A2A_*/HERMES_*），
+// 「配置缺省」类用例会假红（#19/#30/#31/#34：干净环境 35/35，带 operator .env 32/35）。
+// ⚠️ 必须在 require 适配器之前清理——adapters/hermes.js 模块级读取 A2A_HERMES_TIMEOUT_MS
+//    （DEFAULT_TIMEOUT_MS），require 后再清已来不及。
+const ENV_PATTERN = /^(A2A_|HERMES_)/;
+function scrubEnv() { for (const k of Object.keys(process.env)) if (ENV_PATTERN.test(k)) delete process.env[k]; }
+scrubEnv();
+
 const H = require('../adapters/hermes');
 
 let passed = 0, failed = 0;
@@ -18,12 +29,8 @@ function t(name, fn) {
     .catch((e) => { failed++; console.log(`  ❌ ${name}\n     ${e.message}`); });
 }
 
-const ENV_KEYS = ['A2A_BRIDGE_HERMES', 'A2A_HERMES_BIN', 'A2A_HERMES_HOME', 'A2A_HERMES_TIMEOUT_MS',
-  'A2A_HERMES_TOOLS', 'A2A_HERMES_EXTRA_ARGS', 'A2A_HERMES_ENV_EXTRA', 'A2A_HERMES_DB_PATH',
-  'A2A_HERMES_CONFIRM_SQL_TEMPLATE', 'A2A_BRIDGE_MAIN_TO', 'A2A_BRIDGE_CHANNEL', 'A2A_BRIDGE_SESSION_KEY'];
-const _saved = {};
-for (const k of ENV_KEYS) _saved[k] = process.env[k];
-function resetEnv() { for (const k of ENV_KEYS) { if (_saved[k] === undefined) delete process.env[k]; else process.env[k] = _saved[k]; } }
+// 每个用例回到干净起点（清掉上一条用例 / operator 注入的 A2A_*·HERMES_*）
+function resetEnv() { scrubEnv(); }
 function on() { process.env.A2A_BRIDGE_HERMES = 'on'; }
 function off() { process.env.A2A_BRIDGE_HERMES = 'off'; }
 
