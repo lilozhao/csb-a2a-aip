@@ -93,8 +93,8 @@ async function registerToRegistry() {
       host: publicHost,
       port: parseInt(port),
       version: A2A_VERSION,
-      // [2026-09-16] 平台声明跟随 identity.adapter/platform（未声明→openclaw，零变化）
-      platform: identity.adapter || identity.platform || 'openclaw',
+      // [2026-09-16] 平台声明取 identity.platform（**不用 identity.adapter** —— 那是 LLM 路由字段）
+      platform: identity.platform || 'openclaw',
       description: identity.description || '',
       skills: identity.skills || [],
       capabilities: identity.capabilities || { chat: true, vision: true, voice: true, selfie: true },

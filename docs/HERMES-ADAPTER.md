@@ -174,8 +174,37 @@ frame 双契约 / prompt 模板禁词校验 / 无 shell 拼接（含 `;` `&&` `$
 - 选到 hermes **≠ 已启用**：还有 `A2A_BRIDGE_HERMES=off`（默认关）→ 未开启时 inject 抛错 → C5 诚实降级
 - 回滚：`A2A_BRIDGE_ADAPTER=openclaw` 一行覆盖
 
-**测试**：`tests/adapters-select.test.js` → **8/8**（默认/env 优先/adapter/platform/未知回退/坏 JSON 不抛/接口面核实/invokeTool 诚实失败）
-**回归**：core 29 · uac 17 · confirm 14 · adapter 15 · hermes 32 —— 全绿
+**测试**：`tests/adapters-select.test.js` → 8/8 → **（修正后 10/10）**
+**回归**：core 29 · uac 17 · confirm 14 · adapter 15 · hermes 34 —— 全绿
+
+## 十三、墨丘部署实测反馈并入（2026-09-16 四轮 → 已改码）
+
+### ★ 修正一：`identity.adapter` 是 **LLM 路由专属**，注入选择不得复用
+> 墨丘给出代码证据：`llm-router.js:299` → `preferredAdapter = process.env.A2A_ADAPTER || identity?.adapter`
+> 它的值现在是 `direct`（9.9 双通道靠它）；改成 `hermes` 会**连带改掉 LLM 路由**。
+> ⇒ 两个概念绑死了。
+
+**改法**：注入选择不再读 `identity.adapter`，改用**专用字段**：
+```
+env A2A_BRIDGE_ADAPTER  >  identity.injectAdapter  >  identity.bridge.injectAdapter  >  identity.platform  >  默认 openclaw
+```
+- `server_v5.js` 的注册表 `platform` 字段同步改为 **只用 identity.platform**（不再取 identity.adapter）
+- 新增回归用例 **3b**：`identity.adapter='hermes'` 必须**不被采纳**
+
+### ★ 修正二：state.db 读回两处环境事实
+| 事实 | 改法 |
+|---|---|
+| `A2A_HERMES_SESSION_ID` 是**每会话新生成**的 id，写死会过期 | 新增 `{{CHAT_ID}}` 占位符 + `A2A_HERMES_CHAT_ID`：**按 chat_id 自取最新会话**（不过期） |
+| **容器里没有 `sqlite3` CLI**（command not found） | 默认 runner 改为 **`node:sqlite`**（Node ≥22.5 内置，实测可用）→ CLI 降为回退；**消除外部依赖** |
+
+### 修正三：两例测试自带环境依赖（算我们的 bug）
+| 用例 | 问题 | 改法 |
+|---|---|---|
+| `hermes-adapter` #18 | 硬断言 `bin==='hermes'`，但实现有绝对路径自动探测 → 那台机跑红 | 改为断言「非空」 |
+| `adapters-select` #1 | 假设「无 identity」，但仓库里有真实 `identity.json` | 强制指向不存在的 identity 路径 |
+
+**测试**：hermes **34/34**（新增 node:sqlite 端到端 / `{{CHAT_ID}}`）· select **10/10**
+**回归**：core 29 · uac 17 · confirm 14 · adapter 15 —— 全绿
 
 ---
 _一句话：**Hermes 的 C4-H = 「本机 CLI 注入隔离回合」，接口与 OpenClaw 侧完全同形；默认关、参数数组禁 shell 拼接、禁重启类指令、三重判据（rc+非空+哨兵）、环境白名单、失败一律 C5。**_

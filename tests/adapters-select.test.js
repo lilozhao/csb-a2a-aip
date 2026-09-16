@@ -34,8 +34,12 @@ console.log('\n[adapters/select · P0-D]\n');
 
 t('1. 默认（无 env 无 identity）→ openclaw', () => {
   delete process.env.A2A_BRIDGE_ADAPTER;
-  const s = withIdentity({ name: 'x', platform: 'openclaw' }, freshSel);
+  // 强制指向不存在的 identity：不依赖仓库里真实的 identity.json（墨丘本机曾因此跑红）
+  const old = process.env.A2A_IDENTITY_PATH;
+  process.env.A2A_IDENTITY_PATH = path.join(tmpDir, 'definitely-not-here.json');
+  const s = freshSel();
   assert.strictEqual(s.resolveAdapterKind(), 'openclaw');
+  if (old === undefined) delete process.env.A2A_IDENTITY_PATH; else process.env.A2A_IDENTITY_PATH = old;
   const a = s.resolveInjectAdapter();
   assert.ok(typeof a.inject === 'function');
   assert.ok(typeof a.invokeTool === 'function', '应为 openclaw-gateway');
@@ -48,11 +52,25 @@ t('2. env A2A_BRIDGE_ADAPTER=hermes → hermes（env 优先级最高）', () => 
   delete process.env.A2A_BRIDGE_ADAPTER;
 });
 
-t('3. identity.adapter=hermes → hermes', () => {
+t('3. identity.injectAdapter=hermes → hermes（★专用字段）', () => {
   delete process.env.A2A_BRIDGE_ADAPTER;
   let got;
-  withIdentity({ name: 'x', adapter: 'hermes' }, () => { got = freshSel().resolveInjectAdapter(); });
+  withIdentity({ name: 'x', injectAdapter: 'hermes' }, () => { got = freshSel().resolveInjectAdapter(); });
   assert.strictEqual(got, require('../adapters/hermes'));
+});
+
+t('3b. ★ identity.adapter=hermes **不得**被采纳（那是 LLM 路由字段）→ openclaw', () => {
+  delete process.env.A2A_BRIDGE_ADAPTER;
+  let kind;
+  withIdentity({ name: 'x', adapter: 'hermes' }, () => { kind = freshSel().resolveAdapterKind(); });
+  assert.strictEqual(kind, 'openclaw', '复 identity.adapter 会把注入通道与模型后端绑死（墨丘指出）');
+});
+
+t('3c. bridge.injectAdapter 亦可作来源', () => {
+  delete process.env.A2A_BRIDGE_ADAPTER;
+  let kind;
+  withIdentity({ name: 'x', bridge: { injectAdapter: 'hermes' } }, () => { kind = freshSel().resolveAdapterKind(); });
+  assert.strictEqual(kind, 'hermes');
 });
 
 t('4. identity.platform=hermes → hermes（回退字段）', () => {

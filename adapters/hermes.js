@@ -160,8 +160,9 @@ function resolveConfig(overrides = {}) {
     cwd: process.env.A2A_HERMES_CWD || path.join(__dirname, '..'),
     // state.db 读回（path=db）
     dbPath: process.env.A2A_HERMES_DB_PATH || '',
-    dbBin: process.env.A2A_HERMES_SQLITE3_BIN || 'sqlite3',
-    sessionId: process.env.A2A_HERMES_SESSION_ID || '',              // 主人会话 id（见 config/hermes-state-db-queries.sql ②）
+    dbBin: process.env.A2A_HERMES_SQLITE3_BIN || 'sqlite3',          // 仅作 node:sqlite 不可用时的回退
+    sessionId: process.env.A2A_HERMES_SESSION_ID || '',              // ⚠️ 会过期（每会话新 id）；优先用 chatId
+    chatId: process.env.A2A_HERMES_CHAT_ID || '',                    // ★ 推荐：按 chat_id 自取最新会话（不会过期）
     confirmSql: process.env.A2A_HERMES_CONFIRM_SQL_TEMPLATE || '',   // 空=用内置默认（墨丘实测定稿）
   };
   return { ...cfg, ...overrides };
@@ -429,14 +430,19 @@ async function readFromStateDb(taskId, cfg, opts = {}) {
     return { ok: false, error: 'hermes: SQL 模板必须含 LIMIT（468MB 库禁全表查询，墨丘实测④坑②）' };
   }
   const sessionId = cfg.sessionId || opts.sessionId || '';
+  const chatId = cfg.chatId || opts.chatId || '';
   if (/\{\{SESSION_ID\}\}/.test(template) && !sessionId) {
     return { ok: false, error: 'hermes: 需 A2A_HERMES_SESSION_ID（主人会话 id）—— 可用 config/hermes-state-db-queries.sql ② 发现' };
+  }
+  if (/\{\{CHAT_ID\}\}/.test(template) && !chatId) {
+    return { ok: false, error: 'hermes: 需 A2A_HERMES_CHAT_ID（推荐值，不会过期；见 SHELL_SQL 说明）' };
   }
   const sinceIso = opts.since ? `'${escapeSql(toUtcIso(opts.since))}'` : 'NULL';
   const sinceEpoch = opts.since ? String(toEpochSeconds(opts.since)) : 'NULL';
   const sql = template
     .replace(/\{\{TASK_ID\}\}/g, escapeSql(taskId))
     .replace(/\{\{SESSION_ID\}\}/g, escapeSql(sessionId))
+    .replace(/\{\{CHAT_ID\}\}/g, escapeSql(chatId))
     .replace(/\{\{SINCE_EPOCH\}\}/g, sinceEpoch)
     .replace(/\{\{SINCE\}\}/g, sinceIso);
 
@@ -450,8 +456,51 @@ async function readFromStateDb(taskId, cfg, opts = {}) {
   return { ok: true, matched: reply.action !== 'none', reply, raw };
 }
 
-/** 默认 sqlite3 runner（可被测试替换） */
+/**
+ * 默认 DB runner
+ * 优先级：**node:sqlite（Node ≥22.5 内置，无需 sqlite3 CLI）** → 回退 `sqlite3` CLI
+ * 背景（墨丘实测）：Hermes 容器里 **没有 sqlite3 CLI**（command not found）
+ *   → 只靠 CLI 的写法在那边直接不可用。用 node:sqlite 消除这个外部依赖。
+ */
+let _nodeSqlite;
+function loadNodeSqlite() {
+  if (_nodeSqlite !== undefined) return _nodeSqlite;
+  try { _nodeSqlite = require('node:sqlite'); } catch (_) { _nodeSqlite = null; }
+  return _nodeSqlite;
+}
+
+function runWithNodeSqlite(ns, { dbPath, sql }) {
+  return new Promise((resolve) => {
+    let db;
+    try {
+      try { db = new ns.DatabaseSync(dbPath, { readOnly: true }); }
+      catch (_) { db = new ns.DatabaseSync(dbPath); }     // 老版本无 readOnly 选项
+    } catch (e) {
+      return resolve({ code: 1, stdout: '', stderr: 'open failed: ' + e.message });
+    }
+    try {
+      db.exec('PRAGMA busy_timeout=8000');   // 库正被 gateway 写：等锁，不硬失
+      try { db.exec('PRAGMA query_only=1'); } catch (_) { /* 只读加固，失败不致命 */ }
+      const rows = db.prepare(sql).all();
+      const out = rows.map((r) => Object.values(r).map((v) => (v == null ? '' : String(v))).join('\t')).join('\n');
+      resolve({ code: 0, stdout: out, stderr: '', via: 'node:sqlite' });
+    } catch (e) {
+      resolve({ code: 1, stdout: '', stderr: String(e.message || e) });
+    } finally {
+      try { db.close(); } catch (_) { /* ignore */ }
+    }
+  });
+}
+
+/** 默认 DB runner（可被测试替换） */
 function defaultDbRunner({ bin, dbPath, sql, timeoutMs }) {
+  const ns = loadNodeSqlite();
+  if (ns && typeof ns.DatabaseSync === 'function') return runWithNodeSqlite(ns, { dbPath, sql });
+  return runWithSqliteCli({ bin, dbPath, sql, timeoutMs });
+}
+
+/** CLI 回退（无 node:sqlite 时） */
+function runWithSqliteCli({ bin, dbPath, sql, timeoutMs }) {
   return new Promise((resolve, reject) => {
     let child;
     try {
@@ -513,7 +562,8 @@ module.exports = {
   isEnabled, assertPromptSafe, FORBIDDEN_IN_PROMPT, buildChildEnv, makeSentinel, stripSentinel, toUtcIso,
   toEpochSeconds, resolveHermesBin, toolsForScope, buildArgs, DEFAULT_CONFIRM_SQL,
   _setRunner, _setDbRunner, _resetIdentityBridgeCache,
-  _internals: { executeCli, defaultRunner, defaultDbRunner, readFromStateDb },
+  loadNodeSqlite, runWithNodeSqlite,
+  _internals: { executeCli, defaultRunner, defaultDbRunner, runWithSqliteCli, readFromStateDb },
 };
 
 if (require.main === module) {

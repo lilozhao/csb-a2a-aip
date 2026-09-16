@@ -203,7 +203,8 @@ function rawRunner(fn) { return async (call) => { lastCall = call; return fn(cal
     const cfg = H.resolveConfig();
     assert.strictEqual(cfg.mainTo, 'ou_env_wins');
     assert.strictEqual(cfg.timeoutMs, 15 * 60 * 1000);
-    assert.strictEqual(cfg.bin, 'hermes');
+    // bin 会自动探测（本机若存在 /opt/hermes/.venv/bin/hermes 则返回绝对路径）→ 只断言非空
+    assert.ok(typeof cfg.bin === 'string' && cfg.bin.length > 0, 'bin 应非空');
     assert.strictEqual(cfg.home, '/opt/data');
     assert.strictEqual(cfg.tools, '');
   });
@@ -363,6 +364,35 @@ function rawRunner(fn) { return async (call) => { lastCall = call; return fn(cal
     const ti = lastCall.args.indexOf('-t');
     assert.ok(ti >= 0 && lastCall.args[ti + 1] === 'file', 'read 应自动带只读档');
     assert.strictEqual(r.artifact.tools, 'file');
+    resetEnv();
+  });
+
+  await t('33. node:sqlite 端到端：真建库 + 默 runner 读回（不依赖 sqlite3 CLI）', async () => {
+    const ns = H.loadNodeSqlite();
+    if (!ns || typeof ns.DatabaseSync !== 'function') { console.log('     （跳过：本机无 node:sqlite）'); return; }
+    const os = require('os');
+    const p = require('path').join(os.tmpdir(), `csb-hermes-db-${Date.now()}.sqlite`);
+    try { require('fs').unlinkSync(p); } catch (_) {}
+    const db = new ns.DatabaseSync(p);
+    db.exec("CREATE TABLE messages (id INTEGER PRIMARY KEY, content TEXT, role TEXT)");
+    db.exec("INSERT INTO messages (content, role) VALUES ('确认 #" + TID + "', 'user')");
+    db.close();
+    const r = await H._internals.defaultDbRunner({ dbPath: p, sql: "SELECT content FROM messages WHERE role='user' LIMIT 5" });
+    assert.strictEqual(r.code, 0, '查询应成功: ' + r.stderr);
+    assert.ok(r.stdout.includes(TID), '应读回正文');
+    try { require('fs').unlinkSync(p); } catch (_) {}
+  });
+
+  await t('34. {{CHAT_ID}} 占位符：可替换；未配置时报错；不会过期（优于 SESSION_ID）', async () => {
+    resetEnv();
+    process.env.A2A_HERMES_DB_PATH = '/opt/data/state.db';
+    process.env.A2A_HERMES_CONFIRM_SQL_TEMPLATE = "SELECT content FROM messages WHERE session_id IN (SELECT id FROM sessions WHERE chat_id='{{CHAT_ID}}' ORDER BY started_at DESC LIMIT 1) AND content LIKE '%{{TASK_ID}}%' LIMIT 5";
+    const miss = await H.fetchResult(TID, { path: 'db' });
+    assert.match(miss.error, /CHAT_ID/);
+    process.env.A2A_HERMES_CHAT_ID = 'oc_test_chat';
+    H._setDbRunner(async (call) => { assert.ok(call.sql.includes("'oc_test_chat'")); return { code: 0, stdout: '', stderr: '' }; });
+    const r = await H.fetchResult(TID, { path: 'db' });
+    assert.strictEqual(r.ok, true);
     resetEnv();
   });
 

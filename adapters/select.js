@@ -18,19 +18,34 @@
 const fs = require('fs');
 const path = require('path');
 
-/** 读 identity 里的 adapter/platform（读不到就返回空串，不抛） */
-function readIdentityAdapter() {
+/**
+ * 读 identity 里的注入适配器声明（读不到就返回空串，不抛）
+ *
+ * ★★ 2026-09-16 重要修正（墨丘指出）：**不得复用 `identity.adapter`！**
+ *   `llm-router.js:299` → `preferredAdapter = A2A_ADAPTER || identity.adapter`
+ *   —— 该字段是 **LLM 路由专属**（取值如 direct/openclaw/hermes/openai）。
+ *   复用它会把「注入通道」和「模型后端」两件事绑死：改一个会连带改另一个。
+ *   ⇒ 注入适配器改用**专用字段** `injectAdapter`（或 `bridge.injectAdapter`），env 仍最高优先。
+ */
+function readIdentityInfo() {
   try {
     const p = process.env.A2A_IDENTITY_PATH || path.join(__dirname, '..', 'identity.json');
-    if (!fs.existsSync(p)) return '';
+    if (!fs.existsSync(p)) return { injectAdapter: '', platform: '' };
     const j = JSON.parse(fs.readFileSync(p, 'utf8'));
-    return String(j.adapter || j.platform || '').trim();
-  } catch (_) { return ''; }
+    return {
+      injectAdapter: String((j.injectAdapter || (j.bridge && j.bridge.injectAdapter) || '')).trim(),
+      platform: String(j.platform || '').trim(),
+    };
+  } catch (_) { return { injectAdapter: '', platform: '' }; }
 }
 
-/** 归一化种类名 */
+/** 兼容旧名（返回注入适配器声明，**不再**读 identity.adapter） */
+function readIdentityAdapter() { return readIdentityInfo().injectAdapter; }
+
+/** 归一化种类名：env > 专用字段 > platform > 默认 openclaw */
 function resolveAdapterKind() {
-  const raw = process.env.A2A_BRIDGE_ADAPTER || readIdentityAdapter() || 'openclaw';
+  const info = readIdentityInfo();
+  const raw = process.env.A2A_BRIDGE_ADAPTER || info.injectAdapter || info.platform || 'openclaw';
   return String(raw).trim().toLowerCase();
 }
 
@@ -41,4 +56,4 @@ function resolveInjectAdapter() {
   return require('./openclaw-gateway');
 }
 
-module.exports = { resolveInjectAdapter, resolveAdapterKind, readIdentityAdapter };
+module.exports = { resolveInjectAdapter, resolveAdapterKind, readIdentityAdapter, readIdentityInfo };
