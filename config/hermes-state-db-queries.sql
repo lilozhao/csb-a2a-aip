@@ -10,6 +10,12 @@
 --   PRAGMA busy_timeout=8000
 -- ═══════════════════════════════════════════════════════════════
 
+-- ★ 2026-09-16 更新：**内置默认模板已改为本条 CHAT_ID 子查询口径**
+--   （原 `session_id=?` 口径需写死会话 id，而它每会话新生成 → 会过期）
+--   · 子查询按 chat_id 取最近 5 个会话，**刻意不加 started_at 下界**（否则漏「早于 SINCE 开启」的会话）
+--   · 外层仍按 m.timestamp 裁剩；缺 since 时 epoch 占位符 → 0（不是 NULL，`>= NULL` 恒假）
+--   · `sessions.last_activity_at` 无索引，勿用
+--
 -- ── ① 主路径：按「会话 + 时间段」检索消息原文（实测 6ms，走索引）──
 -- EXPLAIN: SEARCH m USING INDEX idx_messages_session (session_id=? AND timestamp>?)
 -- 换成 adapter 占位符：:SESSION_ID → {{SESSION_ID}} · :SINCE → {{SINCE_EPOCH}} · :TASK_ID → {{TASK_ID}}

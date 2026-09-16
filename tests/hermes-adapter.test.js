@@ -222,8 +222,8 @@ function rawRunner(fn) { return async (call) => { lastCall = call; return fn(cal
     assert.strictEqual(r1.ok, false);
     assert.match(r1.error, /A2A_HERMES_DB_PATH/);
     process.env.A2A_HERMES_DB_PATH = '/opt/data/state.db';
-    const r2 = await H.fetchResult(TID, { path: 'db' });   // 默认 SQL 已内置，但缺 SESSION_ID
-    assert.match(r2.error, /SESSION_ID/);
+    const r2 = await H.fetchResult(TID, { path: 'db' });   // 默认模板已内置（CHAT_ID 口径），但缺 CHAT_ID
+    assert.match(r2.error, /CHAT_ID/);
   });
 
   await t('20. state.db 读回 · SQL 无 LIMIT → 拒绝（468MB 库禁全表，坑②）', async () => {
@@ -264,21 +264,36 @@ function rawRunner(fn) { return async (call) => { lastCall = call; return fn(cal
     assert.match(r2.error, /尚未实现/);
   });
 
-  await t('30. 默认 SQL（墨丘定稿）：含 LIMIT + role 过滤；SINCE 用 UTC epoch 而非 ISO', async () => {
+  await t('30. 默认 SQL（CHAT_ID 口径）：子查询限会话+外层裁时间；含 LIMIT + role；SINCE 用 epoch', async () => {
     resetEnv();
     assert.match(H.DEFAULT_CONFIRM_SQL, /LIMIT/);
     assert.match(H.DEFAULT_CONFIRM_SQL, /role\s*=\s*'user'/);
+    assert.match(H.DEFAULT_CONFIRM_SQL, /chat_id\s*=\s*'\{\{CHAT_ID\}\}'/, '默认应为 CHAT_ID 子查询口径（SESSION_ID 会过期）');
+    assert.match(H.DEFAULT_CONFIRM_SQL, /sessions/);
+    assert.match(H.DEFAULT_CONFIRM_SQL, /ORDER BY started_at DESC/, '按有索引的 started_at 排序');
+    assert.ok(!/last_activity_at/.test(H.DEFAULT_CONFIRM_SQL), '不得用无索引的 last_activity_at');
     process.env.A2A_HERMES_DB_PATH = '/opt/data/state.db';
-    process.env.A2A_HERMES_SESSION_ID = 'sess-1';
+    process.env.A2A_HERMES_CHAT_ID = 'oc-1';
     H._setDbRunner(async (call) => {
-      assert.ok(call.sql.includes("'sess-1'"), '应注入 SESSION_ID');
+      assert.ok(call.sql.includes("'oc-1'"), '应注入 CHAT_ID');
       assert.ok(call.sql.includes(`m.timestamp >= ${H.toEpochSeconds('2026-09-16T09:00:00+08:00')}`), 'SINCE 必须是 epoch 秒');
       assert.ok(!/T\d\d:\d\d/.test(call.sql), 'SQL 不得含 ISO 字符串时间');
+      // 子查询里不得加时间下界（否则会漏掉「早于 SINCE 开启」的会话）
+      const sub = call.sql.slice(call.sql.indexOf('SELECT id FROM sessions'), call.sql.indexOf('AND m.timestamp'));
+      assert.ok(!/started_at\s*>=/.test(sub), '子查询不应加 started_at 下界');
       return { code: 0, stdout: '', stderr: '' };
     });
     const r = await H.fetchResult(TID, { path: 'db', since: '2026-09-16T09:00:00+08:00' });
     assert.strictEqual(r.ok, true);
     assert.strictEqual(r.matched, false);
+    // 无 since 时 epoch 占位符必须为 0（不是 NULL：`>= NULL` 恒假）
+    H._setDbRunner(async (call) => {
+      assert.ok(call.sql.includes('m.timestamp >= 0'), '缺 since 时应为 0，不能是 NULL');
+      assert.ok(!/NULL/.test(call.sql), 'SQL 不得出现 NULL');
+      return { code: 0, stdout: '', stderr: '' };
+    });
+    const r2 = await H.fetchResult(TID, { path: 'db' });
+    assert.strictEqual(r2.ok, true);
     resetEnv();
   });
 

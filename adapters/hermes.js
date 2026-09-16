@@ -423,11 +423,24 @@ function escapeSql(v) { return String(v == null ? '' : v).replace(/'/g, "''"); }
  * ★ 注意 SINCE 必须是 **UTC epoch 秒**——timestamp 是 REAL epoch，
  *    若塞 ISO 字符串会因 SQLite 类型序（REAL < TEXT）使条件恒假。
  */
+/**
+ * [2026-09-16 改口径] 默认模板改用 **{{CHAT_ID}} 子查询**
+ *   · 原 {{SESSION_ID}} 口径会过期（每会话新生成，K8）
+ *   · 子查询按 chat_id 取最近 5 个会话（`started_at` 有索引；**不用**无索引的 last_activity_at）
+ *   · 刻意**不给子查询加时间下界**：确认消息可能落在「早于 SINCE 就开启」的会话里，加了会漏
+ *   · 外层仍按 timestamp 裁剩（走 idx_messages_session）
+ * 占位符：{{CHAT_ID}}（必需）/ {{SINCE_EPOCH}}（缺省→0，即无下界）/ {{TASK_ID}}
+ */
 const DEFAULT_CONFIRM_SQL = [
   'SELECT m.id, m.role, m.content, m.timestamp, datetime(m.timestamp,\'unixepoch\') AS ts_utc',
   'FROM messages m',
-  'WHERE m.session_id = \'{{SESSION_ID}}\'',
-  "  AND m.timestamp >= {{SINCE_EPOCH}}",
+  'WHERE m.session_id IN (',
+  '    SELECT id FROM sessions',
+  "    WHERE chat_id = '{{CHAT_ID}}'",
+  '    ORDER BY started_at DESC',
+  '    LIMIT 5',
+  '  )',
+  '  AND m.timestamp >= {{SINCE_EPOCH}}',
   "  AND m.role = 'user'",
   "  AND m.content LIKE '%' || '{{TASK_ID}}' || '%'",
   'ORDER BY m.timestamp DESC',
@@ -446,10 +459,11 @@ async function readFromStateDb(taskId, cfg, opts = {}) {
     return { ok: false, error: 'hermes: 需 A2A_HERMES_SESSION_ID（主人会话 id）—— 可用 config/hermes-state-db-queries.sql ② 发现' };
   }
   if (/\{\{CHAT_ID\}\}/.test(template) && !chatId) {
-    return { ok: false, error: 'hermes: 需 A2A_HERMES_CHAT_ID（推荐值，不会过期；见 SHELL_SQL 说明）' };
+    return { ok: false, error: 'hermes: 需 A2A_HERMES_CHAT_ID（推荐值，不会过期；见 config/hermes-state-db-queries.sql ②）' };
   }
   const sinceIso = opts.since ? `'${escapeSql(toUtcIso(opts.since))}'` : 'NULL';
-  const sinceEpoch = opts.since ? String(toEpochSeconds(opts.since)) : 'NULL';
+  // ★ epoch 缺省用 0（"无下界"）而非 NULL：`timestamp >= NULL` 恒为 NULL ⇒ 条件恒假、一行也回不来
+  const sinceEpoch = opts.since ? String(toEpochSeconds(opts.since)) : '0';
   const sql = template
     .replace(/\{\{TASK_ID\}\}/g, escapeSql(taskId))
     .replace(/\{\{SESSION_ID\}\}/g, escapeSql(sessionId))

@@ -155,6 +155,13 @@ frame 双契约 / prompt 模板禁词校验 / 无 shell 拼接（含 `;` `&&` `$
 
 **测试**：→ **32/32**（新增默认 SQL 校验 / WRITE_SAFE_ROOT 保留与收窄 / 只读档默认值）
 
+### 内置默认读回模板已改 CHAT_ID 口径（2026-09-16 四轮）
+`DEFAULT_CONFIRM_SQL` 从 `session_id = '{{SESSION_ID}}'`（会过期）改为 **`session_id IN (SELECT id FROM sessions WHERE chat_id='{{CHAT_ID}}' ORDER BY started_at DESC LIMIT 5)`**：
+- 子查询**刻意不加 `started_at` 下界**——否则会漏掉「早于 SINCE 就已开启」的会话
+- 外层仍按 `m.timestamp` 裁剩（走 `idx_messages_session`）· 不用无索引的 `last_activity_at`
+- ★ 连带修：`{{SINCE_EPOCH}}` 缺省时由 `NULL` 改为 **`0`** —— `timestamp >= NULL` 恒为 NULL ⇒ **条件恒假、一行都回不来**
+- 测试 35/35
+
 ## 十二、装配（P0-D · 2026-09-16）
 
 **新增 `adapters/select.js`** —— 注入适配器选择（与 `server_v5`、`a2a-bridge-confirm` 同源）：
