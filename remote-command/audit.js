@@ -9,7 +9,9 @@ const crypto = require('crypto');
 
 const DEFAULT_CONFIG = {
   enabled: true,
-  logPath: '/home/node/.openclaw/workspace/logs/a2a_command.log',
+  // 审计日志路径：支持 A2A_CMD_AUDIT_LOG 环境变量覆盖
+  // （对齐 a2a-bridge-audit.js 的 A2A_BRIDGE_MAIN_LOGS，避免宿主/容器 home 不可写时 EACCES）
+  logPath: process.env.A2A_CMD_AUDIT_LOG || '/home/node/.openclaw/workspace/logs/a2a_command.log',
   maxFileSize: 10 * 1024 * 1024,  // 10MB
   maxFiles: 5,                     // 保留 5 个历史文件
   bufferSize: 100,                 // 缓冲 100 条后写入
@@ -40,7 +42,11 @@ class AuditLogger {
       this.initialized = true;
       console.log('[A2A-CMD] Audit logger initialized');
     } catch (e) {
-      console.error('[A2A-CMD] Failed to initialize audit logger:', e.message);
+      // K14(§六.3)：审计目录不可写时**降级为一条显式告警**（不允许静默），并给出可配置指路
+      console.error(
+        `[A2A-CMD] Audit logger DISABLED (degraded): ${e.message} | ` +
+        `path=${this.config.logPath} | 可用 env A2A_CMD_AUDIT_LOG 覆盖为可写路径`
+      );
     }
   }
 
