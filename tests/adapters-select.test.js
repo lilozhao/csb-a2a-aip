@@ -107,9 +107,9 @@ t('7. hermes 适配器具备 confirm 所需接口面（resolveConfig/fetchResult
   // 8. hermes.invokeTool 诚实失败（P0 未实现投递）
   const h = require('../adapters/hermes');
   const r = await h.invokeTool();
-  t('8. hermes.invokeTool → {ok:false}（诚实失败，confirmL3 会拒绝而非放行）', () => {
+  t('8. hermes.invokeTool 默认关 → {ok:false}（诚实失败，confirmL3 会拒绝而非放行）', () => {
     assert.strictEqual(r.ok, false);
-    assert.match(r.error, /未实现/);
+    assert.match(r.error, /A2A_HERMES_SEND|确认投递/);
   });
 
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}

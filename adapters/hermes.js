@@ -157,6 +157,9 @@ function resolveConfig(overrides = {}) {
       parseInt(process.env.A2A_HERMES_TIMEOUT_MS || '', 10) || DEFAULT_TIMEOUT_MS,
       MAX_TIMEOUT_MS
     ),
+    // 确认投递（L3 写操作的「发确认请求」腿）—— 默认关
+    sendEnabled: String(process.env.A2A_HERMES_SEND || 'off').trim().toLowerCase() === 'on',
+    sendArgs: (process.env.A2A_HERMES_SEND_ARGS || '').split(',').map((s) => s.trim()).filter(Boolean),
     mainTo: process.env.A2A_BRIDGE_MAIN_TO || idb.mainTo || '',
     channel: process.env.A2A_BRIDGE_CHANNEL || idb.channel || 'feishu',
     sessionKey: process.env.A2A_BRIDGE_SESSION_KEY || idb.sessionKey || 'main',
@@ -391,14 +394,53 @@ async function injectIsolated(envelope, taskId, opts = {}) {
 
 /**
  * 确认请求投递（confirmL3 用）—— **P0 未实现**
- * Hermes 没有「向主人发消息」的现成通道（平台适配器 feishu 是 WS 入站；webhook 8644 未启用）。
- * 诚实失败：返回 ok:false → confirmL3 会记「确认请求发送失败」→ 拒绝执行（绝不静默放行）。
+ * 通道：**本机 CLI**（与注入腿同源，argv 数组、禁 shell 拼接）
+ *   `hermes send ...` —— 宿主侧确实存在该命令（agent 可通过 terminal 调用）
+ * 默认 **关**（`A2A_HERMES_SEND`）—— 对外发消息是外发动作，按「每级通道单独开关」原则需显式开启。
+ * 失败一律诚实返回 ok:false → confirmL3 会记「确认请求发送失败」→ **拒绝执行**（绝不静默放行）。
  */
-function invokeTool() {
-  return Promise.resolve({
-    ok: false,
-    error: 'hermes: 确认请求投递未实现（P0）—— Hermes 侧无现成外发通道，L3 写操作暂无法自动确认',
-  });
+
+/**
+ * 构造投递 argv（**按整 token 替换 {to}/{text}**，不做 shell 拼接）
+ * 默认模板：A2A_HERMES_SEND_ARGS = 'send,--to,{to},--text,{text}'
+ * （语法以宿主实际 `hermes send --help` 为准，可用该 env 全量改写）
+ */
+function buildSendArgs(cfg, { to, text }) {
+  const raw = cfg.sendArgs && cfg.sendArgs.length ? cfg.sendArgs : ['send', '--to', '{to}', '--text', '{text}'];
+  const map = { '{to}': String(to), '{text}': String(text) };
+  return raw.map((t) => (map[t] !== undefined ? map[t] : t));
+}
+
+async function invokeTool(url, token, body = {}, timeoutMs) {
+  const cfg = resolveConfig();
+  if (!cfg.sendEnabled) {
+    return { ok: false, error: 'hermes: 确认投递未启用（A2A_HERMES_SEND 默认关）—— L3 写操作暂无法自动确认' };
+  }
+  const args = (body && body.args) || {};
+  const to = args.to || cfg.mainTo;
+  const text = args.message || '';
+  if (!to) return { ok: false, error: 'hermes: 缺投递目标 to（identity.bridge.mainTo / A2A_BRIDGE_MAIN_TO）' };
+  if (!text) return { ok: false, error: 'hermes: 空确认文本，拒绝投递' };
+
+  const argv = buildSendArgs(cfg, { to, text });
+  const runner = cfg._runner || _runner;
+  let res;
+  try {
+    res = await runner({
+      bin: cfg.bin, args: argv, cwd: cfg.cwd, env: buildChildEnv(cfg),
+      timeoutMs: timeoutMs || cfg.timeoutMs,
+    });
+  } catch (e) {
+    return { ok: false, error: `hermes send 异常: ${e.message}` };
+  }
+  if (!res || res.code !== 0) {
+    const err = res && res.stderr ? String(res.stderr).slice(0, 200) : '';
+    return { ok: false, error: `hermes send 失败（code=${res && res.code}）${err ? ': ' + err : ''}` };
+  }
+  return {
+    ok: true,
+    result: { sent: true, to, via: 'hermes-cli-send', argv: argv.map((a) => (a === String(text) ? '<text>' : a)), stdout: String(res.stdout || '').slice(0, 200) },
+  };
 }
 
 function buildInjectMessage(frame = {}) {
@@ -583,7 +625,7 @@ function extractReply(raw, taskId) {
 
 module.exports = {
   inject, injectIsolated, buildPrompt, buildInjectMessage, detectRefusal, REFUSAL_PATTERNS,
-  resolveConfig, fetchResult, extractReply, harvestTexts, invokeTool,
+  resolveConfig, fetchResult, extractReply, harvestTexts, invokeTool, buildSendArgs,
   isEnabled, assertPromptSafe, FORBIDDEN_IN_PROMPT, buildChildEnv, makeSentinel, stripSentinel, toUtcIso,
   toEpochSeconds, resolveHermesBin, toolsForScope, buildArgs, DEFAULT_CONFIRM_SQL,
   _setRunner, _setDbRunner, _resetIdentityBridgeCache,

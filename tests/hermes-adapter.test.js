@@ -435,6 +435,58 @@ function rawRunner(fn) { return async (call) => { lastCall = call; return fn(cal
     resetEnv();
   });
 
+  await t('36. 确认投递腿：默认关（A2A_HERMES_SEND=off）→ 诚实失败', async () => {
+    resetEnv();
+    const r = await H.invokeTool('x', 'tok', { args: { to: 'oc_x', message: '确认 #t1' } });
+    assert.strictEqual(r.ok, false);
+    assert.match(r.error, /A2A_HERMES_SEND/);
+  });
+
+  await t('37. 确认投递腿：开启后 argv = [send,--to,<to>,--text,<text>]（整 token 替换）', async () => {
+    resetEnv();
+    process.env.A2A_HERMES_SEND = 'on';
+    H._setRunner(async (call) => { lastCall = call; return { code: 0, stdout: 'msg_id=om_1', stderr: '' }; });
+    const r = await H.invokeTool('x', 'tok', { args: { to: 'oc_x', message: '确认 #t1' } });
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.result.via, 'hermes-cli-send');
+    assert.deepStrictEqual(lastCall.args, ['send', '--to', 'oc_x', '--text', '确认 #t1']);
+    assert.ok(!lastCall.args.some((a) => a.includes('{')), '占位符应全部被替换');
+  });
+
+  await t('38. 确认投递腿：自定义 A2A_HERMES_SEND_ARGS 生效（适配宿主真实语法）', async () => {
+    resetEnv();
+    process.env.A2A_HERMES_SEND = 'on';
+    process.env.A2A_HERMES_SEND_ARGS = 'send,--chat,{to},--body,{text},--plain';
+    H._setRunner(async (call) => { lastCall = call; return { code: 0, stdout: '', stderr: '' }; });
+    await H.invokeTool('x', 'tok', { args: { to: 'oc_y', message: 'hi' } });
+    assert.deepStrictEqual(lastCall.args, ['send', '--chat', 'oc_y', '--body', 'hi', '--plain']);
+  });
+
+  await t('39. 确认投递腿：恶意文本只作为一个 argv token（不做 shell 拼接/拆分）', async () => {
+    resetEnv();
+    process.env.A2A_HERMES_SEND = 'on';
+    const evil = '确认 #t1 ; rm -rf /tmp/pwned-send && $(id)';
+    H._setRunner(async (call) => { lastCall = call; return { code: 0, stdout: '', stderr: '' }; });
+    await H.invokeTool('x', 'tok', { args: { to: 'oc_z', message: evil } });
+    assert.strictEqual(lastCall.args[4], evil, '文本应原样作为单个 token');
+    assert.strictEqual(lastCall.args.length, 5, '不得被拆分出额外 token');
+    assert.strictEqual(require('fs').existsSync('/tmp/pwned-send'), false);
+  });
+
+  await t('40. 确认投递腿：失败路径（非零退出 / 缺目标 / 空文本）→ ok:false', async () => {
+    resetEnv();
+    process.env.A2A_HERMES_SEND = 'on';
+    H._setRunner(async () => ({ code: 3, stdout: '', stderr: 'unknown command: send' }));
+    const r1 = await H.invokeTool('x', 'tok', { args: { to: 'oc_x', message: 'hi' } });
+    assert.strictEqual(r1.ok, false);
+    assert.match(r1.error, /code=3.*unknown command/s);
+    const r2 = await H.invokeTool('x', 'tok', { args: { message: 'hi' } });
+    assert.strictEqual(r2.ok, false);
+    const r3 = await H.invokeTool('x', 'tok', { args: { to: 'oc_x', message: '' } });
+    assert.strictEqual(r3.ok, false);
+    assert.match(r3.error, /空确认文本/);
+  });
+
   H._setRunner(null); H._setDbRunner(null); resetEnv();
 
   console.log(`\n结果：${passed} 通过 / ${failed} 失败（共 ${passed + failed}）\n`);

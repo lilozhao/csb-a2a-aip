@@ -73,15 +73,37 @@ injectIsolated():
 
 > 备注（K14/§六.3）：远程命令审计日志路径 `A2A_CMD_AUDIT_LOG`（默认 `/home/node/.openclaw/workspace/logs/a2a_command.log`）；容器 home 不可写时设为可写目录，失败会降级为一条显式告警。
 
-## 五、L3 confirm 读回（`fetchResult`）——**待定，3 条路径**
+## 五、L3 confirm：**读回腿** + **投递腿**
+
+L3 写操作要闭环，需要两段：
+1. **投递腿**：把「确认请求」发给主人
+2. **读回腿**：读回主人的「确认 #<taskId>」
+
+### 5.1 读回腿（`fetchResult`）
 
 | 路径 | 机制 | 状态 |
 |---|---|---|
-| A | 直查 `state.db`（SQLite+FTS5）匹配 `确认 #<taskId>` | ⏳ 需验证 schema |
-| B | 启用 webhook 平台（8644）接收主人回复 | ⏳ 需对方启用端口 |
-| C | **不自动读**（保守降级：L3 一律人工在宿主侧处理） | ✅ 默认 |
+| **A** | 直查 `state.db`（只读 + Node 内置 sqlite）匹配 `确认 #<taskId>` | ✅ **已实现**，默认走 A（CHAT_ID 子查询口径） |
+| B | 启用 webhook 平台（8644）接收主人回复 | ⏳ 未实现（需对方启用端口） |
+| C | 不自动读（保守降级） | ✅ 保留为回退 |
 
-> **P0 默认走 C**：写操作仍由宿主侧原流程确认；adapter 只负责「注入」这条腿。候选 A/B 留 P0-D 验证。
+- 默认 SQL = `DEFAULT_CONFIRM_SQL`（CHAT_ID 子查询）· 占位符 `{{CHAT_ID}}` / `{{SINCE_EPOCH}}` / `{{TASK_ID}}`
+- 硬护栏：SQL 必须含 `LIMIT`（库大 + gateway 在写，禁全表）· 查询带超时
+- 详见 `config/hermes-state-db-queries.sql`
+
+### 5.2 投递腿（`invokeTool`）—— 本机 CLI
+
+```
+spawn(HERMES_BIN, ['send','--to',<to>,'--text',<text>])   // argv 数组，禁 shell 拼接
+```
+
+| 配置 | 默认 | 说明 |
+|---|---|---|
+| `A2A_HERMES_SEND` | **off** | 总闸（对外发消息 = 外发动作，需显式开启） |
+| `A2A_HERMES_SEND_ARGS` | `send,--to,{to},--text,{text}` | **按整 token 替换**，适配宿主真实 `hermes send` 语法 |
+
+- 失败一律诚实 `ok:false` → confirmL3 记「确认请求发送失败」→ **拒绝执行**（绝不静默放行）
+- ⚠️ **待宿主侧校准**：`hermes send` 的真实参数形态（默认模板为待定值，用 `A2A_HERMES_SEND_ARGS` 全量改写）
 
 ## 六、降级契约（C5）
 
