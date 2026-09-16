@@ -71,6 +71,8 @@ injectIsolated():
 | 通道 | `A2A_BRIDGE_CHANNEL` | `feishu` | confirm 收回用 |
 | 会话键 | `A2A_BRIDGE_SESSION_KEY` | `main` | 读回用 |
 
+> 备注（K14/§六.3）：远程命令审计日志路径 `A2A_CMD_AUDIT_LOG`（默认 `/home/node/.openclaw/workspace/logs/a2a_command.log`）；容器 home 不可写时设为可写目录，失败会降级为一条显式告警。
+
 ## 五、L3 confirm 读回（`fetchResult`）——**待定，3 条路径**
 
 | 路径 | 机制 | 状态 |

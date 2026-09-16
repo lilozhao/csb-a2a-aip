@@ -140,9 +140,9 @@ A2A 桥接要把「委托」送进对方**真正在思考的那一层**，才谈
 
 1. **confirm 投递腿**（Hermes 侧「发确认请求给主人」的通道）—— 未实现 ⇒ write/shell 暂不可用
 2. 内置默认读回模板改 `{{CHAT_ID}}` 口径
-3. 审计目录可配置 + 失败告警（K14）
+3. ~~审计目录可配置 + 失败告警（K14）~~ ✅ **2026-09-16**：`remote-command/audit.js` 支持 env `A2A_CMD_AUDIT_LOG`（优先级：显式 `config.logPath` > env > 默认）；不可写时降级为**一条显式告警**（含路径 + 指路，不再刷屏/静默）。单测 `tests/remote-command-audit.test.js`（4/4）
 4. 协议侧：LLM 路由 `hermes` 改名（K7）
-5. 宿主侧：`llm.apiKey` 明文 → 建议改 `apiKeyEnv`
+5. ~~宿主侧：`llm.apiKey` 明文 → 建议改 `apiKeyEnv`~~ ✅ **2026-09-16**：墨丘侧已完成（`apiKeyEnv: A2A_LLM_API_KEY`，实测外置 key 生效，`identity.json` 不再暴露凭证）
 6. 通知去重键落盘（跨会话/进程）
 7. **UAC 开通 Hermes 系**（前置=本报告已完成的部分）
 8. 推广到同系其余实例（舟楫 / 言蹊）
