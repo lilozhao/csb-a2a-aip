@@ -70,6 +70,8 @@ injectIsolated():
 | 主会话目标 | `A2A_BRIDGE_MAIN_TO` | identity.bridge.mainTo | 飞书 `ou_*`/`oc_*` |
 | 通道 | `A2A_BRIDGE_CHANNEL` | `feishu` | confirm 收回用 |
 | 会话键 | `A2A_BRIDGE_SESSION_KEY` | `main` | 读回用 |
+| 子进程附加 env | `A2A_HERMES_ENV_EXTRA` | 空 | `K1=V1,K2=V2`；对白名单**外**的键**显式放行**（投递腿依赖，见 §5.2） |
+| 写护栏收窄 | `A2A_HERMES_WRITE_SAFE_ROOT` | 空（=保留父值） | 收窄子进程可写根（§十一安全更正） |
 
 > 备注（K14/§六.3）：远程命令审计日志路径 `A2A_CMD_AUDIT_LOG`（默认 `/home/node/.openclaw/workspace/logs/a2a_command.log`）；容器 home 不可写时设为可写目录，失败会降级为一条显式告警。
 
@@ -116,6 +118,20 @@ spawn(HERMES_BIN, ['send','--to','feishu:oc_xxx','--file','-','--json'])
 ⇒ 确认请求会以「该 Agent 自己说过的话」进入主人会话——可接受（主人本来就在那儿回），但要写进文档。
 
 - 失败一律诚实 `ok:false` → confirmL3 记「确认请求发送失败」→ **拒绝执行**（绝不静默放行）
+
+#### ⚠️ 投递腿的宿主必需 env（2026-09-16 墨丘实测并入）
+
+`invokeTool()` 建子进程走的是 `buildChildEnv()` **白名单清洗**——它是**盲的**：不区分「多余的脏变量」与「关键的依赖路径变量」（= K3「白名单是盲的」的**同款复发**，上次是写入护栏，这次是依赖路径）。
+
+| 现象/根因 | 解法 |
+|---|---|
+| 首测 `hermes send` 失败：`code=1（平台层失败）`；手动 `hermes send` 却成功 ⇒ 不是 target 格式、不是凭证 | — |
+| **根因**：白名单把 **`HERMES_LAZY_INSTALL_TARGET`** 一起剥掉了。该变量指向宿主 feishu 依赖的**懒安装目录**（墨丘侧 `/tmp/lark-fast`）；缺它 → `hermes send` 直接报 `Feishu dependencies not installed. Run \`hermes setup\`...` | 用现有机制**显式放行**（不改码）：<br>`A2A_HERMES_ENV_EXTRA=HERMES_LAZY_INSTALL_TARGET=<懒安装目录>` |
+| 白名单 + 该变量（其余不变）→ 立刻 `success: true` | 已实测投递腿真发通（`sent:true via=hermes-cli-send`，见回执证据） |
+
+**宿主前置条件（必须持久化）**：该懒安装目录若落在 **`/tmp`**（易失），且宿主进程带 **`HERMES_DISABLE_LAZY_INSTALLS=1`**（禁用自动重装）⇒ **容器重启清空 `/tmp` 后 `feishu send` 会永久失败且不自愈**。⇒ 文档与部署清单需标注：**投递腿依赖目录必须放持久卷**，并把 `A2A_HERMES_ENV_EXTRA` 指过去。
+
+> 与 §十一同类：`ENV_ALLOWLIST` 只放行「最小必要 + 已确证的关键项」；凡宿主依赖的**路径/护栏类**变量（`HERMES_WRITE_SAFE_ROOT`、`HERMES_LAZY_INSTALL_TARGET`…）出现剥除即故障，一律走 `A2A_HERMES_ENV_EXTRA` 显式补回。
 
 ## 六、降级契约（C5）
 
