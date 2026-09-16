@@ -125,5 +125,33 @@ frame 双契约 / prompt 模板禁词校验 / 无 shell 拼接（含 `;` `&&` `$
 
 **待墨丘补**：① 工具集清单（Q4-4 说已拿到，未发）② state.db 检索 SQL 示例（已请求）
 
+## 十一、定稿 SQL + ⚠️ 一条安全更正（2026-09-16 三轮 → 已改码）
+
+墨丘已发全：回执 `task_1789522870224` · SQL `task_1789523380920` · 工具集真值 `task_1789523590775`（三条均在 `csb-a2a-aip/data/a2a-inbox.jsonl`）
+
+### ⚠️ 安全更正：`HERMES_WRITE_SAFE_ROOT` **必须保留**（我原白名单错了一处）
+> `file_safety.py:148-158`：**设了才检查**，未设 = 只受凭证黑名单限制。
+> 对照实测（同一条 prompt）：`env -u HERMES_WRITE_SAFE_ROOT … "写 /tmp/probe2"` → **文件真被创建**；
+> `HERMES_WRITE_SAFE_ROOT=/opt/data …` → **Write denied**。
+> ⇒ **剥掉它 = 把子进程写入边界打开。** 已改：加入环境白名单（**保留**），并提供 `A2A_HERMES_WRITE_SAFE_ROOT` **收窄**到专用 scratch。
+
+### 工具集真值（`hermes tools list` · 24 项）
+- **enabled**：web, browser, terminal, file, code_execution, vision, image_gen, bfl, tts, skills, todo, memory, session_search, clarify, delegation, cronjob, computer_use
+- **disabled**：video, video_gen, x_search, stt, context_engine, homeassistant, spotify, yuanbao
+- ★ **`file` ≠ 只读**（含 read/**write**/**patch**/search）→ 「零写」在 `-t` 粒度**做不到**，只能靠 WRITE_SAFE_ROOT 收窄
+- ★ **非法名 fail-closed**（`-t nonsense` → rc=2，不会静默放宽）
+- ★ 只读档默认值：**`file,skills`**（**绝对不含** terminal / code_execution / delegation / cronjob / memory）
+- ✓ `state.db` 与 `sessions/` 是**内置禁写区** → L3 读回安全
+
+### state.db 定稿 SQL（已内置为 `DEFAULT_CONFIRM_SQL`）
+存档：`config/hermes-state-db-queries.sql`（主路径 + 会话发现 + FTS trigram，含 EXPLAIN）
+- 占位符：`{{SESSION_ID}}` / `{{SINCE_EPOCH}}` / `{{TASK_ID}}`
+- **修正**：`timestamp` 是 **REAL epoch**，`{{SINCE}}` 若塞 ISO 字符串会因 SQLite 类型序（REAL < TEXT）**恒假** → 新增 `{{SINCE_EPOCH}}`（`toEpochSeconds`）
+- 三坑：TZ=UTC（差 8h）· 禁无 WHERE 的 COUNT(*)（300s 超时）· 只读打开 + 强制 LIMIT
+- FTS 坑：索引含 tool 消息 → 必须 `role='user'`；`f.content` 有尾随空格规范化 → 原文取 `messages.content`
+- `sessions.last_activity_at` **无索引**（用 `started_at`）
+
+**测试**：→ **32/32**（新增默认 SQL 校验 / WRITE_SAFE_ROOT 保留与收窄 / 只读档默认值）
+
 ---
 _一句话：**Hermes 的 C4-H = 「本机 CLI 注入隔离回合」，接口与 OpenClaw 侧完全同形；默认关、参数数组禁 shell 拼接、禁重启类指令、三重判据（rc+非空+哨兵）、环境白名单、失败一律 C5。**_

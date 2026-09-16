@@ -214,8 +214,8 @@ function rawRunner(fn) { return async (call) => { lastCall = call; return fn(cal
     assert.strictEqual(r1.ok, false);
     assert.match(r1.error, /A2A_HERMES_DB_PATH/);
     process.env.A2A_HERMES_DB_PATH = '/opt/data/state.db';
-    const r2 = await H.fetchResult(TID, { path: 'db' });
-    assert.match(r2.error, /SQL_TEMPLATE/);
+    const r2 = await H.fetchResult(TID, { path: 'db' });   // 默认 SQL 已内置，但缺 SESSION_ID
+    assert.match(r2.error, /SESSION_ID/);
   });
 
   await t('20. state.db 读回 · SQL 无 LIMIT → 拒绝（468MB 库禁全表，坑②）', async () => {
@@ -254,6 +254,48 @@ function rawRunner(fn) { return async (call) => { lastCall = call; return fn(cal
     assert.match(r.error, /路径 C/);
     const r2 = await H.fetchResult(TID, { path: 'webhook' });
     assert.match(r2.error, /尚未实现/);
+  });
+
+  await t('30. 默认 SQL（墨丘定稿）：含 LIMIT + role 过滤；SINCE 用 UTC epoch 而非 ISO', async () => {
+    resetEnv();
+    assert.match(H.DEFAULT_CONFIRM_SQL, /LIMIT/);
+    assert.match(H.DEFAULT_CONFIRM_SQL, /role\s*=\s*'user'/);
+    process.env.A2A_HERMES_DB_PATH = '/opt/data/state.db';
+    process.env.A2A_HERMES_SESSION_ID = 'sess-1';
+    H._setDbRunner(async (call) => {
+      assert.ok(call.sql.includes("'sess-1'"), '应注入 SESSION_ID');
+      assert.ok(call.sql.includes(`m.timestamp >= ${H.toEpochSeconds('2026-09-16T09:00:00+08:00')}`), 'SINCE 必须是 epoch 秒');
+      assert.ok(!/T\d\d:\d\d/.test(call.sql), 'SQL 不得含 ISO 字符串时间');
+      return { code: 0, stdout: '', stderr: '' };
+    });
+    const r = await H.fetchResult(TID, { path: 'db', since: '2026-09-16T09:00:00+08:00' });
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.matched, false);
+    resetEnv();
+  });
+
+  await t('31. 安全更正：HERMES_WRITE_SAFE_ROOT 必须保留（否则写入边界被打开）', async () => {
+    on();
+    process.env.HERMES_WRITE_SAFE_ROOT = '/opt/data';
+    H._setRunner(okRunner('ok'));
+    await H.inject(ENV, TID);
+    assert.strictEqual(lastCall.env.HERMES_WRITE_SAFE_ROOT, '/opt/data', '父进程护栏值应保留');
+    // 收窄：只允许写专用 scratch
+    process.env.A2A_HERMES_WRITE_SAFE_ROOT = '/opt/data/bridge-scratch';
+    await H.inject(ENV, TID);
+    assert.strictEqual(lastCall.env.HERMES_WRITE_SAFE_ROOT, '/opt/data/bridge-scratch', '应可收窄');
+    delete process.env.HERMES_WRITE_SAFE_ROOT;
+    delete process.env.A2A_HERMES_WRITE_SAFE_ROOT;
+  });
+
+  await t('32. 只读档默认值保守：toolsRead 默认 "file,skills"；无 terminal/code_execution/memory', () => {
+    resetEnv();
+    const cfg = H.resolveConfig();
+    assert.strictEqual(cfg.toolsRead, 'file,skills');
+    for (const bad of ['terminal', 'code_execution', 'delegation', 'cronjob', 'memory']) {
+      assert.ok(!cfg.toolsRead.split(',').includes(bad), `只读档不得含 ${bad}`);
+    }
+    assert.strictEqual(cfg.toolsWrite, '', '写档默认空（需宿主策略决定）');
   });
 
   await t('24. extractReply / stripSentinel / makeSentinel', () => {

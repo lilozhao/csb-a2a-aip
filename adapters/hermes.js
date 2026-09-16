@@ -70,9 +70,14 @@ const FORBIDDEN_IN_PROMPT = [
 // ===== spawn 环境白名单（墨丘实测⑤）=====
 // 坑：A2A 进程带 HERMES_S6_SUPERVISED_CHILD=1 / S6_* 等 → 直接透传会让子进程
 //      误以为自己是 s6 托管的网关子进程。只放行最小必要变量。
+// ★ 2026-09-16 安全更正（墨丘实测）：HERMES_WRITE_SAFE_ROOT **必须保留**，
+//   它是真正的写入护栏（file_safety.py:148-158：设了才检查，未设=只受凭证黑名单限制）。
+//   剥掉它 = 把子进程的写入边界打开。同一条 prompt 对照实测：
+//     无此变量 → 文件真被创建；有此变量 → Write denied。
 const ENV_ALLOWLIST = [
   'PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TERM', 'TMPDIR', 'SHELL', 'PWD',
   'PYTHONUNBUFFERED', 'PYTHONIOENCODING', 'HERMES_HOME',
+  'HERMES_WRITE_SAFE_ROOT',   // 写入护栏：保留（可用 A2A_HERMES_WRITE_SAFE_ROOT 收窄）
 ];
 const ENV_DENY_PREFIX = ['HERMES_S6_', 'S6_', 'S6-'];
 
@@ -83,6 +88,8 @@ function buildChildEnv(cfg) {
     if (process.env[k] !== undefined) out[k] = process.env[k];
   }
   out.HERMES_HOME = cfg.home;
+  // 写入护栏收窄（比「剥掉」与「照抄 /opt/data」都稳）：只允许写一个专用 scratch 目录
+  if (cfg.writeSafeRoot) out.HERMES_WRITE_SAFE_ROOT = cfg.writeSafeRoot;
   // 显式附加：A2A_HERMES_ENV_EXTRA="K1=V1,K2=V2"
   const extra = process.env.A2A_HERMES_ENV_EXTRA || '';
   if (extra) {
@@ -131,8 +138,13 @@ function resolveConfig(overrides = {}) {
     home: process.env.A2A_HERMES_HOME || '/opt/data',
     // 工具锁：墨丘实测②——`-t file` 能把它锁成无终端（回 NO_TOOL）
     tools: process.env.A2A_HERMES_TOOLS || '',                 // 显式覆盖（例：'file'）
-    // 按 scope 分档的工具集（Q4-4：只读档可做）——需按宿主工具集清单填
-    toolsRead: process.env.A2A_HERMES_TOOLSETS_READ || '',
+    writeSafeRoot: process.env.A2A_HERMES_WRITE_SAFE_ROOT || '',   // 空=保留父进程原值
+    // 按 scope 分档的工具集（墨丘实测：`file` 含 read/write/patch/search ≠ 只读）
+    //   默认只读档取最保守值；非法名 fail-closed（rc=2）不会静默放宽
+    //   ★ 绝对不含：terminal / code_execution / delegation / cronjob / memory（会写 MEMORY.md）
+    toolsRead: process.env.A2A_HERMES_TOOLSETS_READ !== undefined
+      ? process.env.A2A_HERMES_TOOLSETS_READ
+      : 'file,skills',
     toolsWrite: process.env.A2A_HERMES_TOOLSETS_WRITE || '',
     // 安全闸（Q4-4）：safe-mode 默认开；ignore-rules 默认关（开了不隔离身份且放宽规则）
     safeMode: String(process.env.A2A_HERMES_SAFE_MODE || 'on').toLowerCase() !== 'off',
@@ -149,7 +161,8 @@ function resolveConfig(overrides = {}) {
     // state.db 读回（path=db）
     dbPath: process.env.A2A_HERMES_DB_PATH || '',
     dbBin: process.env.A2A_HERMES_SQLITE3_BIN || 'sqlite3',
-    confirmSql: process.env.A2A_HERMES_CONFIRM_SQL_TEMPLATE || '',
+    sessionId: process.env.A2A_HERMES_SESSION_ID || '',              // 主人会话 id（见 config/hermes-state-db-queries.sql ②）
+    confirmSql: process.env.A2A_HERMES_CONFIRM_SQL_TEMPLATE || '',   // 空=用内置默认（墨丘实测定稿）
   };
   return { ...cfg, ...overrides };
 }
@@ -257,6 +270,13 @@ function toUtcIso(d) {
   const dt = d instanceof Date ? d : new Date(d);
   if (Number.isNaN(dt.getTime())) throw new Error(`toUtcIso: 无效时间 ${d}`);
   return dt.toISOString(); // 始终 UTC
+}
+
+/** 本地时间 → UTC epoch 秒（state.db 的 timestamp 是 REAL epoch；坑①） */
+function toEpochSeconds(d) {
+  const dt = d instanceof Date ? d : new Date(d);
+  if (Number.isNaN(dt.getTime())) throw new Error(`toEpochSeconds: 无效时间 ${d}`);
+  return Math.floor(dt.getTime() / 1000);
 }
 
 // ===== runner（可被测试替换）=====
@@ -373,18 +393,40 @@ function buildInjectMessage(frame = {}) {
  */
 function escapeSql(v) { return String(v == null ? '' : v).replace(/'/g, "''"); }
 
+/**
+ * 默认确认查询（墨丘实测定稿，含 EXPLAIN 验证）
+ * 占位符：{{SESSION_ID}} / {{SINCE_EPOCH}} / {{TASK_ID}}
+ * ★ 注意 SINCE 必须是 **UTC epoch 秒**——timestamp 是 REAL epoch，
+ *    若塞 ISO 字符串会因 SQLite 类型序（REAL < TEXT）使条件恒假。
+ */
+const DEFAULT_CONFIRM_SQL = [
+  'SELECT m.id, m.role, m.content, m.timestamp, datetime(m.timestamp,\'unixepoch\') AS ts_utc',
+  'FROM messages m',
+  'WHERE m.session_id = \'{{SESSION_ID}}\'',
+  "  AND m.timestamp >= {{SINCE_EPOCH}}",
+  "  AND m.role = 'user'",
+  "  AND m.content LIKE '%' || '{{TASK_ID}}' || '%'",
+  'ORDER BY m.timestamp DESC',
+  'LIMIT 5',
+].join('\n');
+
 async function readFromStateDb(taskId, cfg, opts = {}) {
   if (!cfg.dbPath) return { ok: false, error: 'hermes: 未配置 A2A_HERMES_DB_PATH（state.db 路径）' };
-  if (!cfg.confirmSql) {
-    return { ok: false, error: 'hermes: 未配置 A2A_HERMES_CONFIRM_SQL_TEMPLATE —— 需按 state.db schema 填（可含 {{TASK_ID}} / {{SINCE}}）' };
-  }
-  if (!/\blimit\b/i.test(cfg.confirmSql)) {
+  const template = cfg.confirmSql || DEFAULT_CONFIRM_SQL;
+  if (!/\blimit\b/i.test(template)) {
     return { ok: false, error: 'hermes: SQL 模板必须含 LIMIT（468MB 库禁全表查询，墨丘实测④坑②）' };
   }
-  const since = opts.since ? `'${escapeSql(toUtcIso(opts.since))}'` : 'NULL';
-  const sql = cfg.confirmSql
+  const sessionId = cfg.sessionId || opts.sessionId || '';
+  if (/\{\{SESSION_ID\}\}/.test(template) && !sessionId) {
+    return { ok: false, error: 'hermes: 需 A2A_HERMES_SESSION_ID（主人会话 id）—— 可用 config/hermes-state-db-queries.sql ② 发现' };
+  }
+  const sinceIso = opts.since ? `'${escapeSql(toUtcIso(opts.since))}'` : 'NULL';
+  const sinceEpoch = opts.since ? String(toEpochSeconds(opts.since)) : 'NULL';
+  const sql = template
     .replace(/\{\{TASK_ID\}\}/g, escapeSql(taskId))
-    .replace(/\{\{SINCE\}\}/g, since);
+    .replace(/\{\{SESSION_ID\}\}/g, escapeSql(sessionId))
+    .replace(/\{\{SINCE_EPOCH\}\}/g, sinceEpoch)
+    .replace(/\{\{SINCE\}\}/g, sinceIso);
 
   const runner = opts._dbRunner || _dbRunner;
   const r = await runner({ bin: cfg.dbBin, dbPath: cfg.dbPath, sql, timeoutMs: DB_TIMEOUT_MS });
@@ -457,7 +499,7 @@ module.exports = {
   inject, injectIsolated, buildPrompt, buildInjectMessage, detectRefusal, REFUSAL_PATTERNS,
   resolveConfig, fetchResult, extractReply, harvestTexts,
   isEnabled, assertPromptSafe, FORBIDDEN_IN_PROMPT, buildChildEnv, makeSentinel, stripSentinel, toUtcIso,
-  resolveHermesBin, toolsForScope, buildArgs,
+  toEpochSeconds, resolveHermesBin, toolsForScope, buildArgs, DEFAULT_CONFIRM_SQL,
   _setRunner, _setDbRunner, _resetIdentityBridgeCache,
   _internals: { executeCli, defaultRunner, defaultDbRunner, readFromStateDb },
 };
