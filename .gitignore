@@ -87,3 +87,8 @@ config/bridge-uac-policy.json
 # 2026-09-15 身份串号修复：通用模板 vs 实例专属
 # 实例专属上下文只放本地（a2a-contexts/local/），禁止提交
 a2a-contexts/local/
+
+# 2026-09-18 看门狗入仓：通用版进仓，**实例配置进不来**
+#   instance.env 含实例私有路径 / 内部会话 ID / 私有 export（密钥路径等）—— 绝不入库
+#   仓里只留 instance.env.example（占位值，无秘密）
+scripts/watchdog/instance.env
