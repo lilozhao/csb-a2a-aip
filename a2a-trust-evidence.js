@@ -89,7 +89,43 @@ class TrustEvidence {
     this.keyFingerprint = null;
     this.securityPath = null;
     this.reason = 'not_initialized';
+    this.ledgerPath = LEDGER_FILE;     // [2026-09-18] 实际使用的账本路径（可能被 init(opts) 覆盖）
+    this.snapshotPath = SNAPSHOT_FILE;
+    this._loud = {};                   // [2026-09-18] "喊一次"去重登记表（fail-loud 不刷屏）
+    this._dirEnsured = false;          // [2026-09-18] 账本目录是否已确保存在
     this.stats = { hooked: 0, skipped: 0, errors: 0, lastError: null };
+  }
+
+  /**
+   * 只喊一次（同一 key 不重复刷屏）
+   * @param {string} key  去重键
+   * @param {'warn'|'error'} level  error 走 console.error（fail-loud）
+   * @param {string} msg
+   */
+  _loudOnce(key, level, msg) {
+    if (this._loud[key]) return;
+    this._loud[key] = true;
+    const line = `[TrustEvidence] ${msg}`;
+    if (level === 'error') console.error(`❌ ${line}`);
+    else console.warn(`⚠️ ${line}`);
+  }
+
+  /**
+   * 目录保证（[2026-09-18]）：写盘前确保账本目录存在。
+   * 缘起：舟楫部署后 `data/trust/trust-evidence.jsonl` 未落盘 —— 9p 挂载 / 首次部署 /
+   *       目录被清 都可能让 append 静默失败。这里 fail-loud，不再"假装在记账"。
+   */
+  _ensureDir() {
+    if (this._dirEnsured) return true;
+    const dir = path.dirname(this.ledgerPath || LEDGER_FILE);
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      this._dirEnsured = true;
+      return true;
+    } catch (e) {
+      this._loudOnce(`mkdir:${e.message}`, 'error', `账本目录不可建（${dir}）：${e.message} → 证据不会落盘。`);
+      return false;
+    }
   }
 
   /** 定位可用的 csb-security 目录（不抛） */
@@ -126,6 +162,8 @@ class TrustEvidence {
 
       const ledgerPath = opts.ledgerPath || LEDGER_FILE;
       const snapshotPath = opts.snapshotPath || SNAPSHOT_FILE;
+      this.ledgerPath = ledgerPath;   // [2026-09-18] 记录实际路径，供自检/诊断
+      this.snapshotPath = snapshotPath;
 
       // 签名密钥（可选；缺失时明确标注为降级，不静默）
       // noDefaultKeys: 不读默认密钥文件/env（测试隔离用；显式传入的 opts 密钥仍然生效）
@@ -171,7 +209,9 @@ class TrustEvidence {
       this.verified = !!publicKey;
       this.keyFingerprint = publicKey ? keyFingerprint(publicKey) : null;
 
-      try { fs.mkdirSync(path.dirname(ledgerPath), { recursive: true }); } catch { /* 落盘失败走内存 */ }
+      // [2026-09-18] 目录保证：账本目录必须存在（9p / 冷挂载 / 首次部署下可能缺）
+      this._dirEnsured = false;
+      this._ensureDir();
 
       this.ledger = new EvidenceLedger({ ledgerPath, privateKey, publicKey });
       this.collector = new EvidenceCollector({ ledger: this.ledger });
@@ -207,18 +247,34 @@ class TrustEvidence {
   _safeCall(method, args) {
     try {
       if (!this._inited) this.init();
-      if (!this.enabled || !this.collector) { this.stats.skipped++; return null; }
+      if (!this.enabled || !this.collector) {
+        this.stats.skipped++;
+        this._loudOnce(`disabled:${this.reason}`, 'warn',
+          `账本未启用（reason=${this.reason}）→ 证据不积累（信任等级会恒停 L0）。`
+          + (this.reason === 'csb_security_not_found' ? ' 检查 csb-security 部署位置或 CSB_SECURITY_HOME。' : ''));
+        return null;
+      }
       const fn = this.collector[method];
-      if (typeof fn !== 'function') { this.stats.skipped++; return null; }
+      if (typeof fn !== 'function') {
+        this.stats.skipped++;
+        this._loudOnce(`nomethod:${method}`, 'error', `采集器无方法 ${method}() → 该事件被丢弃（接线 bug）。`);
+        return null;
+      }
+      // [2026-09-18] 目录保证：写盘前确账本目录存在（可能被杀 / 冷挂载后到）
+      this._ensureDir();
       const ret = fn.apply(this.collector, args);
       this.stats.hooked++;
+      this._dirEnsured = true;
       // 快照跟随（失败不影响主流程）
       try { if (this.store && typeof this.store.saveSnapshot === 'function') this.store.saveSnapshot(); } catch { /* 忽略 */ }
       return ret;
     } catch (e) {
       this.stats.errors++;
       this.stats.lastError = e.message;
-      console.warn('[TrustEvidence] ⚠️ 记账失败（不影响消息链）:', e.message);
+      this._dirEnsured = false;   // 写失败 → 下次重试前重新确目录
+      // [2026-09-18] fail-loud：记账失败绝不能只留一行容易被忽略的 warn —— 那是审计缺口
+      this._loudOnce(`err:${method}:${e.message}`, 'error',
+        `记账失败（method=${method}）：${e.message} → 该事件未落账（消息链不受影响，但审计有缺口）。`);
       return null;
     }
   }
@@ -243,6 +299,58 @@ class TrustEvidence {
     return { name: sender.name || fallbackName, url: sender.url || undefined, aid: sender.aid || undefined };
   }
 
+  /**
+   * 纯读账本文件（不抛）：账本"在不在 / 多大 / 几条 / 最后一条"。
+   * [2026-09-18] 供自检与外部只读侧核对（免确认可审计的前提是"账在这里"）。
+   * @param {string} [ledgerPath]
+   */
+  static ledgerSnapshot(ledgerPath) {
+    const out = {
+      ledgerPath: ledgerPath || LEDGER_FILE,
+      exists: false, sizeBytes: 0, entries: 0,
+      lastEntryAt: null, lastAction: null, lastHash: null,
+      readError: null, probeEndpoint: '/health/trust-probe',
+    };
+    try {
+      const st = fs.statSync(out.ledgerPath);
+      out.exists = true;
+      out.sizeBytes = st.size;
+      const rows = fs.readFileSync(out.ledgerPath, 'utf8').split('\n').filter((l) => l.trim());
+      out.entries = rows.length;
+      if (rows.length) {
+        try {
+          const last = JSON.parse(rows[rows.length - 1]);
+          out.lastEntryAt = last.ts || last.timestamp || last.at || null;
+          out.lastAction = last.action || null;
+          out.lastHash = last.hash || null;
+        } catch (e) { out.readError = `tail_parse: ${e.message}`; }
+      }
+    } catch (e) {
+      if (e.code !== 'ENOENT') out.readError = e.message;
+    }
+    return out;
+  }
+
+  /**
+   * 账本自检（[2026-09-18]）：把"账本是否真的可审计"一次说清。
+   * auditReady = 账本启用 + 文件在 + 至少一条 + 无写错 —— 供 /health 的 `trust` 段。
+   */
+  ledgerHealth() {
+    if (!this._inited) this.init();
+    const snap = TrustEvidence.ledgerSnapshot(this.ledgerPath || LEDGER_FILE);
+    return {
+      ...snap,
+      enabled: this.enabled,
+      reason: this.reason,
+      signed: this.signed,
+      verified: this.verified,
+      keyFingerprint: this.keyFingerprint,
+      hookStats: { ...this.stats },
+      auditReady: !!this.enabled && snap.exists && snap.entries > 0 && this.stats.errors === 0,
+      degraded: !this.enabled || !snap.exists || this.stats.errors > 0,
+    };
+  }
+
   /** 健康状态（诊断用：一眼看出"信任体系是不是真的在运转"） */
   status() {
     if (!this._inited) this.init();
@@ -256,7 +364,7 @@ class TrustEvidence {
       enabled: this.enabled,
       reason: this.reason,
       securityPath: this.securityPath,
-      ledgerPath: this.enabled ? LEDGER_FILE : null,
+      ledgerPath: this.enabled ? (this.ledgerPath || LEDGER_FILE) : null,
       signed: this.signed,
       verified: this.verified,
       keyFingerprint: this.keyFingerprint,

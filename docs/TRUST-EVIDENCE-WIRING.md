@@ -66,6 +66,8 @@ trustEvidence.userDeclined(sender, { ref: taskId }, 'a2a-bridge');   // 中性
 console.log(trustEvidence.status());
 // { enabled, reason, securityPath, ledgerPath, signed, entries, chainValid,
 //   collectStats, hookStats, degraded }
+
+console.log(trustEvidence.ledgerHealth());   // [2026-09-18] 账本自检（见下）
 ```
 
 落盘（默认，可用 `CSB_TRUST_DATA_DIR` 改）：
@@ -91,6 +93,39 @@ data/trust/trust-store.json       信任快照（等级由账本重放派生，�
 3. **本模块只管记账，不管升级编排**：等级派生在 `csb-security/lib/trust/trust-store.js`，
    升级编排（UAC 双门 / 撤销 / 见证人）属 P1。
 
+## 🔎 账本自检与 fail-loud（2026-09-18）
+
+> **缘起（真实事故）**：舟楫部署 UAC 后，`data/trust/trust-evidence.jsonl` **根本没生成** ——
+> 本轮 `delegate_auto_approved` 只在 console 留了一行，账本侧是空的 ⇒
+> **UAC 承诺的「免实时点头，但可审计」只成立一半：放行有痕、审计无账。**
+>
+> 根因两条，都在本模块：① `_safeCall` **只 `console.warn`**（静默，容易被忽略）；
+> ② 目录缺失无人保证（9p 挂载 / 冷挂载 / 首次部署都可能让 append 静默失败）。
+
+**修法三件套**：
+
+| # | 改什么 | 怎么改 |
+|---|---|---|
+| ① | **目录保证** | 写盘前 `_ensureDir()`：`mkdir -p` 账本目录；写失败后置位失效，下次重试重建 |
+| ② | **fail-loud** | 记账失败不只丢一行 warn，改 `console.error`（带 `_loudOnce` 去重，不刷屏）；未启用/无方法也各喊一次并计入 `hookStats.skipped` |
+| ③ | **自检项** | 新增 `ledgerHealth()` + `/health` 的 `trust` 段、`/health/trust-probe` |
+
+**自检端点**（外部只读侧可核「账本在不在 + 最后一条什么时候」）：
+
+| 端点 | 返回 |
+|---|---|
+| `GET /health` → `trust` 段 | `{ledgerPath, exists, sizeBytes, entries, lastEntryAt, lastAction, lastHash, enabled, reason, signed, keyFingerprint, hookStats, auditReady, degraded}` |
+| `GET /health/trust-probe` | `ok` **仅当**账本文件存在且 ≥1 条；`reason ∈ ledger_present / ledger_empty / ledger_missing / ledger_unreadable` |
+
+**`auditReady` 语义**：账本启用 **且** 文件存在 **且** 至少一条 **且** 无写错。
+—— 这是「免确认可审计」的**硬前提**，别再看 console 那一行了事。
+
+**`ledgerSnapshot(path)`**：纯读函数（不抛、ENOENT 不算错），返回 `exists/sizeBytes/entries/lastEntryAt/lastAction/lastHash`，尾巴坏行报 `readError=tail_parse`。
+
+> 教训：**「吞异常」与「可审计」在语义上互斥。**
+> 安全层的记账失败**可以不影响消息链**，但**绝不能不影响诊断**。
+> 静默吞 = 把「审计缺口」伪装成「一切正常」—— 比故障本身更贵。
+
 ## 顺带修掉的两个真 bug
 
 | bug | 症状 | 修法 |
@@ -101,7 +136,8 @@ data/trust/trust-store.json       信任快照（等级由账本重放派生，�
 ## 测试
 
 ```bash
-node tests/trust-evidence.test.js     # 20 用例：四事件 / 防刷分 / 中性红线 / fail-safe / 路径回归 / bridge 注入
+node tests/trust-evidence.test.js     # 26 用例：四事件 / 防刷分 / 中性红线 / fail-safe / 路径回归 / bridge 注入 / 签名纪元
+node tests/trust-health.test.js       # 9 用例：ledgerSnapshot / ledgerHealth(auditReady) / fail-loud / 目录保证（2026-09-18）
 ```
 
 覆盖的"反例"（不是只测 happy path）：

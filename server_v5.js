@@ -663,6 +663,14 @@ standardAPI.registerRoutes(app);
 //   视图逻辑在 a2a-uac-health.js（纯函数，有单测）；此处只做接线。
 //   缘起：阿轩侧的这两个自检面是**本地未提交改动**，共享仓缺失 → 标准操作单不可移植。
 const uacHealth = require('./a2a-uac-health');
+// [2026-09-18] 信任证据自检：/health 的 `trust` 段 + /health/trust-probe 探针。
+//   缘起：舟楫部署后 data/trust/trust-evidence.jsonl 未落盘 —— 免确认"可审计"只成立一半。
+//   外部只读侧要能核"账本在不在 + 最后一条什么时候"。
+const trustEvidenceModule = require('./a2a-trust-evidence');
+function trustHealthSection() {
+  try { return trustEvidenceModule.ledgerHealth(); }
+  catch (e) { return { error: e.message, probeEndpoint: '/health/trust-probe' }; }
+}
 
 app.get('/health', (req, res) => {
   res.json({
@@ -675,6 +683,7 @@ app.get('/health', (req, res) => {
     e2e: e2eManager.getStats(),
     rateLimit: rateLimiter.getStats(),
     tasks: taskStore.getStats(),
+    trust: trustHealthSection(),
     uac: uacHealth.uacHealthSnapshot(process.env, {
       assembled: _uacRuntime.assembled,
       error: _uacRuntime.error,
@@ -683,10 +692,21 @@ app.get('/health', (req, res) => {
   });
 });
 
-// [2026-09-17] UAC 自检探针：**无 UAC 信封时必须 fail-safe**（hit:false, reason=no_uac）
+// [2026-09-18] UAC 自检探针：**无 UAC 信封时必须 fail-safe**（hit:false, reason=no_uac）
 //   与阿轩/恺的既有实现对齐，让「免确认是否真装配」可被外部只读侧证。
 app.get('/health/uac-probe', (req, res) => {
   res.json(uacHealth.uacProbe(process.env));
+});
+
+// [2026-09-18] 信任证据自检探针：账本在不在 / 几条 / 最后一条时间
+//   ok=true 仅当账本文件存在且至少一条 —— "免确认可审计"的硬前提。
+app.get('/health/trust-probe', (req, res) => {
+  const h = trustHealthSection();
+  res.json({
+    ...h,
+    ok: !!h.exists && (h.entries || 0) > 0 && !h.readError,
+    reason: h.readError ? 'ledger_unreadable' : (h.exists ? ((h.entries || 0) > 0 ? 'ledger_present' : 'ledger_empty') : 'ledger_missing'),
+  });
 });
 
 // AID 文档端点（对等握手用：供 callee 验证 caller 身份，与阿轩 /a2a/aid 对称）
