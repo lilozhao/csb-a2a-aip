@@ -230,6 +230,8 @@ const rateLimiter = new securityAdapter.RateLimiter({
 const metrics = new MetricsCollector();
 // [2026-09-15] UAC 护栏告警：每进程只提一次（该段在 bridgeHandler 内、按请求执行）
 let _uacGuardWarned = false;
+// [2026-09-17] UAC 运行态快照（供 /health 自检）——装配发生在 bridgeHandler 按请求执行，非启动时
+let _uacRuntime = { assembled: false, error: null, policyPath: null };
 // 不传 logPath：哈希链模式默认 data/audit/，legacy 模式默认 /tmp（各自合理落盘）
 const auditLogger = securityAdapter.createAuditLogger();
 
@@ -393,8 +395,10 @@ const standardAPI = new A2AStandardAPI({
           });
           const pol0 = loadPolicy();
           console.log(`[UAC] 免确认钩子已装配：${POLICY_PATH} · enabled=${pol0 ? pol0.enabled === true : 'no-policy'} · peers=${(pol0 && pol0.peers && pol0.peers.length) || 0}`);
+          _uacRuntime = { assembled: true, error: null, policyPath: POLICY_PATH };
         } catch (e) {
           checkUAC = undefined;
+          _uacRuntime = { assembled: false, error: e.message, policyPath: _uacRuntime.policyPath };
           console.warn('[UAC] 钩子装配失败，保持关闭:', e.message);
         }
       } else {
@@ -655,6 +659,11 @@ if (aipIntegration) {
 standardAPI.registerRoutes(app);
 
 // 健康检查 (增强: 含 DHT + E2E + 指标)
+// [2026-09-17] UAC 自检（入仓版）：/health 的 `uac` 段 + `/health/uac-probe` 探针。
+//   视图逻辑在 a2a-uac-health.js（纯函数，有单测）；此处只做接线。
+//   缘起：阿轩侧的这两个自检面是**本地未提交改动**，共享仓缺失 → 标准操作单不可移植。
+const uacHealth = require('./a2a-uac-health');
+
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -666,7 +675,18 @@ app.get('/health', (req, res) => {
     e2e: e2eManager.getStats(),
     rateLimit: rateLimiter.getStats(),
     tasks: taskStore.getStats(),
+    uac: uacHealth.uacHealthSnapshot(process.env, {
+      assembled: _uacRuntime.assembled,
+      error: _uacRuntime.error,
+      guardWarned: _uacGuardWarned,
+    }),
   });
+});
+
+// [2026-09-17] UAC 自检探针：**无 UAC 信封时必须 fail-safe**（hit:false, reason=no_uac）
+//   与阿轩/恺的既有实现对齐，让「免确认是否真装配」可被外部只读侧证。
+app.get('/health/uac-probe', (req, res) => {
+  res.json(uacHealth.uacProbe(process.env));
 });
 
 // AID 文档端点（对等握手用：供 callee 验证 caller 身份，与阿轩 /a2a/aid 对称）

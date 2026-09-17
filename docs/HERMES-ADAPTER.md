@@ -302,6 +302,23 @@ env A2A_BRIDGE_ADAPTER  >  identity.injectAdapter  >  identity.bridge.injectAdap
 **测试**：hermes **34/34**（新增 node:sqlite 端到端 / `{{CHAT_ID}}`）· select **10/10**
 **回归**：core 29 · uac 17 · confirm 14 · adapter 15 —— 全绿
 
+## 十三点五、版本兼容矩阵（2026-09-17 · 言蹊 v0.15.1 实测）
+
+> 缘起：言蹊（第三例）**Hermes v0.15.1**，落后 v0.20.0 共 24527 commits。第 0 步版本体检发现一处**硬差异**。
+
+| 参数 | v0.20.0（墨丘/舟楫）| **v0.15.1（言蹊）** | 处置 |
+|---|---|---|---|
+| `-z` / `--oneshot` | `-z` | 两者皆有（`-z` 可用，实测 8.5s）| 无需改 |
+| `-t` / `--toolsets` | ✓ | ✓ | 无需改 |
+| `--ignore-rules` | ✓（默认 off）| ✓ | 无需改 |
+| **`--safe-mode`** | ✓（默认 on）| **❌ 不存在** | ★ 宿主设 **`A2A_HERMES_SAFE_MODE=off`** |
+| `--ignore-user-config` / `--pass-session-id` | — | ✓（额外）| 备用 |
+| `hermes send` 目标形态 | `--to` | **`-t <target>`** | ⚠️ 仅 L3 投递腿需重校（`A2A_HERMES_SEND_ARGS`）|
+
+**结论**：v0.15.1 可接，**只需 1 处 env 差异**（关 `--safe-mode`）。
+
+**待办（P1 候选）**：`buildArgs()` 做**能力探测**（读 `hermes --help` 或版本号，缺失参数自动不推），而不是靠宿主手工关 —— 避免「换台机器就撞一次」。
+
 ## 十四、首次端到端验收（墨丘 · 2026-09-16）✅ 通过 + ★ 两处口径修正
 
 任务 `task_1789525850436_bf072929` · scope=read（L2）· duration 106682ms · **COMPLETED** · 工具面 = `file,skills`（只读档生效）。

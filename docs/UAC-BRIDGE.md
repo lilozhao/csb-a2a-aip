@@ -110,6 +110,21 @@ node scripts/uac-policy.js list | revoke --peer 若兰 | remove --peer 若兰 | 
   收货方无法对账 → 应停手，改用 `--from-pem anchor` 或补「指纹带外核 / 身份钥背书」
 - 三层证据（弱→强）：**指纹带外核**（人—人，最硬）→ **持有证明**（用私钥签 nonce）→ **身份钥背书**（用 `ruolan-aid` 签 key-attestation）
 
+## 6.2 自检端点（2026-09-17 入仓）
+
+> 缘起：舟楫部署 UAC 时发现 `/health` 无 `uac` 段、`/health/uac-probe` 不存在。
+> 经查：那是**阿轩侧的本地未提交改动**，共享仓里根本没有 ⇒ 标准操作单**不可移植**（文档债）。
+> 本版把自检面**入仓**，让「免确认是否真装配」可被外部只读侧证。
+
+**实现**：`a2a-uac-health.js`（纯函数，有单测 `tests/uac-health.test.js` 10 例）·接线在 `server_v5.js`。
+
+| 端点 | 返回 | 说明 |
+|---|---|---|
+| `GET /health` → `uac` 段 | `{envFlag, policyEnabled, peersCount, peerIds, hookAssembled, guardWarned, assemblyError, policyError, policyPath, probeEndpoint}` | **不依赖请求**：直接读 env + 策略文件（装配是 per-request 的，不能只看内存标志）|
+| `GET /health/uac-probe` | 装配+策略启用时 → `{hit:false, reason:"no_uac"}` | 无 UAC 信封时必须 **fail-safe**（红底：绝不假阳性）；env 未开 → `hook_not_assembled` |
+
+> ⚠️ **装配时机**：`[UAC] 钩子已装配` 那行日志发生在 **bridgeHandler 按请求执行**时，**不是启动时** ⇒ 重启后日志里看不到属预期；它会在下一次 bridge 委托进来时打印。
+
 ## 7. 测试
 
 ```bash
