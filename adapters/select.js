@@ -49,10 +49,12 @@ function resolveAdapterKind() {
   return String(raw).trim().toLowerCase();
 }
 
-/** 返回适配器模块（openclaw-gateway | hermes） */
+/** 返回适配器模块（openclaw-gateway | hermes | workbuddy-local） */
 function resolveInjectAdapter() {
   const kind = resolveAdapterKind();
   if (kind === 'hermes') return require('./hermes');
+  // [2026-09-18 若辰] WorkBuddy 宿主：无 gateway 可注入 → 沙箱确定性执行适配器
+  if (kind === 'workbuddy' || kind === 'workbuddy-local') return require('./workbuddy-local');
   return require('./openclaw-gateway');
 }
 

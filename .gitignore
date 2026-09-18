@@ -92,3 +92,18 @@ a2a-contexts/local/
 #   instance.env 含实例私有路径 / 内部会话 ID / 私有 export（密钥路径等）—— 绝不入库
 #   仓里只留 instance.env.example（占位值，无秘密）
 scripts/watchdog/instance.env
+
+# ===== 若辰节点运行态（2026-09-18 迁入，勿提交）=====
+delegations.local.json
+csb-security
+memory/
+eval-results/
+a2a-contexts/
+monitor-state.json
+bridge-registries.json
+ruochen/
+test-v5-3210.js
+bat-run.log
+server-stdout.log
+server-stderr.log
+delegations.local-audit.jsonl

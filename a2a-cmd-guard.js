@@ -213,9 +213,12 @@ function checkCommand(senderInfo = {}, command = '') {
     const forbiddenLower = forbidden.toLowerCase();
     // [3a] JSON 命令只查 cmdName（提取后），不做全文 includes——
     //      JSON 键名（type/params）与 forbidden 词（type/write 等）全文匹配会误伤（2026-09-09 实测修复）
+    // [3b] JSON 命令 forbidden 改精确匹配——startsWith 会让 "del" 误伤 "delegation.*"（2026-09-18 若辰实测修复，
+    //      委托命名空间 delegation.status/issue/list 被当禁止命令拦截）。JSON 命令名是有限枚举（PHASE1+delegation.*），
+    //      精确匹配不弱化防御；非 JSON 文本命令仍用 includes 保守匹配。
     const isJsonCmd = command.trim().startsWith('{') || command.trim().startsWith('[');
     const forbiddenHit = isJsonCmd
-      ? cmdName === forbiddenLower || cmdName.startsWith(forbiddenLower)
+      ? cmdName === forbiddenLower
       : cmdName === forbiddenLower || command.toLowerCase().includes(forbiddenLower);
     if (forbiddenHit) {
       audit.log('cmd.execute', {

@@ -216,7 +216,13 @@ function createConfirmFlow(deps) { return new ConfirmFlow(deps); }
 // 与 a2a-bridge-core.js 的 L3_CONFIRM_TIMEOUT_MS 保持同一逻辑（避免双源）
 const _confirmDefaultMs = (() => {
   const env = parseInt(process.env.A2A_BRIDGE_CONFIRM_TIMEOUT_MS, 10);
-  return Number.isFinite(env) && env > 0 ? env : 5 * 60 * 1000;
+  // [9/18 若辰] 默认从 5min → 15min：跨宿主写必 L3，但审批是人（碳基）在回路，
+  //   跨 agent/自动化边界有延迟；5min 太短会"窗口已关才收到批准"→ 误记超时。
+  //   仍保留 env 覆盖权（生产可据 SLA 调）。
+  // [9/18 若辰] 默认 15min → 30min：本环境下后台进程不继承 shell export 的 env，
+  //   server_v5.js 也不加载 .env，故把安全默认值直接写死在代码里更稳；
+  //   env(A2A_BRIDGE_CONFIRM_TIMEOUT_MS) 仍可覆盖（若能在进程环境注入）。
+  return Number.isFinite(env) && env > 0 ? env : 30 * 60 * 1000;
 })();
 const DEFAULTS = Object.freeze({
   CONFIRM_TIMEOUT_MS: _confirmDefaultMs, // [9/14] env > hardcoded 5min（与 bridge-core 同源）
@@ -243,8 +249,14 @@ function confirmCapMs() {
 function resolveConfirmWindow(envelope, opts = {}) {
   const capMs = opts.capMs || confirmCapMs();
   const declaredMs = Number(envelope && envelope.timeoutMs) || null;
-  const effectiveMs = declaredMs && declaredMs > 0 ? Math.min(declaredMs, capMs) : capMs;
-  return { effectiveMs, capMs, declaredMs, capped: !!(declaredMs && declaredMs > capMs) };
+  // [9/18 若辰·第四次超时根因修复] 人类在回路的 L3 审批窗口 = 接收方封顶（env），
+  //   委托方声明的 timeoutMs 仅作参考，**不再截短**生效窗口。
+  //   原 min(declared, cap) 让若兰「10 分钟」乐观声明把人工审批窗口截到 10min，
+  //   跨宿主人工审批常跨过该窗口 → 四次误记 confirm_timeout。
+  //   语义厘清：委托方 timeoutMs 是「委托方自己的任务截止」，不是「接收方等多久才自动拒」；
+  //   后者（审批等待上限）由接收方封顶权独占，避免「窗口已关才收到批准」。
+  const effectiveMs = capMs;
+  return { effectiveMs, capMs, declaredMs, capped: false };
 }
 
 /**
@@ -330,11 +342,15 @@ function parseConfirmReply(text, taskId) {
   // hasId：归一化后 taskId 在文本中
   const hasId = nText.includes(nTaskId) || nText.includes('#' + nTaskId);
   if (!hasId) return { decision: null };
-  if (/确认|同意|放行|approve|yes|ok/i.test(nText)) return { decision: 'approve' };
-  if (/拒绝|不同意|decline|refuse|no/i.test(nText)) {
+  // [2026-09-18 若辰修复] 顺序红线：**显式拒绝优先于批准**。
+  //   原顺序先判 /确认|同意|放行|approve/，导致回复「确认 #<tid> 拒绝」被解析成 approve
+  //   （文案里带"确认"两字即命中）→ 用户明确拒绝却被执行。拒绝是不可逆方向，必须保守。
+  //   实测场景：宿主确认通道回「确认 #task-l3-decline 拒绝（by 知音在野）」被判为批准。
+  if (/拒绝|不同意|decline|refuse/i.test(nText)) {
     const reason = nText.replace(/拒绝|不同意|decline|refuse/gi, '').slice(0, 200);
     return { decision: 'decline', reason: reason || '用户拒绝' };
   }
+  if (/确认|同意|放行|approve|yes|ok/i.test(nText)) return { decision: 'approve' };
   return { decision: null };
 }
 

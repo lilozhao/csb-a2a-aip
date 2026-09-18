@@ -311,9 +311,20 @@ const standardAPI = new A2AStandardAPI({
 
   // 🚀 BRIDGE: delegation 信封 → 主会话桥接（RFC v0.2 · M2 试点）
   // 启用条件：env A2A_BRIDGE_ENABLED=true，或 identity.capabilities 声明 a2a.delegate=true（agent.configure 可远程设）
+  // [2026-09-18 若辰修复] capabilities 在 identity.json 里是**数组**形态
+  //   （["a2a.route","a2a.delegate",...]），原 `capabilities['a2a.delegate']===true`
+  //   对数组恒为 false → 声明了委托能力也永远不启用桥接（静默失效）。
+  //   现在同时接受：数组包含 'a2a.delegate' / 对象键为 true。
   bridgeHandler: async (taskId, msg, metadata) => {
-    const bridgeEnabled = process.env.A2A_BRIDGE_ENABLED === 'true'
-      || (identity?.capabilities && identity.capabilities['a2a.delegate'] === true);
+    // [2026-09-18 若辰修复] capabilities 有两个坑：
+    //   ① 位置：本实例写在 `identity.server.capabilities`（嵌套），顶层 `identity.capabilities` 为 undefined
+    //   ② 形态：是**数组**（["a2a.delegate",...]），原 `caps['a2a.delegate']===true` 对数组恒假
+    //   ⇒ 结果：声明了委托能力也永远不启用桥接（静默失效，日志只说"bridgeHandler 返回 null"）。
+    const caps = identity?.capabilities || identity?.server?.capabilities;
+    const capsDeclareDelegate = Array.isArray(caps)
+      ? caps.includes('a2a.delegate')
+      : Boolean(caps && caps['a2a.delegate'] === true);
+    const bridgeEnabled = process.env.A2A_BRIDGE_ENABLED === 'true' || capsDeclareDelegate;
     if (!bridgeEnabled) return null; // 未启用 → 走原逻辑
     try {
       const bridge = require('./a2a-bridge-core');

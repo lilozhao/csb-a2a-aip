@@ -532,7 +532,7 @@ class A2AStandardAPI {
 
     // 🔥 尝试 LLM 智能回复 (非空消息)
     const taskForHistory = this.taskStore.getTask(taskId);
-    const llmResponse = await this._callLLM(text, metadata, taskForHistory?.history);
+    const llmResponse = await this._callLLM(text, metadata, taskForHistory?.history, taskId);
 
     if (llmResponse) {
       console.log(`[A2A] 🤖 LLM 回复 task ${taskId}: ${llmResponse.substring(0, 60)}...`);
@@ -564,7 +564,11 @@ class A2AStandardAPI {
   /**
    * 【v5】调用 LLM 生成智能回复 (通过 llm-router)
    */
-  async _callLLM(messageText, metadata, history = []) {
+  async _callLLM(messageText, metadata, history = [], taskId = null) {
+    // [2026-09-18 若辰修复] taskId 由调用方传入：此前拦截分支引用未定义变量
+    //   `taskId` → ReferenceError → 任务终态 FAILED（"taskId is not defined"），
+    //   即 guard 识别到注入却把自己搞崩。此处补参数 + 兜底从 metadata 取。
+    const _guardTaskId = taskId || metadata?.taskId || metadata?.task_id || null;
     // 提取发送者名称 (优先从 metadata)
     const senderName = metadata?.sender?.name ||
       metadata?.sender ||
@@ -588,10 +592,10 @@ class A2AStandardAPI {
       // [9/11 接线] 信任证据：拦截计负向（采集器集中定权重，调用点不自定义）
       trustEvidence.guardBlocked(
         TrustEvidence.subjectFrom(senderInfo, senderName),
-        { ref: taskId, detail: `risk=${inspection.riskScore}; ${(inspection.warnings || []).join('; ')}` },
+        { ref: _guardTaskId, detail: `risk=${inspection.riskScore}; ${(inspection.warnings || []).join('; ')}` },
         'a2a-standard-api',
       );
-      if (taskId) this._guardBlockedTasks.add(taskId);
+      if (_guardTaskId) this._guardBlockedTasks.add(_guardTaskId);
       return `[安全提示] 来自「${senderName}」的消息因检测到提示注入特征被拦截。` +
         `\n\n检测到的问题: ${inspection.warnings.join('; ')}` +
         `\n\n—— 这符合碳硅契边界契原则：不可信内容不直接进入对话。`;

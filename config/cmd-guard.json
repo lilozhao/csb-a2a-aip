@@ -2,15 +2,33 @@
   "enabled": true,
   "minTrustLevel": 3,
   "requireApproval": true,
+  "_note": "2026-09-18 若辰升级：白名单对齐 remote-command PHASE1 + delegation.* 命名空间（delegation-handler.js 落地）。高危 agent.* 命令进敏感审批队列（fail-closed）；delegation.issue 由 delegation-handler 红线拒答（网络内不签发）。",
   "commandWhitelist": [
-    "status",    "health",    "memory.list",    "memory.get",    "task.list",    "echo","agent.update", "agent.restart"
+    "status",
+    "health",
+    "memory.list",
+    "memory.get",
+    "task.list",
+    "echo",
+    "system.status",
+    "skill.list",
+    "skill.info",
+    "agent.health",
+    "agent.configure",
+    "agent.update",
+    "agent.restart",
+    "delegation"
   ],
   "sensitiveCommands": [
     "memory.delete",
     "memory.clear",
     "task.cancel",
     "config.update",
-    "restart"
+    "restart",
+    "agent.configure",
+    "agent.update",
+    "agent.restart",
+    "delegation.revoke"
   ],
   "forbiddenCommands": [
     "exec", "eval", "shell", "bash", "cmd",

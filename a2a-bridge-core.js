@@ -93,7 +93,11 @@ function validateEnvelope(msg) {
   if (!msg || typeof msg !== 'object') {
     return { ok: false, reason: REASON.ENVELOPE_INVALID, detail: '消息为空或非对象' };
   }
-  const d = msg.delegation;
+  let d = msg.delegation;
+  // [9/18 若辰] 兼容：delegation 也可置于 message.metadata.delegation（标准 A2A 客户端更可能保留 metadata）
+  if ((d === undefined || d === null) && msg && msg.metadata && msg.metadata.delegation) {
+    d = msg.metadata.delegation;
+  }
   // 无信封 → 非委托消息（由上层走原通知/闲聊逻辑）
   if (d === undefined || d === null) {
     return { ok: null, envelope: null };
@@ -140,6 +144,10 @@ function validateEnvelope(msg) {
       delegationId: d.id || null,
       // [P1 / 2026-09-14] isolated 路径透传：避免 validateEnvelope 丢字段导致 injectIsolated 拿不到 expectedMarker/nonce
       isolated: d.isolated === true,
+      // [9/18 若辰] 透传 file.write 结构化字段，使 op/path/content 形态可用（不再退化为 echo 字符串解析）
+      op: d.op || null,
+      path: d.path || null,
+      content: d.content != null ? d.content : null,
       command: d.command || d.target,
       expectedMarker: d.expectedMarker || null,
       nonce: d.nonce || d.expectedNonce || null,
@@ -356,15 +364,22 @@ async function handleInbound(msg, ctx) {
         delegator: senderLabel, scope: envelope.scope, startedAt,
         reason, detail: (confirm && (confirm.detail || confirm.error)) || 'L3 用户未确认，委托未执行',
       });
-      // [9/11 接线] 信任证据：用户拒绝记账（中性——行使拒绝权不是对方过错）
-      // 仅"显式拒绝"记：超时是系统未得到答复，不归咎于发起方。
-      // 采集器内部还有第二道护栏（NEVER_NEGATIVE 强制归零），双保险。
-      if (confirm && confirm.declined === true) {
+      // [9/18 若辰修复] 信任证据：仅在「人类显式拒绝」时记 user_declined。
+      // 超时（timedOut）是系统未获答复，不归咎发起方 → 记中性 confirm_timeout；
+      // 此前超时也被记成 user_declined，污染账本（详见 2026-09-18 若兰 target_refused 复盘）。
+      if (confirm && confirm.declined === true && !confirm.timedOut) {
         await _recordEvidence(ctx, {
           action: 'user_declined',
           subject: ctx.sender,
           evidence: { ref: taskId, detail: `scope=${envelope.scope}; ${receipt.reason || reason}` },
           note: 'L3 用户显式拒绝',
+        });
+      } else if (confirm && confirm.timedOut) {
+        await _recordEvidence(ctx, {
+          action: 'confirm_timeout',
+          subject: ctx.sender,
+          evidence: { ref: taskId, detail: `scope=${envelope.scope}; ${receipt.reason || reason}` },
+          note: 'L3 确认超时（系统未获答复，不归咎发起方）',
         });
       }
       return { kind: 'rejected', receipt, envelope };
@@ -381,12 +396,14 @@ async function handleInbound(msg, ctx) {
         reason: REASON.TARGET_REFUSED,
         detail: result.detail || '被委托方主会话拒绝执行',
       });
-      // [9/11 接线] 信任证据：被委托方拒绝也是中性（拒绝权双向有效）
+      // [9/18 若辰修复] 信任证据：target_refused 是「执行适配器无法自动执行」，
+      // 不是人类拒绝（T4 拒绝权）——此前误记 user_declined，污染账本。
+      // 改记中性 target_refused，并标注为能力边界/非 isolated 信封，不归咎发起方。
       await _recordEvidence(ctx, {
-        action: 'user_declined',
+        action: 'target_refused',
         subject: ctx.sender,
         evidence: { ref: taskId, detail: `scope=${envelope.scope}; target_refused` },
-        note: '被委托方主会话拒绝（T4 拒绝权）',
+        note: '被委托方执行适配器无法自动执行（非人类拒绝；能力边界/非 isolated 信封）',
       });
       return { kind: 'rejected', receipt, envelope };
     }
