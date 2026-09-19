@@ -28,6 +28,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { execFile } = require('child_process');
 
 const GATEWAY_URL_ENV = process.env.A2A_GATEWAY_URL || '';
 
@@ -248,11 +249,57 @@ async function inject(envelopeOrFrame, taskIdOrOpts, maybeOpts = {}) {
   }
 }
 
+// ── A2A 桥接会话标识（2026-09-19）──────────────────────────────
+// 让桥接注入的会话在 UI 里醒目可见，而不是一串随机 uuid。
+//   · 会话 key: 可控且可读（x-openclaw-session-key）
+//   · 会话 label: 「🔌 A2A 桥接 · 明澈」（用 sessions.patch 打）
+// 约定：agent:main:a2a-bridge-<peerSlug>-<short>（可用 A2A_GATEWAY_SESSION_PREFIX 覆盖）
+function bridgeSessionPrefix() {
+  return process.env.A2A_GATEWAY_SESSION_PREFIX || 'agent:main:a2a-bridge';
+}
+function derivePeer(envelope) {
+  const d = (envelope && envelope.delegation) || envelope || {};
+  return String(envelope?.delegator || d.delegator || 'unknown').trim() || 'unknown';
+}
+function peerSlug(peer) {
+  // HTTP header 只能 ASCII，故 key 段限 [\w-]；非 ASCII（如中文名）用短哈希兜底（可读名走 label）
+  const ascii = String(peer).replace(/[^\w-]+/g, '').slice(0, 24);
+  if (ascii) return ascii;
+  let h = 5381;
+  const s = String(peer);
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return 'p' + h.toString(16);
+}
+function shortId(taskId) {
+  return String(taskId || '').replace(/[^\w]/g, '').slice(-6) || 'x';
+}
+/** 给会话打醒目 label（best-effort；撞名自动加短后缀；失败不影响主流程） */
+function labelSession(sessionKey, peer, taskId) {
+  const base = `🔌 A2A 桥接 · ${peer}`;
+  const patch = (label) => new Promise((resolve) => {
+    execFile('openclaw', ['gateway', 'call', 'sessions.patch', '--params',
+      JSON.stringify({ key: sessionKey, label }), '--json'],
+      { timeout: 8000 },
+      (err, stdout, stderr) => resolve({
+        ok: !err,
+        out: String(stdout || '') + String(stderr || '') + String((err && (err.stdout || err.stderr || err.message)) || ''),
+      }));
+  });
+  return (async () => {
+    let r = await patch(base);
+    if (!r.ok && /in use/i.test(r.out)) r = await patch(`${base} · ${shortId(taskId)}`);
+    return r.ok;
+  })();
+}
+
 /** 执行注入核心（chat/completions 通道） */
 async function executeViaGateway(envelope, taskId, opts = {}) {
   const token = opts.token || resolveToken();
   const prompt = buildPrompt(envelope, taskId);
   const model = opts.model || process.env.A2A_MODEL || 'openclaw';
+  // 可控会话 key（默认每任务一个，保持隔离；带 peer + 短 ID 便于辨认）
+  const peer = derivePeer(envelope);
+  const sessionKey = opts.sessionKey || `${bridgeSessionPrefix()}-${peerSlug(peer)}-${shortId(taskId)}`;
   // 超时取三者最大但封顶：调用方显式 opts > 信封声明（委托方给的时限）> 默认
   const timeoutMs = Math.min(
     opts.timeoutMs || Math.max(envelope?.timeoutMs || 0, DEFAULT_TIMEOUT_MS),
@@ -277,6 +324,7 @@ async function executeViaGateway(envelope, taskId, opts = {}) {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`,
         'Content-Length': Buffer.byteLength(payload),
+        'x-openclaw-session-key': sessionKey,
       },
     }, (res) => {
       let body = '';
@@ -303,6 +351,9 @@ async function executeViaGateway(envelope, taskId, opts = {}) {
     req.end();
   });
 
+  // 给这次注入的会话打上醒目 label（await 保证完成；失败不影响委托）
+  await labelSession(sessionKey, peer, taskId).catch(() => {});
+
   // 拒绝权检测（T4：主 agent 说「不」就是「不」）
   if (detectRefusal(content)) {
     return {
@@ -321,6 +372,8 @@ async function executeViaGateway(envelope, taskId, opts = {}) {
 module.exports = {
   inject, injectIsolated, buildPrompt, buildInjectMessage, detectRefusal, REFUSAL_PATTERNS,
   resolveConfig, invokeTool, fetchResult, extractReply, harvestTexts, _resetIdentityBridgeCache,
+  // 会话标识（测试/复用）
+  labelSession, derivePeer, peerSlug, shortId, bridgeSessionPrefix,
   // 【契约声明】机读约定（见 adapters/_contract.js 门禁）
   CONTRACT: {
     version: 1,
