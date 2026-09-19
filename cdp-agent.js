@@ -182,7 +182,7 @@ function hosts24(selfIp) {
 }
 
 function parseCidr(cidr) {
-  // 支持 172.28.0.0/24（> /24 一律按 /24 处理，避免全段扫）
+  // 支持 192.168.1.0/24（> /24 一律按 /24 处理，避免全段扫）
   const [base, bitsStr] = cidr.split('/');
   if (!base) return [];
   const bits = parseInt(bitsStr || '24', 10);
