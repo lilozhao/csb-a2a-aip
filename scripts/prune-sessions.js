@@ -29,6 +29,7 @@ const { execFile } = require('child_process');
 const args = process.argv.slice(2);
 const APPLY = args.includes('--apply');
 const INCLUDE_BRIDGE = args.includes('--include-bridge');
+const INCLUDE_RUNS = args.includes('--include-runs');   // 删所有 cron :run: 子会话（不限年龄）
 const di = args.indexOf('--days');
 const DAYS = di >= 0 ? parseInt(args[di + 1], 10) : 7;
 const CUT = Date.now() - DAYS * 86400 * 1000;
@@ -57,7 +58,7 @@ function del(key) {
     const old = ts && ts < CUT;
     if (key.startsWith('agent:main:main') || /:feishu:|:user:|user:/.test(key)) { buckets.keep.push(key); continue; }
     if (key.endsWith(':heartbeat')) { buckets.heartbeat.push(key); continue; }
-    if (/:run:/.test(key)) { old ? buckets['cron-run'].push(key) : buckets.keep.push(key); continue; }
+    if (/:run:/.test(key)) { (INCLUDE_RUNS || old) ? buckets['cron-run'].push(key) : buckets.keep.push(key); continue; }
     if (/:openai:|:a2a-bridge-/.test(key)) {
       (INCLUDE_BRIDGE && old) ? buckets.bridge.push(key) : buckets.keep.push(key);
       continue;
@@ -69,7 +70,7 @@ function del(key) {
   console.log(`store : ${STORE}`);
   console.log(`总计  : ${total}  | 模式: ${APPLY ? 'APPLY ✍️' : 'DRY-RUN 👀'}  | 阈值: ${DAYS} 天\n`);
   console.log(`  删除候选 · heartbeat        : ${buckets.heartbeat.length}`);
-  console.log(`  删除候选 · cron :run: (>${DAYS}d) : ${buckets['cron-run'].length}`);
+  console.log(`  删除候选 · cron :run:        : ${buckets['cron-run'].length}${INCLUDE_RUNS ? '' : `（仅 >${DAYS}d）`}`);
   console.log(`  删除候选 · bridge (>${DAYS}d)     : ${buckets.bridge.length}${INCLUDE_BRIDGE ? '' : '（未启用 --include-bridge）'}`);
   console.log(`  保留                       : ${buckets.keep.length}`);
   console.log(`  ── 拟删合计: ${buckets.heartbeat.length + buckets['cron-run'].length + buckets.bridge.length}\n`);
