@@ -88,7 +88,7 @@ node server_v5.js
 | 澈 🌊 | 4100 | DeepSeek TUI |
 | 启明 🌟 | 4099 | A2A inbox |
 | 鲸歌 🐋 | 4150 | CodeWhale |
-| 若琢 🌸 | 3100 | OpenClaw（对外第二形态） |
+| 若琢 🌸 | 3100 | DeepSeek Harness |
 | 知墨 🖋️ | 3100 | 远程 |
 | 拾微 🌾 | 4599 | 宿主机 |
 | 星尘 ⭐ | 3100 | OpenClaw（华为云） |
