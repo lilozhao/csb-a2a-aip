@@ -206,18 +206,27 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
     return null;
   }
 
-  const timeout = options.timeout || 25000;
+  const timeout = options.timeout || llmConfig.timeout || 60000; // 推理模型较慢,默认放宽到 60s
   const model = process.env.A2A_DIRECT_MODEL || llmConfig.model || 'default';
   console.log('[LLM-Router] 🔗 Direct:', llmConfig.host, model);
 
+  // [2026-09-20] 推理模型(content 为空 / 25s 超时 / 正文被 max_tokens 截断)相关修复:
+  //   - extraBody: 原样合并进请求体,供按需关思考(如百炼 enable_thinking:false)
+  //   - stream:    仅当 llm.stream === true 才开;本地推理模型非流式会卡死,云端无需开
+  //   - maxTokens: 500 太小,推理模型会把预算烧在 reasoning 上致正文为空/断句
+  const extraBody = llmConfig.extraBody || {};
+  const useStream = llmConfig.stream === true || extraBody.stream === true;
+  const maxTokens = options.maxTokens || llmConfig.maxTokens || 2000;
   const payload = JSON.stringify({
     model,
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userMessage }
     ],
-    max_tokens: options.maxTokens || 500,
-    temperature: options.temperature || 0.7,
+    max_tokens: maxTokens,
+    temperature: options.temperature || llmConfig.temperature || 0.7,
+    ...(useStream ? { stream: true } : {}),
+    ...extraBody,
   });
 
   return new Promise((resolve) => {
@@ -234,15 +243,50 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
         'Content-Length': Buffer.byteLength(payload),
       },
     }, res => {
-      let body = '';
-      res.on('data', c => body += c);
+      const chunks = [];
+      const isSSE = String(res.headers['content-type'] || '').includes('text/event-stream');
+      res.on('data', c => chunks.push(c));
       res.on('end', () => {
         try {
+          const body = Buffer.concat(chunks).toString('utf8');
+          // 流式响应(SSE):只在 content-type 确认为 event-stream 时走这条分支
+          if (isSSE || (body.includes('\ndata:') && !body.trim().startsWith('{'))) {
+            let content = '';
+            let reasoning = '';
+            for (const line of body.split('\n')) {
+              const t = line.trim();
+              if (!t.startsWith('data:')) continue;
+              const d = t.slice(5).trim();
+              if (!d || d === '[DONE]') continue;
+              try {
+                const chunk = JSON.parse(d);
+                const delta = chunk.choices?.[0]?.delta || {};
+                if (delta.content) content += delta.content;
+                if (delta.reasoning_content) reasoning += delta.reasoning_content;
+              } catch { /* 跳过无法解析的 chunk */ }
+            }
+            if (content.trim()) { resolve(content.trim()); return; }
+            // 只有 reasoning 可用 = 降级回复,明确告警而不是静默当正常
+            if (reasoning.trim()) {
+              console.warn('[LLM-Router] ⚠️ Direct 仅返回 reasoning_content,正文为空——建议配置 llm.extraBody 关闭思考');
+              resolve(reasoning.trim());
+              return;
+            }
+            console.error('[LLM-Router] Direct 流式响应无有效内容');
+            resolve(null);
+            return;
+          }
           const data = JSON.parse(body);
           const content = data.choices?.[0]?.message?.content?.trim() ||
                           data.choices?.[0]?.message?.reasoning_content?.trim() ||
                           data.response || data.text || data.content;
-          if (content) { resolve(content.trim()); return; }
+          if (content) {
+            if (!data.choices?.[0]?.message?.content?.trim() && data.choices?.[0]?.message?.reasoning_content?.trim()) {
+              console.warn('[LLM-Router] ⚠️ Direct 仅返回 reasoning_content,正文为空——建议配置 llm.extraBody 关闭思考');
+            }
+            resolve(content.trim());
+            return;
+          }
           resolve(null);
         } catch (e) {
           console.error('[LLM-Router] Direct 解析失败:', e.message);
