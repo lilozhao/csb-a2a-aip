@@ -199,13 +199,30 @@ function parseCidr(cidr) {
 // ============================================================
 // 身份 / 配置
 // ============================================================
+// [2026-09-05 修复] 本机地址优先校验:身份文件里的 publicHost 可能过期或属于他人
+// (多身份容器踩坑:CDP 误读根 identity.json → 把本机识别成别的节点)
+function isLocalAddress(ip) {
+  return !!ip && localInterfaces().some((i) => i.address === ip);
+}
+function pickSelfHost(preferred) {
+  const ifaces = localInterfaces();
+  if (preferred && isLocalAddress(preferred)) return preferred;   // 身份地址确属本机 → 用
+  const a2a = ifaces.find((i) => i.address.startsWith('172.28.')); // A2A 网段优先
+  return (a2a || ifaces[0] || { address: '127.0.0.1' }).address;
+}
 function loadIdentity() {
+  // 身份优先序:agent.json(单一数据源)→ instances/<slug>/identity.json → 旧 identity.json → config
+  const agent = readJsonSafe(path.join(__dirname, 'agent.json')) || {};
+  const inst = agent.slug
+    ? (readJsonSafe(path.join(__dirname, 'instances', agent.slug, 'identity.json')) || {})
+    : {};
   const id = readJsonSafe(path.join(__dirname, 'identity.json')) || {};
   const cfg = readJsonSafe(path.join(__dirname, 'config', 'agents.json')) || {};
   const self = cfg.self || {};
-  const name = process.env.CDP_NAME || id.name || self.name || 'unnamed';
-  const host = process.env.CDP_HOST || id.publicHost || self.host || firstLocalIPv4();
-  const port = parseInt(process.env.CDP_PORT || id.port || self.port || AGENT_PORT_DEFAULT, 10);
+  const name = process.env.CDP_NAME || agent.name || inst.name || id.name || self.name || 'unnamed';
+  const host = process.env.CDP_HOST
+    || pickSelfHost(agent.publicHost || inst.publicHost || id.publicHost || self.host);
+  const port = parseInt(process.env.CDP_PORT || agent.port || inst.port || id.port || self.port || AGENT_PORT_DEFAULT, 10);
   const registrySeed = process.env.CDP_REGISTRY
     || (cfg.registry && (cfg.registry.local || cfg.registry.public)) || null;
   return {
