@@ -40,13 +40,11 @@ const DELEGATION_TYPES = Object.freeze({
   NOTIFY: 'notify',     // 通知类（不需要执行，仅告知）
 });
 
-/** 委托范围（scope → 所需信任等级门槛） */
-const SCOPE_LEVELS = Object.freeze({
-  read: 'L2',       // 读类委托：L2 可发起（R1 T2 全票 B）
-  notify: 'L2',     // 通知类：L2 可发起
-  write: 'L3',      // 跨宿主写：必须 L3 用户确认（R1 T2 全票 B）
-  shell: 'L3',      // 命令执行类：必须 L3 用户确认
-});
+/** 委托范围（scope → 所需信任等级门槛）
+ *  唯一真相源：workspace/config/boundary-rules.json → a2aScopeLevels
+ *  本模块消费其生成镜像 ./a2a-scope-levels.js（AUTO-GENERATED，勿手改；重跑 workspace/scripts/gen-a2a-scope-levels.js）
+ *  read/notify = L2 可发起（R1 T2 全票 B）；write/shell = 必须 L3 用户确认 */
+const SCOPE_LEVELS = require('./a2a-scope-levels');
 
 /** 信任等级序（用于比较） */
 const LEVEL_ORDER = Object.freeze({ L0: 0, L1: 1, L2: 2, L3: 3 });
