@@ -284,15 +284,19 @@ const standardAPI = new A2AStandardAPI({
     }
     try {
       const cmd = JSON.parse(cmdJson);
-      console.log('[A2A-CMD] 收到远程命令:', cmd.type, 'from', metadata?.sender?.name || (typeof metadata?.sender === 'string' ? metadata.sender : '?'));
+      // [2026-09-20] 从 CMD JSON 提取签名字段(sig/ts/nonce),从 command 对象中移除(它们不是命令本身)
+      const { sig, ts, nonce, ...commandClean } = cmd;
+      console.log('[A2A-CMD] 收到远程命令:', cmd.type, 'from', metadata?.sender?.name || (typeof metadata?.sender === 'string' ? metadata.sender : '?'), sig ? '(已签名)' : '(未签名)');
       // [2026-09-09] sender 规范化：message/send 的 sender 可能是字符串（'若兰'），dispatcher/validator 需对象 {name}
       const cmdSender = typeof metadata?.sender === 'string'
         ? { name: metadata.sender, url: metadata?.senderUrl || '' }
         : (metadata?.sender || { name: 'unknown', url: '' });
       const result = await commandDispatcher.dispatch({
         sender: cmdSender,
-        command: cmd,
-        timestamp: Date.now()
+        command: commandClean,
+        signature: sig || undefined,
+        timestamp: ts || Date.now(),
+        nonce: nonce || undefined
       });
       const jsonResult = JSON.stringify(result);
       console.log('[A2A-CMD] 命令完成:', cmd.type, result.result?.status || result.error?.code);
