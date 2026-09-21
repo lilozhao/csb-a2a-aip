@@ -37,6 +37,17 @@ const TERMINAL_STATES = new Set([
   TASK_STATE.REJECTED,
 ]);
 
+// [W-10 / 2026-09-21] 在途状态：只能活在本进程内。
+// 进程重启后，持久化里若还存在这两种状态，必然是「进程在途死亡」留下的孤儿。
+// 注意：INPUT_REQUIRED / AUTH_REQUIRED **不算**在途——它们语义上就是跨重启等待外部输入，不得回收。
+const IN_FLIGHT_STATES = new Set([
+  TASK_STATE.SUBMITTED,
+  TASK_STATE.WORKING,
+]);
+
+// 孤儿回收原因（写入 status.message，便于事后检索/对账）
+const ORPHAN_REASON = 'orphaned_by_restart';
+
 // ============================================
 // 角色枚举 (Role)
 // ============================================
@@ -158,11 +169,48 @@ class TaskStore {
     this.pageSize    = options.pageSize    || 20;
     this.debounceMs  = options.debounceMs  || 1000;
 
+    // [W-10 / 2026-09-21] 启动对账：进程刚起，不可能有在途任务 → 加载后回收孤儿
+    //   reconcileOrphans: 默认开；orphanGraceMs: 宽限（默认 0 = 立即回收；可用 A2A_TASK_ORPHAN_GRACE_MS 覆盖）
+    this.reconcileOrphans = options.reconcileOrphans !== false;
+    this.orphanGraceMs = Number.isFinite(options.orphanGraceMs)
+      ? options.orphanGraceMs
+      : (parseInt(process.env.A2A_TASK_ORPHAN_GRACE_MS || '0', 10) || 0);
+    /** 本次启动回收的孤儿数（观测用） */
+    this.orphansReconciled = 0;
+
     // 异步批量写盘 (修复: debounce 替代同步写)
     this._dirty = false;
     this._saveTimer = null;
 
     this._loadPersistence();
+    if (this.reconcileOrphans) this._reconcileOrphans();
+  }
+
+  /**
+   * [W-10] 启动对账：把加载回来的「在途状态」任务判为孤儿并落终态。
+   * 只碰非终态、且仅限 SUBMITTED/WORKING；INPUT_REQUIRED/AUTH_REQUIRED 保持不动。
+   * 回收时补一条 agent 侧 history，说明原因与依据（可追溯）。
+   * @returns {number} 回收条数
+   */
+  _reconcileOrphans() {
+    const now = Date.now();
+    let n = 0;
+    for (const task of this.tasks.values()) {
+      if (!task || !task.status || !IN_FLIGHT_STATES.has(task.status.state)) continue;
+      const ts = Date.parse(task.updatedAt || task.createdAt || 0) || 0;
+      if (this.orphanGraceMs > 0 && now - ts < this.orphanGraceMs) continue;
+      const from = task.status.state;
+      this.addHistory(task.id, {
+        role: ROLE.AGENT,
+        parts: [{ text: `⚠️ 启动对账：本任务在进程重启时仍处于「${from}」，判定为孤儿（orphaned_by_restart）→ 已置 FAILED。` }],
+        messageId: `orphan_${task.id}_${now}`,
+      });
+      this.updateTaskStatus(task.id, TASK_STATE.FAILED, ORPHAN_REASON);
+      n++;
+    }
+    this.orphansReconciled = n;
+    if (n > 0) console.warn(`[TaskStore] 启动对账：回收 ${n} 条孤儿任务（在途状态残留 → FAILED/${ORPHAN_REASON}）`);
+    return n;
   }
 
   /** 标记写入 (debounce) */

@@ -30,6 +30,25 @@
 const crypto = require('crypto');
 
 // ============================================
+// [W-10 / 2026-09-21] 终态回写失败的可观测性
+// 原写法 `.catch(() => {})` 把回写失败静默吞掉 → 表面上“执行完了”，store 却停在 working。
+// 改为：记日志 + 计数（不阻断主流程，但不再隐形）。
+// ============================================
+let _terminalWriteFailures = 0;
+
+/** 终态回写失败处理器（供 .catch 使用；返回错误计数快照） */
+function terminalWriteError(taskId, state) {
+  return (e) => {
+    _terminalWriteFailures++;
+    console.warn(`[A2A-BRIDGE] 终态回写失败 task=${taskId} state=${state}: ${(e && e.message) || e}`);
+    return { ok: false };
+  };
+}
+
+/** 终态回写失败累计次数（观测/健康探针用） */
+function getTerminalWriteFailures() { return _terminalWriteFailures; }
+
+// ============================================
 // 常量
 // ============================================
 
@@ -184,7 +203,8 @@ class BridgeCorrelator {
         summary: result?.summary || '执行完成',
         artifactRef: result?.artifactRef || null,
       });
-      await this.updateTask(taskId, TASK_STATE.COMPLETED, { receiptId: receipt.receiptId }).catch(() => {});
+      await this.updateTask(taskId, TASK_STATE.COMPLETED, { receiptId: receipt.receiptId })
+        .catch(terminalWriteError(taskId, TASK_STATE.COMPLETED));
     } catch (e) {
       const reason = (e && e.code) || FAIL_REASON.EXECUTION_ERROR;
       const summary = (e && e.message) || String(e);
@@ -193,7 +213,8 @@ class BridgeCorrelator {
         code: RESULT_CODE.FAILED, reason,
         summary: `执行失败: ${summary}`,
       });
-      await this.updateTask(taskId, TASK_STATE.FAILED, { reason, receiptId: receipt.receiptId }).catch(() => {});
+      await this.updateTask(taskId, TASK_STATE.FAILED, { reason, receiptId: receipt.receiptId })
+        .catch(terminalWriteError(taskId, TASK_STATE.FAILED));
     } finally {
       this._running.delete(taskId);
     }
@@ -307,6 +328,8 @@ function buildTaskResponse(bridgeResult) {
 module.exports = {
   BridgeCorrelator,
   KIND_TO_STATE,
+  terminalWriteError,
+  getTerminalWriteFailures,
   formatReceiptArtifact,
   formatReceiptMessage,
   applyToTask,
