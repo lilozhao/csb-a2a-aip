@@ -1,4 +1,5 @@
 {
+  "$comment": "registry.local 按【运行环境】而异，不要把它当成全局常量：① Docker 内网环境 = http://172.28.0.4:3099（启动脚本/环境变量 A2A_REGISTRY_URL 注入）② 公网环境 = http://csbc.lilozkzy.top:3099 ③ 宿主机 = http://localhost:3099（宿主机本身就跑着一个注册表）。自 2026-09-21 起 config/loader.js 改为 **env 优先**：设了 A2A_REGISTRY_URL 就用它，未设才回落本文件。三场景请各自在自己的启动点注入，勿改本兜底值（改了会把其它环境弄坏）。",
   "registry": {
     "local": "http://localhost:3099",
     "public": "http://47.121.28.125:3099"

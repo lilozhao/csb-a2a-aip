@@ -18,6 +18,17 @@ function load() {
 
 /** 获取注册表地址 */
 function getRegistry(type = 'local') {
+  // [2026-09-21] 环境差异显式化：env 优先，配置文件只做兜底。
+  //   三场景（一澜 2026-09-21 定）：
+  //     ① Docker 内网 → http://172.28.0.4:3099
+  //     ② 公网      → http://csbc.lilozkzy.top:3099
+  //     ③ 宿主机    → http://localhost:3099（宿主机自带注册表）
+  //   各自在自己的启动点注入 A2A_REGISTRY_URL；未注入时才回落 agents.json。
+  //   严格增量：不动兜底值、不改任何实例行为（未设 env 时路径与旧版完全一致）。
+  if (type === 'local') {
+    const envUrl = (process.env.A2A_REGISTRY_URL || '').trim();
+    if (envUrl) return envUrl.replace(/\/+$/, '');
+  }
   const cfg = load();
   return type === 'public' ? cfg.registry.public : cfg.registry.local;
 }
