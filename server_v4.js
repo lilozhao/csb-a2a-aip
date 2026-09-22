@@ -65,6 +65,9 @@ const identity = JSON.parse(fs.readFileSync(identityPath, 'utf8'));
 const port = process.env.A2A_PORT || identity.port || 3100;
 const A2A_VERSION = '4.1.0';
 
+// [2026-09-22 T-5] 对外地址单一真相源（与 v5 共用同一模块，避免各自定义分叉）
+const A2A_ADVERTISE_HOST = require('./a2a-advertise-host')(identity, config);
+
 // ===== 注册表配置 =====
 const REGISTRY_URL = process.env.A2A_REGISTRY_URL || config.getRegistry('local');
 const HEARTBEAT_INTERVAL = parseInt(process.env.A2A_HEARTBEAT_INTERVAL_MS || '300000'); // 5 分钟
@@ -431,8 +434,8 @@ app.get('/.well-known/ai-catalog.json', (req, res) => {
         'agent-card'
       ],
       endpoints: {
-        a2a: `http://172.28.0.5:3100`,
-        agentCard: `http://172.28.0.5:3100/.well-known/agent.json`
+        a2a: `http://${A2A_ADVERTISE_HOST}:${port}`,
+        agentCard: `http://${A2A_ADVERTISE_HOST}:${port}/.well-known/agent.json`
       },
       tags: identity.tags || ['ai-agent', 'a2a'],
       metadata: {

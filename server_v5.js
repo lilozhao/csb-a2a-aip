@@ -69,16 +69,12 @@ const REGISTRY_URL = process.env.A2A_REGISTRY_URL || config.getRegistry('local')
 const HEARTBEAT_INTERVAL = parseInt(process.env.A2A_HEARTBEAT_INTERVAL_MS || '300000'); // 5 分钟
 let heartbeatTimer = null;
 
-// [2026-09-13 修复] AgentCard / 握手 的「对外地址」单一真相源。
-//   此前 AgentCard 硬编码 http://localhost:${port} → 远程 peer 拿到 localhost 地址，谁都连不上。
-//   优先级（若兰一页纸 #3）：env A2A_HOST > identity.publicHost > identity.host > config.getSelf?.()?.host > 'localhost'
-//   注意：config.getSelf() 在新 loader.js 中三级优先——可能抛错；用 ?.() 可选链调用
-const A2A_ADVERTISE_HOST = (() => {
-  if (process.env.A2A_HOST) return process.env.A2A_HOST;
-  if (identity.publicHost) return identity.publicHost;
-  if (identity.host) return identity.host;
-  try { return config.getSelf?.()?.host || 'localhost'; } catch { return 'localhost'; }
-})();
+// [2026-09-13 修复 / 2026-09-22 T-5 单源化] AgentCard / ai-catalog / 握手 的「对外地址」单一真相源。
+//   此前 AgentCard 硬编码 http://localhost:${port}（远程 peer 拿到 localhost，谁都连不上）；
+//   ai-catalog 又硬编码 http://172.28.0.5:3100（抄模板残留 → 全社区通病，指向阿轩）。
+//   解析逻辑抽到 a2a-advertise-host.js，v4/v5 共用，避免第二真相源。
+//   优先级：env A2A_HOST > identity.publicHost > identity.host > config.getSelf?.()?.host > 'localhost'
+const A2A_ADVERTISE_HOST = require('./a2a-advertise-host')(identity, config);
 
 async function registerToRegistry() {
   try {
@@ -812,8 +808,8 @@ app.get('/.well-known/ai-catalog.json', (req, res) => {
         'agent-card'
       ],
       endpoints: {
-        a2a: `http://172.28.0.5:3100`,
-        agentCard: `http://172.28.0.5:3100/.well-known/agent.json`
+        a2a: `http://${A2A_ADVERTISE_HOST}:${port}`,
+        agentCard: `http://${A2A_ADVERTISE_HOST}:${port}/.well-known/agent.json`
       },
       tags: identity.tags || ['ai-agent', 'a2a'],
       metadata: {

@@ -11,6 +11,7 @@
 ### 1. A2A v0.6 协议
 
 - `/.well-known/agent.json` Agent Card
+- `/.well-known/ai-catalog.json` ARD 生态互发现目录（[2026-09-22 T-5] 对外地址改由 [`a2a-advertise-host.js`](docs/ADVERTISE-HOST-SINGLE-SOURCE.md) 单一真相源提供，不再硬编码）
 - JSON-RPC 2.0：`SendMessage`、`SendStreamingMessage`
 - Task 生命周期：`submitted` → `working` → `completed`/`failed`
 - 心跳：每 5 分钟一次；每周期核对注册表名单，发现本节点被清空/重启自动补注册（[2026-09-13 补丁] 注册一次 ≠ 一直在）
