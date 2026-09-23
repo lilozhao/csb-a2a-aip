@@ -31,10 +31,15 @@ const { SemanticValidator } = require('./semantic-validator.js');
 const { EnvelopeManager } = require('./envelope.js');
 
 // LLM API 配置
-const LLM_API_HOST = 'coding.dashscope.aliyuncs.com';
-const LLM_API_PATH = '/v1/chat/completions';
-const LLM_API_KEY = 'sk-sp-d3d95b35cced4059a29a1e208ac4f111';
-const LLM_MODEL = 'glm-5';
+// 🔒 凭据一律走环境变量（2026-09-23 W-4 卫生债整改：移除硬编码 Key，历史遗留字符串另行处理）
+const LLM_API_HOST = process.env.LLM_API_HOST || 'coding.dashscope.aliyuncs.com';
+const LLM_API_PATH = process.env.LLM_API_PATH || '/v1/chat/completions';
+const LLM_API_KEY = process.env.BAILIAN_API_KEY || process.env.DASHSCOPE_API_KEY || process.env.LLM_API_KEY;
+if (!LLM_API_KEY) {
+  console.error('❌ 缺少 LLM 凭据：请设置 BAILIAN_API_KEY（或 DASHSCOPE_API_KEY / LLM_API_KEY）——勿在代码中硬编码 Key。');
+  process.exit(1);
+}
+const LLM_MODEL = process.env.LLM_MODEL || 'glm-5';
 
 // 初始化上下文管理器
 const contextManager = new ContextManager();
