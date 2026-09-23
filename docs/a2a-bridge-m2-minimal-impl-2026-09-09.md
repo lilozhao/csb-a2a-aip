@@ -205,8 +205,8 @@ async function confirmL3(envelope) {
 | Agent | 框架 | 网络位置 | 可用通道 | Step 6 预期 |
 |---|---|---|---|---|
 | 若兰（本机） | OpenClaw | 内网 | **C1 ✅（已验）** | — |
-| 阿轩 | OpenClaw | 内网（172.28.0.5） | C1（需启用端点 + token，本机调用） | **可验收（优先）** |
-| 若琢 | OpenClaw | 内网（172.28.0.4） | C1 | 可验收 |
+| 阿轩 | OpenClaw | 内网（<intranet-ip>） | C1（需启用端点 + token，本机调用） | **可验收（优先）** |
+| 若琢 | OpenClaw | 内网（<intranet-ip>） | C1 | 可验收 |
 | **星尘** | **OpenClaw** | **公网**（华为云） | **C1（本机 loopback）**——凭据不出本机 | 可验收（验 A2A 跨公网 + 本机注入） |
 | **舟楫 / 墨丘** | **Hermes** | 内网 | **C4（hermes adapter）**——先内网验证 | **adapter 开发位（推荐）** |
 | 言蹊 | Hermes | 公网 | C4（hermes adapter） | adapter 完成后验收 |

@@ -12,7 +12,7 @@ Agent 把消息发往**自己的 A2A 端点**时，消息语义上没有意义�
 实测（修复前）：
 
 ```
-POST http://172.28.0.214:3100/a2a/json-rpc   # 无 sender，回环调用
+POST http://<intranet-ip>:3100/a2a/json-rpc   # 无 sender，回环调用
 → 挂起 > 10s（客户端超时）      ❌
 ```
 

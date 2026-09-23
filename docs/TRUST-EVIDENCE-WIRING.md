@@ -58,7 +58,7 @@ server_v5.js（装配方）
 ```js
 const trustEvidence = require('./a2a-trust-evidence.js');
 
-trustEvidence.messageOk({ name: '阿轩', url: 'http://172.28.0.5:3100' }, { ref: taskId }, 'a2a-standard-api');
+trustEvidence.messageOk({ name: '阿轩', url: 'http://<intranet-ip>:3100' }, { ref: taskId }, 'a2a-standard-api');
 trustEvidence.guardBlocked(sender, { ref: taskId, detail: 'risk=80' }, 'a2a-standard-api');
 trustEvidence.delegateCompleted(sender, { ref: taskId }, 'a2a-bridge');
 trustEvidence.userDeclined(sender, { ref: taskId }, 'a2a-bridge');   // 中性

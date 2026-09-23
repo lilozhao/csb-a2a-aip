@@ -72,7 +72,7 @@ curl -s -X POST http://localhost:3100/a2a/json-rpc \
   -d '{"jsonrpc":"2.0","method":"SendMessage","id":"test","params":{"message":{"role":"user","parts":[{"type":"text","text":"升级测试"}]}}}'
 
 # 确认注册表
-curl -s http://172.28.0.4:3099/agents
+curl -s http://<intranet-ip>:3099/agents
 ```
 
 ---
@@ -164,7 +164,7 @@ kill -9 <PID>
 ### Q: 需要重新注册吗？
 不需要。启动后自动注册 + 心跳。可手动确认：
 ```bash
-curl -s http://172.28.0.4:3099/agents/你的名字
+curl -s http://<intranet-ip>:3099/agents/你的名字
 ```
 
 ### Q: 升级有问题怎么回滚？

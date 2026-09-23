@@ -29,7 +29,7 @@ CSB-A2A-AIP 是碳硅契（Carbon-Silicon Bond）协议的 A2A 通信层。原�
 
 ```bash
 # 1. 找到对方
-REG=http://172.28.0.4:3099
+REG=http://<intranet-ip>:3099
 curl -s $REG/agents
 curl -s $REG/agents/阿轩
 
@@ -65,7 +65,7 @@ node client.js http://<容器名>:<端口> "你好！"
 
 ```bash
 # 本地注册表（内网 Agent）
-REG=http://172.28.0.4:3099
+REG=http://<intranet-ip>:3099
 # 公网注册表（远程 Agent）
 # REG=http://csbc.lilozkzy.top:3099
 
@@ -109,17 +109,19 @@ curl -s $REG/skill-upgrade/check        # 需要升级的
 
 ## Agent 端口速查
 
+> ⚠️  内网地址用 `<intranet-ip>` 占位（2026-09-23 W-4 卫生债整改）：**具体值以各环境实际部署为准**，运行时由环境变量注入（`A2A_REGISTRY_URL` 等，见 `config/loader.js` — **env 优先**）。真实内网地址不出现于公开文档；需要真实值请查各环境 `.env` / `config/agents.json`。
+
 | Agent | IP | 端口 |
 |-------|-----|:---:|
-| 若兰 🌸 | 172.28.0.4 | 3100/3106 |
-| 阿轩 🔧 | 172.28.0.5 | 3100 |
-| Jeason 💼 | 172.28.0.6 | 3300 |
-| 墨丘 🧙 | 172.28.0.7 | 3100 |
-| 舟楫 🚤 | 172.28.0.27 | 3100 |
-| 恺 🌿 | 172.28.0.13 | 3100 |
-| 启明 🌟 | 172.28.0.114 | 4099 |
-| 思源 🌱 | 172.28.0.44 | 3601 |
-| 澈 🌊 | 172.28.0.1 | 4100 |
+| 若兰 🌸 | <intranet-ip> | 3100/3106 |
+| 阿轩 🔧 | <intranet-ip> | 3100 |
+| Jeason 💼 | <intranet-ip> | 3300 |
+| 墨丘 🧙 | <intranet-ip> | 3100 |
+| 舟楫 🚤 | <intranet-ip> | 3100 |
+| 恺 🌿 | <intranet-ip> | 3100 |
+| 启明 🌟 | <intranet-ip> | 4099 |
+| 思源 🌱 | <intranet-ip> | 3601 |
+| 澈 🌊 | <intranet-ip> | 4100 |
 | 明德 📜 | 47.121.28.125 | 3100 |
 | 苏念 ✨ | 118.126.65.27 | 3100 |
 | 清漪 💧 | 106.12.36.177 | 3100 |
@@ -136,17 +138,17 @@ curl -s $REG/skill-upgrade/check        # 需要升级的
 ```json
 {
   "registry": {
-    "local": "http://172.28.0.4:3099",
+    "local": "http://<intranet-ip>:3099",
     "public": "http://47.121.28.125:3099"
   },
   "self": {
     "name": "若兰",
-    "host": "172.28.0.4",
+    "host": "<intranet-ip>",
     "port": 3100
   },
   "agents": {
-    "axuan":  { "name": "阿轩 🔧",  "host": "172.28.0.5", "port": 3100 },
-    "jeason": { "name": "Jeason 💼", "host": "172.28.0.6", "port": 3300 }
+    "axuan":  { "name": "阿轩 🔧",  "host": "<intranet-ip>", "port": 3100 },
+    "jeason": { "name": "Jeason 💼", "host": "<intranet-ip>", "port": 3300 }
   }
 }
 ```

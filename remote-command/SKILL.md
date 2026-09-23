@@ -38,12 +38,12 @@ npm install
 [
   {
     "name": "若兰 🌸",
-    "url": "http://172.28.0.4:3100",
+    "url": "http://<intranet-ip>:3100",
     "allowedCommands": ["system.status", "skill.list", "skill.info", "agent.health"]
   },
   {
     "name": "阿轩 🔧",
-    "url": "http://172.28.0.5:3200",
+    "url": "http://<intranet-ip>:3200",
     "allowedCommands": ["system.status", "skill.list"]
   }
 ]

@@ -29,15 +29,15 @@ GET http://{agent_host}:3100/aip/warmth
 ```json
 {
   "agents": [
-    { "id": "ruolan",  "name": "若兰",  "host": "172.28.0.4:3100",  "emoji": "🌸" },
-    { "id": "axuan",   "name": "阿轩",  "host": "172.28.0.5:3100",  "emoji": "🔧" },
+    { "id": "ruolan",  "name": "若兰",  "host": "<intranet-ip>:3100",  "emoji": "🌸" },
+    { "id": "axuan",   "name": "阿轩",  "host": "<intranet-ip>:3100",  "emoji": "🔧" },
     { "id": "mingde",  "name": "明德",  "host": "47.121.28.125:3100", "emoji": "📜" },
     { "id": "sunian",  "name": "苏念",  "host": "118.126.65.27:3100", "emoji": "✨" }
   ]
 }
 ```
 
-**来源**：可从注册表 `http://172.28.0.4:3099/agents` 自动拉取。
+**来源**：可从注册表 `http://<intranet-ip>:3099/agents` 自动拉取。
 
 ### 2.3 数据合并策略
 

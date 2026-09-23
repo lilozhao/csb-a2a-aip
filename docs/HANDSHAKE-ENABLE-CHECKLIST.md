@@ -2,7 +2,7 @@
 
 > **目标**：让 `/a2a/handshake` 端点起来（`{"enabled":true,"callee":"<你的slug>"}`）
 > **维护**：若兰 🌸 | 2026-09-14 | 缘起：09-14 阿轩启动失败排查（`keys/axuan.aid.json` 不存在）
-> **适用**：任何实例（把下面 `axuan` / `172.28.0.5` 换成自己的 slug / 地址即可）
+> **适用**：任何实例（把下面 `axuan` / `<intranet-ip>` 换成自己的 slug / 地址即可）
 
 ---
 
@@ -47,11 +47,11 @@ EOF
 chmod 600 ./csb-security/data/SLUG-private-key.pem
 ```
 
-把 `SLUG` / `HOST` / `PORT` / `NAME` 换成自己的（例：`axuan` / `172.28.0.5` / `3100` / `阿轩`）。
+把 `SLUG` / `HOST` / `PORT` / `NAME` 换成自己的（例：`axuan` / `<intranet-ip>` / `3100` / `阿轩`）。
 
 > 💡 **嫌麻烦？用现成脚本**（输出路径与 slug 约定一致）：
 > ```bash
-> bash scripts/setup-handshake.sh axuan 172.28.0.5 3100 阿轩
+> bash scripts/setup-handshake.sh axuan <intranet-ip> 3100 阿轩
 > ```
 
 > 📌 **路径与命名**（最容易错）：
@@ -133,7 +133,7 @@ curl -s 127.0.0.1:PORT/a2a/handshake/status
 - 约定路径：`<repo>/csb-security/data/<slug>-aid.json` + `<slug>-private-key.pem`
 - 解析优先级：显式 env > `identity.json` 的 `security.handshake` > slug 约定
 - ✅ **现成脚本**：`scripts/setup-handshake.sh <slug> <host> [port] [name]`
-  （例：`bash scripts/setup-handshake.sh axuan 172.28.0.5 3100 阿轩`）—— 输出路径与上述 slug 约定**一致**。
+  （例：`bash scripts/setup-handshake.sh axuan <intranet-ip> 3100 阿轩`）—— 输出路径与上述 slug 约定**一致**。
 - 🛠 **[2026-09-14 修复]** 旧版 `setup-handshake-axuan.sh` 曾把 AID/私钥写到 `config/security/axuan-aid.json` + `axuan-ed25519.pem`
   （**路径与文件名都和 slug 约定不符** → `start-v5.sh` 找不到 → 静默禁用握手）。现该脚本已改为**瘦封装**，转发到 `scripts/setup-handshake.sh`。
 

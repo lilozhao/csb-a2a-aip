@@ -86,7 +86,7 @@ set -a; . /workspace/csb-a2a-aip/data/security/shared-secret.env; set +a
 
 # 发命令
 node /workspace/csb-a2a-aip/remote-command/client.js \
-  http://172.28.0.144:3100 \
+  http://<intranet-ip>:3100 \
   '{"type":"system.status"}' \
   '若琢'
 ```
