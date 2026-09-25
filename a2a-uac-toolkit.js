@@ -220,10 +220,34 @@ function setEnabled(policy, on) {
   return pol;
 }
 
+/**
+ * [P3 · 2026-09-25] **按 capability 粒级撤销**：保留同伴登记，只收窄能力白名单。
+ * 用途：不必整人撤掉（那会连正常授权一起断），只收回越界/不再需要的那几项。
+ *
+ * @param {object} policy
+ * @param {string} id 同伴 id
+ * @param {string|string[]} capabilities 要撤销的能力（单个或数组）
+ * @returns {{policy:object, removed:string[], remaining:string[]}}
+ * @throws 未登记同伴 / 能力不在白名单
+ */
+function revokeCapability(policy, id, capabilities) {
+  const pol = normalizePolicy(policy);
+  const p = findPeer(pol, id);
+  if (!p) throw new Error(`未登记该同伴: ${id}`);
+  const want = (Array.isArray(capabilities) ? capabilities : [capabilities]).filter(Boolean);
+  if (!want.length) throw new Error('revokeCapability 需要至少一个 capability');
+  const have = Array.isArray(p.capabilities) ? p.capabilities : [];
+  const missing = want.filter((c) => !have.includes(c));
+  if (missing.length) throw new Error(`能力不在白名单，无法撤销: ${missing.join(',')}（当前: ${have.join(',') || '-'}）`);
+  p.capabilities = have.filter((c) => !want.includes(c));
+  return { policy: pol, removed: [...want], remaining: [...p.capabilities] };
+}
+
 module.exports = {
   SCOPE_PREFIX, POLICY_VERSION,
   loadSecurity, readJsonSafe, writeJson,
   parseTtl, decodePayload,
   generateUserKey, importUserKeyFromPem, thumbprint, formatThumbprint, issueUAC,
   emptyPolicy, normalizePolicy, findPeer, addPeer, revokePeer, removePeer, setEnabled,
+  revokeCapability,
 };

@@ -342,6 +342,16 @@ async function handleInbound(msg, ctx) {
       const _r = (decision && decision.reason) || 'unknown';
       const _d = decision && decision.detail ? ` detail=${decision.detail}` : '';
       console.log(`[UAC] taskId=${taskId} scope=${envelope.scope} not_hit reason=${_r}${_d}`);
+      // [2026-09-25 / P3] 落账：未命中过去只打 stdout，重启即失 ⇒ 审计查询/指标无数据源。
+      //   仅在**信封确实带了 UAC** 时记（避免非 UAC 流量灌账本）；绝不写 token 原文。
+      if (envelope.uac) {
+        await _recordEvidence(ctx, {
+          action: 'delegate_uac_not_hit',
+          subject: ctx.sender,
+          evidence: { ref: taskId, detail: `scope=${envelope.scope}; reason=${_r}${decision && decision.detail ? `; detail=${decision.detail}` : ''}` },
+          note: 'UAC 未命中 → 回退 L3（非拒绝）',
+        });
+      }
     }
   }
 

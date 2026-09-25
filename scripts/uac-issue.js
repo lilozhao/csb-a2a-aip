@@ -19,6 +19,7 @@
 const path = require('path');
 const fs = require('fs');
 const tk = require(path.join(__dirname, '..', 'a2a-uac-toolkit.js'));
+const obs = require(path.join(__dirname, '..', 'a2a-uac-observability.js'));
 
 const arg = (n, d = null) => { const i = process.argv.indexOf(n); return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : d; };
 const has = (n) => process.argv.includes(n);
@@ -51,6 +52,17 @@ if (agents.includes(agent)) {
 }
 
 const { token, payload } = tk.issueUAC({ keyStore, user, agent, scopes, ttl, restrictions });
+
+// [P3 · 2026-09-25] 签发台账：不记这一笔，事后 jti 对不上（查得到才能算得上「可核」）。
+//   只记元数据，**绝不写 token / 私钥**。
+obs.recordUacEvent(obs.UAC_EVENTS.ISSUED, {
+  subject: { name: agent },
+  ref: arg('--out', null) ? path.resolve(arg('--out')) : null,
+  detail: `jti=${payload.jti}; iss=${payload.iss}; sub=${payload.sub}; scopes=${payload.scopes.join(',')}; exp=${new Date(payload.exp * 1000).toISOString()}`
+    + (agents.length ? `; allowed_agents=${agents.join(',')}` : '; allowed_agents=-'),
+  actor: 'uac-issue',
+  note: 'UAC 签发台账',
+});
 
 const out = arg('--out', null);
 if (out) {

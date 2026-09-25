@@ -292,6 +292,16 @@ class TrustEvidence {
   /** 握手完成 */
   handshakeCompleted(subject, evidence, actor) { return this._safeCall('handshakeCompleted', [subject, evidence, actor]); }
 
+  /**
+   * 通用事件留痕（[2026-09-25] UAC P3 可观测性用）
+   * 自定义 action 不在 ACTIONS 表时按「中性、不计分」落账（诚实不猜分）。
+   * @param {string} action 事件名（如 delegate_uac_not_hit / uac_policy_changed / uac_issued）
+   * @param {{subject?:object,evidence?:object,actor?:string,note?:string,kind?:string}} p
+   */
+  recordEvent(action, { subject = null, evidence = null, actor = null, note = null, kind = null } = {}) {
+    return this._safeCall('record', [{ subject: subject || TrustEvidence.subjectFrom(null), action, evidence, actor, note, kind }]);
+  }
+
   /** 从消息 metadata 里稳妥地取发起方（消息链各处格式不一，统一在这里兜） */
   static subjectFrom(sender, fallbackName = 'unknown') {
     if (!sender) return { name: fallbackName };

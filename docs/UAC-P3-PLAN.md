@@ -1,7 +1,7 @@
 # UAC P3 · 范围与验收口径（草案 v0.1）
 
-> 2026-09-25 · 若兰 🌸 · 状态：**待一澜拍板**（拍完才动代码）
-> 上游：`docs/UAC-BRIDGE.md`（P0/P1/P2 已交付）· `docs/uac-bridge-integration-plan-2026-09-15.md`
+> 2026-09-25 · 若兰 🌸 · 状态：**✅ 已交付（一澜 2026-09-25 拍板三点后开工）** · 用法见 `docs/UAC-BRIDGE.md §12`
+> 上游：`docs/UAC-BRIDGE.md`（P0/P1/P2/P3）· `docs/uac-bridge-integration-plan-2026-09-15.md`
 > 关联：`csb-security/lib/authz/uac.js`（签发/验签底座）· `a2a-trust-evidence.js`（账本）
 
 ---
@@ -108,11 +108,22 @@ P2 让「已授权的常规动作」能免 L3，但**免得太安静**：放行�
 - 依赖：无外部依赖；仅动 `csb-a2a-aip`（`a2a-bridge-core.js` / `a2a-uac-toolkit.js` / 新 CLI）+ 文档
 - 交付即推五平台（默认关，零行为变化）
 
-## 8. 待一澜拍的三点（拍完即开工）
+## 8. 一澜拍板结果（2026-09-25）
 
-1. **`not_hit` 是否全量落账本**？（建议：**落**。它是 M2 唯一数据来源；量级极低）
-2. **发起侧签发台账**要不要做？（建议：**做**，`uac_issued` 一行；否则事后对不上 jti）
-3. **指标要不要对外可读**？（建议：**先只做本地 CLI**；`/health/uac` 可顺带加 `lastAutoApprovedAt` 一个字段，不开放明细）
+| # | 问题 | 拍定 |
+|---|---|---|
+| 1 | `not_hit` 是否全量落账本 | ✅ **落**（仅当信封带 UAC；它是 M2 唯一数据来源） |
+| 2 | 发起侧签发台账 | ✅ **做**（`uac_issued`） |
+| 3 | 指标是否对外可读 | ✅ **先只做本地 CLI**；`/health/uac` 不加明细 |
+
+### 落地记录（与原草案的差异，诚实列出）
+
+- 新增 `a2a-uac-observability.js`（纯逻辑 + 只读读账）· `scripts/uac-audit.js` · `scripts/uac-metrics.js`
+- `a2a-trust-evidence.js` 加通用 `recordEvent()`（自定义事件中性落账）
+- `revoke --capability` 为新增用法；**不带时行为不变**
+- 草案 §6 的「`revoke` 必须 `--reason`」改为**建议**（未填只告警）——避免与既有文档示例不兼容
+- 事件按「未知动作」中性落账（不动 csb-security 的 ACTIONS 表）
+- 验收：`tests/uac-p3.test.js` 34 例全绿；回归 `bridge-uac` 17 · `bridge-uac-toolkit` 21 · `bridge-core` 29 · `trust-evidence` 26 均全绿
 
 ---
-_草案 v0.1 · 未拍板不动代码_
+_已交付 2026-09-25；行为默认关，未开 UAC 的实例零变化_

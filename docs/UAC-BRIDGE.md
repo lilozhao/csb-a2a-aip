@@ -1,6 +1,7 @@
 # UAC 接入 Bridge（免重复 L3 点头的自动放行）
 
-> 2026-09-15 · 若兰 🌸 · 状态：**P0 + P1 + P2 接线已交付（默认关闭）**> 模块：判定钩子 `a2a-bridge-uac.js` · 工具箱 `a2a-uac-toolkit.js` · CLI `scripts/uac-*.js`
+> 2026-09-15 · 若兰 🌸 · 状态：**P0 + P1 + P2 接线 + P3 可运营（默认关闭）**
+> 模块：判定钩子 `a2a-bridge-uac.js` · 工具箱 `a2a-uac-toolkit.js` · **可观测性 `a2a-uac-observability.js`（P3）** · CLI `scripts/uac-*.js`
 > 关联：`csb-security` 的 `lib/authz/uac.js`（签发/验签底座）· `docs/a2a-bridge-rfc-draft-2026-09-09.md`
 
 ---
@@ -151,7 +152,7 @@ node tests/bridge-core.test.js           # 回归 29/29
 | P0 | 判定钩子 + 信封字段定义 + 单测（不接线） | ✅ |
 | P1 | 签发/登记 CLI + 工具箱 + 单测 | ✅ |
 | P2 | `handleInbound()` 接线（**`A2A_BRIDGE_UAC=on` 才生效**）+ 灰度 | ✅ 接线完成（灰度中） |
-| P3 | 撤销/审计查询/指标 | ⏳ |
+| P3 | 撤销/审计查询/指标 | ✅ 2026-09-25 交付（见 §12） |
 
 **默认关闭**：环境变量 `A2A_BRIDGE_UAC` 非 `on` 时，`handleInbound` **完全不提供** `ctx.checkUAC` → 行为与今天一致。
 
@@ -190,4 +191,82 @@ node scripts/uac-issue.js --agent 若兰 --agents 小虾 --scopes shell --ttl 30
   `uac_scope_insufficient` / `no_capabilities_declared` / `capability_not_allowed` / `rate_exceeded` / `policy_disabled`。
 
 ---
-_相关：#L3-CONFIRM-UNAUTHORIZED-CHECKLIST.md · TRUST-EVIDENCE-WIRING.md_
+
+## 12. P3 · 撤销 / 审计查询 / 指标（2026-09-25）
+
+> 口径与验收见 `docs/UAC-P3-PLAN.md`（一澜 2026-09-25 拍板三点：not_hit 全量落账 ✅ / 发起侧签发台账 ✅ / 指标先只做本地 CLI ✅）。
+
+### 12.1 新增事件（全部进信任账本，**中性不计分**）
+
+| action | 何时写 | 写入方 |
+|---|---|---|
+| `delegate_auto_approved` | 命中免确认（P2 既有） | `a2a-bridge-core.js` |
+| `delegate_uac_not_hit` | 🆕 **带 UAC 但未放行**（**仅信封确实带 UAC 时才记**） | `a2a-bridge-core.js` |
+| `uac_policy_changed` | 🆕 登记/撤销/删除/开关 | `scripts/uac-policy.js` |
+| `uac_issued` | 🆕 签发台账（jti/sub/allowed_agents/scopes/exp） | `scripts/uac-issue.js` |
+
+**诚实边界**：
+- 账上**不写** token / 私钥 / 公钥全文 / 策略全文（验收 A9）；detail 为一行 `k=v`，便于正则解析与人工核对
+- 三个新 action 不在 `csb-security` 的 ACTIONS 表 ⇒ 按「未知动作：留痕不计分」落账（**不影响信任等级**）。若要给它们语义化 `kind`，需动 csb-security ACTIONS 表 —— P3 不做（避免跨仓协议面变更）
+- `not_hit` 只在**带 UAC** 时记 ⇒ M2 里 `no_uac` 几乎不会出现在账本（除非中途改策略导致 `policy_disabled`）
+
+### 12.2 撤销（用得更细）
+
+```bash
+# 整人吊销（保留登记，可再 add 恢复）
+node scripts/uac-policy.js revoke  --peer 小虾 --reason "越界"
+# [P3] 只撤某一项能力（登记保留，白名单收窄）
+node scripts/uac-policy.js revoke  --peer 小虾 --capability test --reason "test 不再需要"
+node scripts/uac-policy.js remove  --peer 小虾 --reason "不再合作"
+node scripts/uac-policy.js disable --reason "临时停用"
+```
+
+- **即时生效**：判定钩子**按请求读策略**（无进程内缓存）⇒ 撤完下一次判定即 `peer_revoked` / `capability_not_allowed`，**不需重启**
+- 所有变更**写账**（`uac_policy_changed`，含 before/after）
+- 与原草案的一处**差异**：草案 §6 曾定「`revoke` 必须 `--reason`」，落地改为**建议**（未填仅告警）——避免与既有文档示例不兼容
+- ⚠️ `--capability` 是 P3 新增用法；**老写法（不带 `--capability`）行为不变**
+
+### 12.3 审计查询（只读）
+
+```bash
+node scripts/uac-audit.js --since 2026-09-20 --peer 小虾 --result not_hit --reason uac_invalid
+node scripts/uac-audit.js --all --limit 20 --json      # 含全部账本条目（非 UAC 事件也看）
+```
+
+- 默认只看 **UAC 相关事件**（4 类）；`--all` 才看全部账本
+- 输出附 `chainValid`（哈希链校验）与 `signed`（是否签名）
+- **只读**：查询前后账本文件 sha256 不变（验收 A6，有单测钉死）
+
+### 12.4 指标（只描述，不参与判定）
+
+```bash
+node scripts/uac-metrics.js --days 7
+node scripts/uac-metrics.js --since 2026-09-23 --until 2026-09-25 --json
+```
+
+| 指标 | 口径 |
+|---|---|
+| M1 自动放行率 | `auto_approved ÷ (auto_approved + not_hit)` —— **分母写死 = 带 UAC 的判定** |
+| M2 未命中原因分布 | `reason` 码表以 `a2a-bridge-uac.js` 为准 |
+| M3 每 peer 用量 | 次数 + （有 rate 策略时）用量比 |
+| M4 按日趋势 | < 3 天标 `insufficient`（不编趋势） |
+| M5 变更/签发计数 | 按 op 分组 |
+
+> BR-12：取不到 → `N/A` / `null`，**不写 0 冒充**。
+
+### 12.5 P3 验收与单测
+
+```bash
+node tests/uac-p3.test.js              # 34 例（A2/A3/A4/A5/A6/A9 + 粒级撤销 + 变更留痕）
+node tests/bridge-uac.test.js          # 17
+node tests/bridge-uac-toolkit.test.js  # 21
+node tests/bridge-core.test.js         # 29
+node tests/trust-evidence.test.js      # 26（含一条**修掉的历史红测**，见下）
+```
+
+- ✅ **顺带修掉一条长期红测**：`tests/trust-evidence.test.js`「L3 超时 → 不记」与 09-18 若辰的修复（超时记**中性** `confirm_timeout`，不归咎发起方）不一致——测试未同步，属陈旧断言，已按代码意图改正
+- ⚠️ **与本改动无关的环境依赖测试**（在干净树上同样不通过，已核）：`tests/bridge-confirm.test.js`（轮询实时确认存储，超时）、`tests/bridge-l3-workbuddy.test.js`（需 WorkBuddy 环境）
+
+---
+
+_相关：#L3-CONFIRM-UNAUTHORIZED-CHECKLIST.md · TRUST-EVIDENCE-WIRING.md · UAC-P3-PLAN.md_
