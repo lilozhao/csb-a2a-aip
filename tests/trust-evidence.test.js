@@ -226,7 +226,8 @@ testAsync('L3 用户显式拒绝 → user_declined（中性）', async () => {
   assert.strictEqual(recorded[0].action, 'user_declined');
   assert.strictEqual(t.ledger.entries[0].polarity, POLARITY.NEUTRAL, '拒绝必须中性');
 });
-testAsync('L3 超时 → 不记（系统未得答复，不归咎发起方）', async () => {
+testAsync('L3 超时 → 记中性 confirm_timeout（系统未得答复，不归咎发起方）', async () => {
+  const t = fresh();
   const recorded = [];
   await bridge.handleInbound(
     { delegation: { type: 'execute', scope: 'write', target: '写入今日 memory 文件' }, parts: [{ text: 'hi' }] },
@@ -235,10 +236,18 @@ testAsync('L3 超时 → 不记（系统未得答复，不归咎发起方）', a
       getTrustLevel: async () => 'L3',
       confirmL3: async () => ({ ok: false, timedOut: true }),
       inject: async () => ({}),
-      recordEvidence: async (evt) => recorded.push(evt),
+      recordEvidence: async (evt) => {
+        recorded.push(evt);
+        return t._safeCall('record', [{ subject: evt.subject, action: evt.action, evidence: evt.evidence, actor: evt.actor }]);
+      },
     },
   );
-  assert.strictEqual(recorded.length, 0, '超时不应记为拒绝');
+  // [2026-09-25 修] 原断言为 recorded.length===0 —— 与 09-18 若辰的修复不一致：
+  //   超时不再记 user_declined，而是记**中性** confirm_timeout（不归咎发起方）。测试未同步，长期红着。
+  assert.strictEqual(recorded.length, 1, '超时应只记一条（confirm_timeout）');
+  assert.strictEqual(recorded[0].action, 'confirm_timeout', '超时不得记为 user_declined');
+  assert.strictEqual(t.ledger.entries[0].action, 'confirm_timeout');
+  assert.strictEqual(t.ledger.entries[0].polarity, POLARITY.NEUTRAL, '超时必须中性（不归咎发起方）');
 });
 testAsync('未装配 recordEvidence → 委托照常完成，不报错（老部署兼容）', async () => {
   const r = await bridge.handleInbound(
