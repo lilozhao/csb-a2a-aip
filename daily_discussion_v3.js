@@ -370,8 +370,8 @@ function generateCommunityPost(today, topics, results, threadId) {
 async function postToCommunity(title, content) {
   const communityUrl = 'https://csbc.lilozkzy.top';
   
-  // 读取身份配置
-  const identityPath = path.join(__dirname, 'identity.json'); // [2026-09-09] 路径动态化
+  // 读取身份配置（[明澈 P2 · 2026-10-02] env 优先，与 server_v2-v5/adapters 一致）
+  const identityPath = process.env.A2A_IDENTITY_PATH || path.join(__dirname, 'identity.json');
   let identity;
   try {
     identity = JSON.parse(fs.readFileSync(identityPath, 'utf8'));

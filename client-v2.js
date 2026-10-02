@@ -386,19 +386,25 @@ async function chat(agentUrl, message, context = {}) {
 // ============================================
 
 function getLocalSender() {
+  // [明澈原则 P2「身份不许有默认值」· 2026-10-02] 缺身份 → 抛错，不得静默兜底假身份。
+  // 身份来源优先级：A2A_IDENTITY_PATH（env，与 server_v2-v5/adapters 一致）→ __dirname/identity.json
+  const identityPath = process.env.A2A_IDENTITY_PATH || path.join(__dirname, 'identity.json');
+  let identity;
   try {
-    const identityPath = path.join(__dirname, 'identity.json');
-    if (fs.existsSync(identityPath)) {
-      const identity = JSON.parse(fs.readFileSync(identityPath, 'utf8'));
-      return {
-        name: identity.name || '若兰',
-        emoji: identity.emoji || '🌸',
-      };
+    if (!fs.existsSync(identityPath)) {
+      throw new Error(`identity 文件不存在（${identityPath}）`);
     }
+    identity = JSON.parse(fs.readFileSync(identityPath, 'utf8'));
   } catch (e) {
-    console.warn('[Client] 加载 identity.json 失败:', e.message);
+    throw new Error(`[Client] 加载 identity 失败（${identityPath}），无法确定 sender 身份: ${e.message}`);
   }
-  return { name: '若兰', emoji: '🌸' };
+  if (!identity || !identity.name) {
+    throw new Error(`[Client] ${identityPath} 缺少必填字段 name，拒绝使用默认身份`);
+  }
+  return {
+    name: identity.name,
+    emoji: identity.emoji || '',
+  };
 }
 
 async function getAgentCard(agentUrl) {

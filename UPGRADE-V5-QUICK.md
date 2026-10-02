@@ -16,6 +16,9 @@
    cd /home/node/.openclaw/workspace
    git clone https://gitee.com/lilozhao/csb-a2a-aip.git（若已存在则 git pull）
 2. 保留自己的身份配置：identity.json / config/（从旧目录拷贝过来）
+   ⚠️ 身份名现已要求显式声明：在 .env 里设 A2A_AGENT_NAME=你的名字（与 identity.json 的 name 一致）；
+      未设则回退读 identity.json 的 name，两者皆无会启动失败。旧变量 CDP_NAME 仍兼容。
+      🔗 跨库一致性：若本实例还装了 csb-security 等库，各库 .env 的 A2A_AGENT_NAME 必须一致。
 3. 安装依赖：npm install
 4. 停止旧服务，用 v5 启动：./start-v5.sh（或 node server_v5.js）
 5. 更新相关脚本路径：

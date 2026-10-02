@@ -251,12 +251,15 @@ test('验收用例4：用户拒绝写委托 → user_declined，不执行', asyn
 });
 
 test('验收用例5：等级不足（L1 发 write）→ trust_insufficient', async () => {
+  const actions = [];
   const r = await handleInbound(
     { delegation: { type: 'execute', scope: 'write', target: 'x' } },
-    mkCtx({ getTrustLevel: async () => 'L1' })
+    mkCtx({ getTrustLevel: async () => 'L1', recordEvidence: async (e) => { actions.push(e && e.action); } })
   );
   assert.strictEqual(r.kind, 'rejected');
   assert.strictEqual(r.receipt.receipt.result.reason, REASON.TRUST_INSUFFICIENT);
+  // [明澈 P1 · 2026-10-02] 拒绝必须计分：trust_insufficient 应落账
+  assert.ok(actions.includes(REASON.TRUST_INSUFFICIENT), '信任不足拒绝应落账，实得 ' + JSON.stringify(actions));
 });
 
 test('验收用例6：被委托方主会话拒绝（T4 拒绝权）→ target_refused', async () => {
@@ -287,12 +290,15 @@ test('验收用例7：桥接不可用 → degraded + 降级事件留痕 + fallba
 
 test('信封非法 → rejected + envelope_invalid（不查信任不注入）', async () => {
   let injected = false;
+  const actions = [];
   const r = await handleInbound(
     { delegation: { type: 'bogus', scope: 'write', target: 'x' } },
-    mkCtx({ inject: async () => { injected = true; } })
+    mkCtx({ inject: async () => { injected = true; }, recordEvidence: async (e) => { actions.push(e && e.action); } })
   );
   assert.strictEqual(injected, false);
   assert.strictEqual(r.receipt.receipt.result.reason, REASON.ENVELOPE_INVALID);
+  // [明澈 P1 · 2026-10-02] 拒绝必须计分：envelope_invalid 应落账
+  assert.ok(actions.includes(REASON.ENVELOPE_INVALID), '信封非法拒绝应落账，实得 ' + JSON.stringify(actions));
 });
 
 // ============================================

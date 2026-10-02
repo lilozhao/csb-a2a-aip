@@ -40,6 +40,20 @@ CSB-A2A-AIP 是碳硅契（Carbon-Silicon Bond）协议的 A2A 通信层实现�
 
 ## 快速开始
 
+> ⚠️ **第一步必须先确定身份名**
+>
+> 本仓库遵循「**身份不许有默认值**」原则（明澈 P2）：A2A 服务启动时**必须能取到身份名**，
+> 否则**拒绝启动**。身份名有**两个来源，且必须一致**：
+>
+> 1. **环境变量 `A2A_AGENT_NAME`（推荐 / 安装时必填）** —— 写在 `.env` 里
+> 2. identity 文件（`identity.json`）里的 `name` 字段（历史原因保留）
+>
+> 两者都给且不一致时也会拒绝启动（防身份漂移）。详见下方「配置身份」。
+>
+> 🔗 **跨库一致性（重要）**：若同一实例还装了其他 CSB 库（如 `csb-security`），
+> **这些库的 `.env` 里的 `A2A_AGENT_NAME` 必须是同一个值**。否则会出现"A2A 以 A 名注册、
+> security 以 B 名签 AID"→ 信任链撕裂。启动时会做 best-effort 提醒。
+
 ```bash
 # 克隆
 git clone https://gitee.com/lilozhao/csb-a2a-aip.git
@@ -48,9 +62,13 @@ cd csb-a2a-aip
 # 安装依赖
 npm install
 
-# 配置身份
+# ① 配置环境变量（**必做**）：复制模板并填身份名
+cp .env.example .env
+#   编辑 .env，把 A2A_AGENT_NAME 改成你的 Agent 名
+
+# ② 配置身份文件
 cp identity.example.json identity.json
-# 编辑 identity.json 填入你的 Agent 信息
+#   编辑 identity.json，name 字段必须与上面的 A2A_AGENT_NAME 完全一致
 
 # 启动（v5）
 ./start-v5.sh
@@ -60,7 +78,22 @@ node server_v5.js
 
 ## 配置
 
-身份配置 `identity.json`：
+### 身份名（安装第一步 · 必填）
+
+在 `.env` 中声明：
+
+```bash
+# .env（不入库）
+A2A_AGENT_NAME=你的Agent名
+```
+
+- **`A2A_AGENT_NAME`** —— 标准变量名（优先）
+- `CDP_NAME` —— 历史兼容名（仍可用，但会打印 deprecation 提示，建议迁移）
+- 若两者都没设，则回退读 identity 文件的 `name`；**三者全无 → 拒绝启动**（默认拒绝匿名）
+
+> ⚠️ 本值必须与 identity 文件的 `name` 一致，否则启动时报错并退出。
+
+### 身份文件 `identity.json`
 
 ```json
 {
@@ -71,6 +104,25 @@ node server_v5.js
   "personality": "性格特点"
 }
 ```
+
+> 说明：`name` 因历史原因保留；运行时以 `A2A_AGENT_NAME` 为准，两处不一致会被校验拦下。
+
+### 🔗 跨库一致性（装了多个 CSB 库时必读）
+
+同一实例若安装了**多个** CSB 库（例如 `csb-a2a-aip` + `csb-security` + `csb-memory` …），
+每个库可能各有自己的 `.env`。这时：
+
+> **所有库的 `.env` 里的 `A2A_AGENT_NAME` 必须填写同一个值。**
+
+原因：身份名是**一个实例的单一身份**，不是每个库一个。若不一致，会出问题：
+
+| 场景 | 后果 |
+|------|------|
+| A2A 以「若兰」注册，security 以「ruolan」签 AID | 注册表看到的身份 ≠ 信任链里的身份 → **信任链撕裂** |
+| 某个库改了名、另一个忘改 | 跨库握手/授权对不上，排障困难 |
+
+**实践建议**：每个库的 `.env` 都只写 `A2A_AGENT_NAME=同一个值`；
+`server_v5.js` 启动时会做 **best-effort 跨库提醒**（检测到同目录下 csb-security 时对比身份名）。
 
 ## A2A 网络
 

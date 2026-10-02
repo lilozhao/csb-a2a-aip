@@ -28,7 +28,8 @@ const AGENTS = {
 const ORDER = ['ruolan', 'axuan', 'jeason', 'mingde'];
 
 // ===== LLM 配置 =====
-const identity = JSON.parse(fs.readFileSync(path.join(__dirname, 'identity.json'), 'utf8'));
+// [明澈 P2 · 2026-10-02] 身份路径走 env（A2A_IDENTITY_PATH）优先，与 server_v2-v5/adapters 一致
+const identity = JSON.parse(fs.readFileSync(process.env.A2A_IDENTITY_PATH || path.join(__dirname, 'identity.json'), 'utf8'));
 const LLM = identity.llm || {};
 
 // ===== 飞书推送 =====

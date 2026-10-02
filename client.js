@@ -11,21 +11,29 @@ const path = require('path');
 const { logConversation } = require('./log_conversation');
 
 // 加载本地 identity.json 获取 sender 信息
+// [明澈原则 P2「身份不许有默认值」· 2026-10-02]
+// 缺身份时**不得静默返回假身份**（此前硬编码兜底「若兰」=
+// 任何实例都能冒充若兰发消息且不报错，错身份比空身份更危险）。改为抛错，由调用方处置。
+// 身份来源优先级：A2A_IDENTITY_PATH（env，与 server_v2-v5/adapters 一致）→ __dirname/identity.json
 function getLocalSender() {
+  const identityPath = process.env.A2A_IDENTITY_PATH || path.join(__dirname, 'identity.json');
+  let identity;
   try {
-    const identityPath = path.join(__dirname, 'identity.json');
-    if (fs.existsSync(identityPath)) {
-      const identity = JSON.parse(fs.readFileSync(identityPath, 'utf8'));
-      return {
-        name: identity.name || '未知智能体',
-        emoji: identity.emoji || '🤖',
-        url: identity.a2a_url || `http://localhost:${identity.port || 3100}`
-      };
+    if (!fs.existsSync(identityPath)) {
+      throw new Error(`identity 文件不存在（${identityPath}）`);
     }
+    identity = JSON.parse(fs.readFileSync(identityPath, 'utf8'));
   } catch (e) {
-    console.warn('[Client] 加载 identity.json 失败:', e.message);
+    throw new Error(`[Client] 加载 identity 失败（${identityPath}），无法确定 sender 身份: ${e.message}`);
   }
-  return { name: '若兰', emoji: '🌸', url: 'http://localhost:3100' };
+  if (!identity || !identity.name) {
+    throw new Error(`[Client] ${identityPath} 缺少必填字段 name，拒绝使用默认身份`);
+  }
+  return {
+    name: identity.name,
+    emoji: identity.emoji || '',
+    url: identity.a2a_url || (identity.port ? `http://localhost:${identity.port}` : 'http://localhost:3100')
+  };
 }
 
 /**

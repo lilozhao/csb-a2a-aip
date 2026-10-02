@@ -19,6 +19,10 @@ data/demo/private-key.pem
 .env
 .env
 .env.*
+# 第三方 csb-aip/ 子目录一律不入仓（其自带 .env.example 无需收录）
+csb-aip/
+# 例外：仅根目录模板可入仓（占位值，无秘密；先例 instance.env.example）
+!.env.example
 *.pem
 *.key
 

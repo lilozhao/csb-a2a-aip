@@ -23,7 +23,9 @@ const llmRouter = require('./llm-router.js');
 const MEMORY_DIR = process.env.A2A_DATA_DIR
   ? path.join(process.env.A2A_DATA_DIR, 'memory', 'a2a-memories')
   : path.join(__dirname, "..", "memory", "a2a-memories");
-const IDENTITY_PATH = path.join(__dirname, 'identity.json');
+// [明澈原则 P2「身份不许有默认值」· 2026-10-02] 身份来源与 server_v2-v5/adapters 一致：
+//   A2A_IDENTITY_PATH 优先，缺省才回落 __dirname/identity.json（此前硬编码，多实例会读错身份）。
+const IDENTITY_PATH = process.env.A2A_IDENTITY_PATH || path.join(__dirname, 'identity.json');
 
 // 确保记忆目录存在
 if (!fs.existsSync(MEMORY_DIR)) {

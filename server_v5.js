@@ -59,8 +59,40 @@ let knownAgents = [];
 try { knownAgents = JSON.parse(fs.readFileSync(path.join(__dirname, 'known-agents.json'), 'utf8')); } catch {}
 
 // ===== 配置 =====
-const identityPath = process.env.A2A_IDENTITY_PATH || path.join(__dirname, 'identity.json');
-const identity = JSON.parse(fs.readFileSync(identityPath, 'utf8'));
+// [明澈 P2「身份不许有默认值」· 2026-10-02] 身份名与文件统一走 a2a-identity（A2A_AGENT_NAME 优先，
+//   CDP_NAME 兼容回退，缺失/不一致均拒绝启动）。identity 文件的其余字段照旧使用。
+const { resolveIdentity } = require('./a2a-identity');
+let resolved;
+try {
+  resolved = resolveIdentity();
+} catch (e) {
+  console.error('❌ [A2A] 身份校验失败，拒绝启动：', e.message);
+  process.exit(1);
+}
+const identityPath = resolved.path;
+const identity = resolved.file;
+// 以 env 为准覆盖 name（identity.json 里保留 name 仅为历史兼容；两处不一致时 resolveIdentity 已拦）
+identity.name = resolved.name;
+console.log(`[A2A] 🪪 身份：${resolved.name}（来源：${resolved.nameSource}）`);
+
+// [明澈 P2 · 2026-10-02 一澜补充] 跨库一致性：同一实例若同时装了 csb-security，
+// 其身份名（A2A_AGENT_NAME）必须与本库一致，否则信任链会撕裂（As A2A、B security 各自为政）。
+// 这里做 best-effort 提醒（不阻断启动，以免未装 security 的实例受影响）。
+try {
+  const secAid = path.join(__dirname, '..', 'csb-security', 'lib', 'identity', 'aid.js');
+  if (fs.existsSync(secAid)) {
+    const sec = require(secAid);
+    if (typeof sec.identityNameFromEnv === 'function') {
+      const secName = sec.identityNameFromEnv();
+      if (secName && secName !== resolved.name) {
+        console.warn(`[A2A] ⚠️ 跨库身份名不一致：csb-a2a-aip="${resolved.name}" vs csb-security="${secName}"`
+          + ' —— 请对齐各库 .env 里的 A2A_AGENT_NAME（否则信任链会撕裂）。');
+      }
+    }
+  }
+} catch (e) {
+  console.warn('[A2A] 跨库身份一致性检查跳过：', e.message);
+}
 const port = process.env.A2A_PORT || identity.port || 3100;
 const A2A_VERSION = '5.0.0';
 

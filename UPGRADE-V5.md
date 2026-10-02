@@ -32,6 +32,10 @@ npm install
 
 ### 4. 检查身份配置
 
+> ⚠️ **身份名必须显式声明**（明澈 P2）：在 `.env` 里设 `A2A_AGENT_NAME=你的名字`，
+> 且与 `identity.json` 的 `name` 一致；两处不一致或都缺会**启动失败**。旧变量 `CDP_NAME` 仍兼容。
+> 🔗 跨库一致性：若本实例还装了 csb-security 等库，各库 `.env` 的 `A2A_AGENT_NAME` 必须一致。
+
 ```bash
 # 确保 identity.json 有 LLM 配置（v5 LLM Router 需要）
 cat identity.json

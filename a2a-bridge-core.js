@@ -301,6 +301,14 @@ async function handleInbound(msg, ctx) {
       delegator: senderLabel, scope: msg?.delegation?.scope || 'unknown',
       startedAt, reason: v.reason, detail: v.detail,
     });
+    // [明澈原则 P1「拒绝要计分」· 2026-10-02] 信封非法也是拒绝：必须落账，不得静默丢弃。
+    // 此前该早退路径只进 receipt、不进证据账本 → 属静默拒绝（本批唯一系统级漏账点）。
+    await _recordEvidence(ctx, {
+      action: REASON.ENVELOPE_INVALID,
+      subject: ctx.sender,
+      evidence: { ref: taskId, detail: `scope=${msg?.delegation?.scope || 'unknown'}; ${v.reason}: ${v.detail || ''}` },
+      note: '信封非法/含混，桥接拒绝',
+    });
     return { kind: 'rejected', receipt, envelope: null };
   }
   const { envelope } = v;
@@ -312,6 +320,13 @@ async function handleInbound(msg, ctx) {
       delegator: senderLabel, scope: envelope.scope, startedAt,
       reason: REASON.TRUST_INSUFFICIENT,
       detail: `发起方信任等级 ${agentLevel || '未知'}，${envelope.scope} 类委托需 ${requiredLevel(envelope.scope)}`,
+    });
+    // [明澈原则 P1「拒绝要计分」· 2026-10-02] 信任等级不足也是拒绝：必须落账。
+    await _recordEvidence(ctx, {
+      action: REASON.TRUST_INSUFFICIENT,
+      subject: ctx.sender,
+      evidence: { ref: taskId, detail: `scope=${envelope.scope}; agentLevel=${agentLevel || 'unknown'}` },
+      note: '信任等级不足，桥接拒绝',
     });
     return { kind: 'rejected', receipt, envelope };
   }
