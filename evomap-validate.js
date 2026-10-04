@@ -21,7 +21,7 @@ const pkgPath = path.join(root, 'package.json');
 assert(fs.existsSync(pkgPath), 'package.json 存在');
 if (fs.existsSync(pkgPath)) {
   const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-  assert(pkg.version === '5.0.0', `版本为 5.0.0（实际 ${pkg.version}）`);
+  assert(pkg.version === '5.0.1', `版本为 5.0.1（实际 ${pkg.version}）`);
 }
 
 // 2. 核心模块存在

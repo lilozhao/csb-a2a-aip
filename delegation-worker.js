@@ -21,6 +21,22 @@ const { execSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
+// [2026-10-04 若兰] 委托审计改落本地（原 `POST ${REGISTRY}/audit` 是幽灵端点，registry.js 从未实现）。
+// 复用同仓 a2a-bridge-audit（JSON Lines 本地留痕），不丢审计信息；不可用时静默不阻业务。
+let bridgeAudit = null;
+try { bridgeAudit = require('./a2a-bridge-audit'); } catch (e) { bridgeAudit = null; }
+async function recordDelegateAudit(evt) {
+  if (!bridgeAudit || typeof bridgeAudit.recordDegradeEvent !== 'function') return;
+  try {
+    await bridgeAudit.recordDegradeEvent({
+      phase: 'delegate',
+      reason: evt.action,
+      fallback: evt.result,
+      extra: { from: evt.from, to: evt.to, detail: evt.detail },
+    });
+  } catch (e) { /* 审计失败不阻业务 */ }
+}
+
 const REGISTRY = process.env.REGISTRY_URL || config.getRegistry('local');
 const MY_NAME = process.env.AGENT_NAME || '阿轩 🔧';
 const POLL_INTERVAL = process.env.POLL_INTERVAL || 15000; // 15秒
@@ -92,8 +108,8 @@ async function checkDelegations() {
         if (ctx) {
           console.log(`[委托] 检测到 ${type} 任务:`, original.substring(0, 100));
           
-          // 记录审计
-          await httpPost(`${REGISTRY}/audit`, {
+          // 记录审计（本地）
+          await recordDelegateAudit({
             action: `delegate.${type}`,
             from: msg.sender || 'unknown',
             to: MY_NAME,
@@ -106,7 +122,7 @@ async function checkDelegations() {
             const result = await handler.execute({ ...ctx, forumUrl: 'https://csbc.lilozkzy.top', content: original });
             console.log(`[委托] ✅ ${type} 执行成功:`, JSON.stringify(result).substring(0, 100));
             
-            await httpPost(`${REGISTRY}/audit`, {
+            await recordDelegateAudit({
               action: `delegate.${type}`,
               from: msg.sender || 'unknown',
               to: MY_NAME,
@@ -115,7 +131,7 @@ async function checkDelegations() {
             });
           } catch (e) {
             console.error(`[委托] ❌ ${type} 执行失败:`, e.message);
-            await httpPost(`${REGISTRY}/audit`, {
+            await recordDelegateAudit({
               action: `delegate.${type}`,
               from: msg.sender || 'unknown',
               to: MY_NAME,

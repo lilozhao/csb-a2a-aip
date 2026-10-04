@@ -10,7 +10,7 @@ const config = require('./config/loader');
  *   ✅ identity.llm 兜底 (兼容所有框架)
  *   ✅ 上下文生成器 (a2a-context-generator.js)
  *
- * 版本: 5.0.0 (A2A v0.6 + 分层提示词 v1) | 2026-07-24
+ * 版本: 5.0.1 (A2A v0.6 + 分层提示词 v1) | 2026-07-24
  */
 
 const express = require('express');
@@ -94,7 +94,7 @@ try {
   console.warn('[A2A] 跨库身份一致性检查跳过：', e.message);
 }
 const port = process.env.A2A_PORT || identity.port || 3100;
-const A2A_VERSION = '5.0.0';
+const A2A_VERSION = '5.0.1';
 
 // ===== 注册表配置 =====
 const REGISTRY_URL = process.env.A2A_REGISTRY_URL || config.getRegistry('local');
