@@ -102,9 +102,15 @@ class A2AStandardAPI {
     // 归一化 IPv4-mapped IPv6（::ffff:172.28.0.5 → 172.28.0.5）
     let v4 = ip;
     if (v4.startsWith('::ffff:')) v4 = v4.slice(7);
-    return v4 === '127.0.0.1' || v4 === '::1' || v4 === '0.0.0.0'
-      || v4 === '172.28.0.1' || v4.startsWith('172.28.')   // Docker 内网段
-      || v4.startsWith('127.');
+    // 本容器回环
+    if (v4 === '127.0.0.1' || v4 === '::1' || v4.startsWith('127.')) return true;
+    // Docker 内网 Agent 段（172.28.0.2+）；**排除网关 172.28.0.1**（宿主机入口，非 Agent）
+    const m = v4.match(/^172\.28\.0\.(\d+)$/);
+    if (m) {
+      const last = parseInt(m[1], 10);
+      return last >= 2 && last <= 255;
+    }
+    return false;
   }
 
   _tasksToken() {
