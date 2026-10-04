@@ -6,6 +6,7 @@
  */
 
 const http = require('http');
+const crypto = require('crypto');
 const https = require('https');
 const path = require('path');
 const { URL } = require('url');
@@ -90,6 +91,54 @@ class A2AStandardAPI {
    * 设置任务处理函数 (解决 ProcessTask 桩问题)
    */
   setTaskHandler(fn) { this._externalHandler = fn; }
+
+  // ================= /tasks 鉴权（2026-10-04 · 一澜授权）=================
+  // 背景：agent-card 声明 authentication.schemes=['bearer']，但 /tasks 读端点
+  //   实际无鉴权（今朝 2026-10-04 反馈：“名片写 bearer，实际谁扫到端口都能读”）。
+  // 方案 A：**内网免鉴权 + 外部（非内网）必须带 bearer**——内网 Agent 互读不断，外部被拦。
+  // 密钥：A2A_TASKS_TOKEN 优先，回退 A2A_GATEWAY_TOKEN（不新增 env 即可用）。
+  _isInternalIp(ip) {
+    if (!ip) return false;
+    // 归一化 IPv4-mapped IPv6（::ffff:172.28.0.5 → 172.28.0.5）
+    let v4 = ip;
+    if (v4.startsWith('::ffff:')) v4 = v4.slice(7);
+    return v4 === '127.0.0.1' || v4 === '::1' || v4 === '0.0.0.0'
+      || v4 === '172.28.0.1' || v4.startsWith('172.28.')   // Docker 内网段
+      || v4.startsWith('127.');
+  }
+
+  _tasksToken() {
+    return process.env.A2A_TASKS_TOKEN || process.env.A2A_GATEWAY_TOKEN || '';
+  }
+
+  // 返回 true = 放行；false = 已回 401（调用方直接 return）
+  _checkTasksAuth(req, res) {
+    const ip = (req.socket && req.socket.remoteAddress) || '';
+    // 内网直接放行
+    if (this._isInternalIp(ip)) return true;
+
+    const configured = this._tasksToken();
+    if (!configured) {
+      // 未配密钥：fail-safe——外部拒绝（不静默放行），内网不受影响
+      res.status(401).json({ error: 'Unauthorized', message: 'Bearer token required for external access (A2A_TASKS_TOKEN/A2A_GATEWAY_TOKEN not set)' });
+      return false;
+    }
+
+    const hdr = req.headers['authorization'] || '';
+    const provided = hdr.startsWith('Bearer ') ? hdr.slice(7).trim() : '';
+    // 常量时间比较（防时序攻击）
+    let ok = false;
+    try {
+      const a = Buffer.from(provided);
+      const b = Buffer.from(configured);
+      ok = a.length === b.length && crypto.timingSafeEqual(a, b);
+    } catch { ok = false; }
+    if (!ok) {
+      res.status(401).json({ error: 'Unauthorized', message: 'Valid Bearer token required for external access to /tasks' });
+      return false;
+    }
+    return true;
+  }
 
   // ================= 路由注册 =================
 
@@ -352,11 +401,13 @@ class A2AStandardAPI {
   // ================= REST 端点 =================
 
   _handleRESTGetTask(req, res) {
+    if (!this._checkTasksAuth(req, res)) return;
     const r = this._getTask({ taskId: req.params.id, historyLength: req.query.historyLength });
     if (r.error) return res.status(404).json(r);
     res.json(r);
   }
   _handleRESTListTasks(req, res) {
+    if (!this._checkTasksAuth(req, res)) return;
     res.json(this._listTasks({
       contextId: req.query.contextId, state: req.query.state,
       includeArtifacts: req.query.includeArtifacts === 'true',
@@ -365,6 +416,7 @@ class A2AStandardAPI {
     }));
   }
   _handleRESTCancel(req, res) {
+    if (!this._checkTasksAuth(req, res)) return;
     const r = this._cancelTask({ taskId: req.params.id, reason: req.body?.reason });
     if (r.error) return res.status(r.error === 'TaskNotFoundError' ? 404 : 400).json(r);
     res.json(r);
