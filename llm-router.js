@@ -74,7 +74,10 @@ register('openclaw', async (identity, systemPrompt, userMessage, options = {}) =
           const data = JSON.parse(body);
           const content = data.choices?.[0]?.message?.content?.trim() ||
                           data.choices?.[0]?.message?.reasoning_content?.trim();
-          if (content) { resolve(content); return; }
+          // [2026-10-03 若兰修复] gateway 空答复（主会话上下文撑爆）不能当成功——
+          //   落地到下一适配器（360/本地诚实兜底），避免把空话当成"若兰的回复"。
+          if (content && !/^No response from OpenClaw\.?$/i.test(content)) { resolve(content); return; }
+          if (content) { console.warn('[LLM-Router] OpenClaw 空答复(主会话上下文可能过载)→落下一适配器'); resolve(null); return; }
           const alt = data.response || data.text || data.content;
           if (alt) { resolve(alt.trim()); return; }
           console.error('[LLM-Router] OpenClaw 返回格式异常:', body.substring(0, 150));
@@ -326,8 +329,11 @@ register('local', async (identity, systemPrompt, userMessage, options = {}) => {
 });
 
 // ── 自动选择适配器 ────────────────────────────────────────────
-const DEFAULT_ADAPTER_ORDER = ['direct', 'openclaw', 'hermes', 'openai', 'local'];
-// 优化(2026-08-30):direct(identity.llm)优先——本机直连本地/百炼,跳过无效适配器;未配置时自动 fallthrough
+// [2026-10-03 若兰修复] openai 提到 openclaw 之前——它每次都想强答,会把主通道盖掉。
+// [2026-10-03 若兰修复2] 实测 360(openai) 抢在 openclaw 前面把 owner 消息用通用模板回了;
+//   且 gateway 主会话上下文常撑到截断→empty。故:direct(百炼) → openclaw(gateway
+//   +空答复兜底) → openai(360) → hermes → local。openai 只作真兜底,不再抢答。
+const DEFAULT_ADAPTER_ORDER = ['direct', 'openclaw', 'openai', 'hermes', 'local'];
 
 /**
  * 核心调用函数：根据配置自动选择适配器
