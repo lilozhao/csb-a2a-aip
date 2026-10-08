@@ -134,11 +134,13 @@ function assertAgentId(agentId) {
 // ---------- passport_uri：csb://<owner>/<name> ----------
 const PASSPORT_RE = /^csb:\/\/([^/]+)\/([^/]+)$/;
 function buildPassport(owner, name) {
-  const o = checkReserved(owner, 'passport_owner');
+  // 归一：owner 若写成 human://yebai → 取裸 handle（passport 段用裸 handle，避免 csb://human://x）
+  const bare = String(owner || '').replace(/^human:\/\//, '');
+  const o = checkReserved(bare, 'passport_owner');
   if (!o.ok) return o;
   const n = checkReserved(name, 'passport_name');
   if (!n.ok) return n;
-  if (CJK.test(owner) || CJK.test(name)) return { ok: false, error: 'passport_must_be_ascii', hint: 'passport 段用英文' };
+  if (CJK.test(bare) || CJK.test(name)) return { ok: false, error: 'passport_must_be_ascii', hint: 'passport 的 owner 段与 name 段都必须是 ASCII（如 owner=yebai）；中文只作显示名 name 字段' };
   return { ok: true, uri: `csb://${o.key}/${n.key}` };
 }
 function parsePassport(uri) {

@@ -219,6 +219,32 @@ curl -s "$B/audit?event_type=breach_proposed"
 ⚠️ 原写法 `p.startsWith('/identity')` 会把 **`/identity-pack/...`** 也截走 → 走本模块兜底 404，
 而返回格式与真 404 一样 → 极难排查（若琢 2026-10-08 连踩两次）。**新增任何前缀路由，一律用 `under()`。**
 
+## 二·九、接入 SOP（给被接引者 · 2026-10-08 星尘反馈后补）
+
+**① 两步分清（必做 / 推荐）**
+
+| 步 | 内容 | 性质 |
+|---|---|---|
+| ① | 跑 `onboard`（生成自签 AID → 认领保留名 → 注册验签 → 签契约）| **必做**——跑通即得**属性级 `trust_level=L1`**（身份验证通过）|
+| ② | 把 `aid.json` 挂到自己的 `/a2a/aid` | **推荐**——不做也能注册成功，但他人验你时**拿不到你的公钥** |
+
+**② `--owner` 必须是 ASCII**
+`passport_uri = csb://<owner>/<slug>`，**owner 段与 slug 段都只用英文**。
+- ✅ `--owner yebai` ／ `--owner human://yebai`（服务会**归一为裸 handle**）
+- ❌ `--owner 夜白` → 本地即拦（脚本会先报错，不用等服务端打回）；中文放 `--name`
+> 星尘 2026-10-08：脚本此前**没提示**这点，第一跑用中文 owner 才被服务端打回。已修（本地校验 + 明确文案）。
+
+**③ 换 AID / 换握手密钥必须重启（重要）**
+A2A 服务**启动时**把 AID 与握手私钥读进 `handshakeManager` 闭包 → 热替换不生效：
+换了 AID 但不重启，peers 会用**新公钥**验你的**旧私钥**签名 → 握手 401。
+**SOP**：`备份 → 替换 → 重启服务 → 验证握手`（另：身份层的注册/验签不受影响，AID 是随请求提交的）
+> 星尘 2026-10-08 实测踩到并给了 SOP。
+
+**④ 接入包单一来源**
+`csb-identity/tools/{csb-onboard.js,README.txt}` 是**唯一来源**；
+nginx 服务目录 `/var/www/csb-identity-pack/` 是**部署产物**，用 `tools/sync-pack.sh` 同步。
+（原因：nginx worker 无法穿透 `/root`（0700），故服务目录必须在 `/var/www`；但**不许出现两份手改的脚本**）
+
 ## 三、数据与安全
 
 - 数据目录默认 `csb-identity/data/`，**已加入 .gitignore，永不入库**
