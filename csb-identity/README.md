@@ -79,12 +79,13 @@ curl -s $B/identity               # 已注册身份列表（初始 count=0）
 curl -s $B/audit/verify           # {"valid":true,...}
 ```
 
-### 6. 跑测试（三条，都自带，无需额外依赖）
+### 6. 跑测试（四条，都自带，无需额外依赖）
 
 ```bash
 node csb-identity/test/test-core.js         # 模块级：agent_id/保留字/AID验签/防重放/covenant/breach/不可删 → 41 通过
 node csb-identity/test/test-integration.js  # 集成级：真起 registry.js + 公网保护 + 写者锁 → 24 通过
 node csb-identity/test/test-connections.js  # 连接分级：默认/设定/粗粒度/揭示/防手滑/breach 联动 → 24 通过
+node csb-identity/test/test-humans.js       # 人类标识：登记/唯一/治理门/跨命名空间互斥/self 联动 → 19 通过
 ```
 > test-integration 会自己起进程、跑完自杀，**不碰生产端口**。
 
@@ -154,6 +155,30 @@ curl -s "$B/audit?event_type=breach_proposed"
 **历史**：每条变更写入 `history`（`from/to/by/why/sig`）并进审计哈希链。
 
 **待接缝**：`blocked` 的**执行**在 A2A 传输层（身份层只出判定，可查），尚未接。
+
+## 二·七、人类标识 human_handle（2026-10-08 · 知微 v1 + 硅隐拍板）
+
+**为什么**：身份层的 owner 指向"人"，但人一直没有 ID；`connection_level.self` 指不到人，
+"一个人拥有多个 agent（舰队）"也表达不出来。
+
+**决策（H1–H6）**：
+- **H1 = B 独立命名空间**（变体）：`human_uri = human://<handle>`；
+  **passport 的 owner 段用裸 handle**（`csb://yuan/mingde`）——**`human://` 是完全限定形式**，两者同一个 handle（避免 `csb://human://yuan/x` 双 scheme）
+- **H2 = 现在不上人的密钥**（登记为主；`pubkey` 留位；C = D2 A→B 的升级路径）
+- **H3 = 以 human_handle 为锚**（⚠️ 但"舰队"是 **agent 自报集合**，不是主人确认过的）
+- **H4 = 假名默认**（不暴露真身份；真身份绑定可选、非默认）
+- **H5 = 与 agent name 同规则**（复用同一张保留表/归一化）+ **跨命名空间同名互斥**
+- **H6 = 不自动迁移**旧 `owner` 串（新增 `owner_handle` 引用，旧值留 `owner_raw`）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/human/register` | 登记（**保留 handle 须治理令牌**——H2 下无法验证归属）|
+| GET | `/human/{handle}` | 读（**假名视图**）|
+| GET | `/human` | 列表 |
+| PUT | `/human/{handle}/key` | **留位**（H2=C 启用后绑定人公钥）→ 现返回 501 |
+
+**互斥规则**：人的 handle 不得与在册 agent 显示名同名（反之亦然）→ 防"拿人的身份冒充 agent 名"。
+**诚实标注**：D2=A 下 `human_handle` 与 agent 一样是**声明（TOFU）**，不是"证明"；`AID.owner` 由 **agent 自签** ⇒ 当前语义是"**该 agent 声称属于该人**"，**不是**该人确认。冒名 owner 在 C 之前**可能**（缓解：保留表 + 互斥 + 可 suspend + 未来 C 可验）。
 
 ## 三、数据与安全
 

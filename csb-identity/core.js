@@ -174,6 +174,12 @@ function verifyIdentitySubmission(aidDoc, proof = {}, opts = {}) {
   if (proof.timestamp) { const r = replayGuard.checkTimestamp(proof.timestamp); if (!r.allowed) return { valid: false, error: 'ts_' + r.error }; }
   if (proof.nonce) { const r = replayGuard.checkNonce(proof.nonce); if (!r.allowed) return { valid: false, error: 'nonce_' + r.error }; }
 
+  // 4.5 跨命名空间同名互斥：agent 显示名不得与已登记的人 handle 同名（由调用方注入 humans.exists）
+  if (typeof opts.humanExists === 'function') {
+    const hk = nameKey(aidDoc.name);
+    if (hk && opts.humanExists(hk)) return { valid: false, error: 'conflicts_with_human_handle', key: hk, hint: '跨命名空间同名互斥（防冒名）' };
+  }
+
   // 5. 保留字：显示名 + passport（保留名 = 本人可认领，他人不可复用）
   let reservedClaimed = false;
   const nameChk = checkReserved(aidDoc.name, 'name');

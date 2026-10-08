@@ -17,6 +17,7 @@ const path = require('path');
 const crypto = require('crypto');
 const S = require('./core.js');
 const { createConnectionStore } = require('./connections.js');
+const { createHumanStore } = require('./humans.js');
 const csb = require('../../csb-security/lib/index.js');
 
 const HERE = __dirname;
@@ -112,6 +113,7 @@ function createIdentityHandler(opts = {}) {
   const auditQuery = new csb.AuditQuery(audit);
   const breach = new S.BreachRegistry({ log: audit }); // 复用同一本审计账（不再另开 breach-log）
   const conn = createConnectionStore({ dataDir: DATA_DIR, log }); // 连接分级（跟主体走）
+  const humans = createHumanStore({ dataDir: DATA_DIR, log, nameKey: S.nameKey, checkReserved: S.checkReserved }); // 人类标识
   const jtiCache = new Set();
   const replayGuard = new csb.ReplayGuard(); // nonce / 时间戳 防重放
   const stats = { register_ok: 0, register_reject: 0, breach_proposed: 0, transitions: 0, aat_issued: 0, aat_verified: 0, rate_limited: 0 };
@@ -129,6 +131,7 @@ function createIdentityHandler(opts = {}) {
   })();
   const isWriteMethod = (m) => m === 'POST' || m === 'PUT' || m === 'DELETE';
   const PAYLOAD_LIMITS = { reason: 2000, evidence: 4000 };
+  const uriOr = (handle) => 'human://' + handle;
   /** 连接分级：属性级 trust_level（v2 §四：先只算 L1＝身份验证通过） */
   function computeTrustLevel(agentId) {
     if (!identities.has(agentId)) return { trust_level: 'L0', trust_level_source: 'unverified' };
@@ -186,7 +189,7 @@ function createIdentityHandler(opts = {}) {
 
     // 只接管自己的路径，其它放行（返回 false）
     const MINE = p === '/ready' || p === '/service/aid' || p.startsWith('/identity') || p.startsWith('/reserved') ||
-      p.startsWith('/aat') || p.startsWith('/breach') || p.startsWith('/audit') || p === '/registry/onboarding';
+      p.startsWith('/aat') || p.startsWith('/breach') || p.startsWith('/audit') || p.startsWith('/human') || p === '/registry/onboarding';
     if (!MINE) return false;
 
     // 限流（/ready 豁免）
@@ -253,7 +256,7 @@ function createIdentityHandler(opts = {}) {
       if (p === '/identity/register' && m === 'POST') {
         const b = await body();
         if (!b.aid) return send(res, 400, { ok: false, error: 'aid_required' }), true;
-        const r = S.verifyIdentitySubmission(b.aid, b.proof || {}, { owner: b.owner, passport_uri: b.passport_uri, passport_slug: b.passport_slug });
+        const r = S.verifyIdentitySubmission(b.aid, b.proof || {}, { owner: b.owner, passport_uri: b.passport_uri, passport_slug: b.passport_slug, humanExists: (k) => humans.exists(k) });
         if (!r.valid) {
           stats.register_reject++; rateLimiter.recordFailure(b.aid.agent_id || 'unknown');
           audit.append({ event_type: 'identity_register', caller_id: b.aid.agent_id || 'unknown', ip_address: ip, result: 'denied', scopes_denied: [r.error] });
@@ -319,6 +322,40 @@ function createIdentityHandler(opts = {}) {
         }), true;
       }
 
+      // ===== 人类标识 human_handle（H1=B 独立命名空间）=====
+      if (p === '/human/register' && m === 'POST') {
+        const b = await body();
+        if (!b.handle) return send(res, 400, { ok: false, error: 'handle_required' }), true;
+        if (String(b.handle).length > 200 || String(b.display_name || '').length > 200 || String(b.note || '').length > 2000) return send(res, 413, { ok: false, error: 'payload_too_long' }), true;
+        const tok = req.headers['x-admin-token'] || '';
+        const adminOk = !!ADMIN_TOKEN && tok.length === ADMIN_TOKEN.length && crypto.timingSafeEqual(Buffer.from(String(tok)), Buffer.from(ADMIN_TOKEN));
+        const key = S.nameKey(humans.handleOf(b.handle));
+        // 跨命名空间同名互斥：人的 handle 不得与在册 agent 显示名同名
+        const clash = [...identities.values()].find(x => S.nameKey(x.name) === key);
+        if (clash) {
+          audit.append({ event_type: 'human_register', caller_id: uriOr(key), ip_address: ip, result: 'denied', scopes_denied: ['conflicts_with_agent_name'] });
+          return send(res, 409, { ok: false, error: 'conflicts_with_agent_name', key, agent_id: clash.agent_id, hint: '跨命名空间同名互斥（防冒名）' }), true;
+        }
+        const r = humans.register(b, { isGovernance: adminOk });
+        audit.append({ event_type: 'human_register', caller_id: uriOr(key), ip_address: ip, result: r.ok ? 'success' : 'denied', scopes_denied: r.ok ? [] : [r.error] });
+        if (!r.ok) return send(res, r.error === 'handle_taken' ? 409 : 400, r), true;
+        return send(res, 201, { ok: true, human: humans.view(r.human), human_uri: r.human_uri }), true;
+      }
+      if (p === '/human' && m === 'GET') {
+        const all = humans.list();
+        return send(res, 200, { ok: true, count: all.length, humans: all.map(h => humans.view(h)) }), true;
+      }
+      let mh = /^\/human\/([^/]+)$/.exec(p);
+      if (mh && m === 'GET') {
+        const rec = humans.get(decodeURIComponent(mh[1]));
+        if (!rec) return send(res, 404, { ok: false, error: 'human_not_found' }), true;
+        return send(res, 200, { ok: true, human: humans.view(rec) }), true;
+      }
+      let mhk = /^\/human\/([^/]+)\/key$/.exec(p);
+      if (mhk && m === 'PUT') {
+        return send(res, 501, { ok: false, error: 'not_enabled', hint: '人的密钥绑定属 H2=C（D2 A→B 升级项），本轮未启用；humans[].pubkey 已留位' }), true;
+      }
+
       // ===== 连接分级（connection_level）：关系级，跟主体走，永不进 AID =====
       let mcl = /^\/identity\/([^/]+)\/connections$/.exec(p);
       if (mcl && m === 'GET') {
@@ -338,7 +375,7 @@ function createIdentityHandler(opts = {}) {
         return send(res, 200, { ok: true, subject_id: subject, count: out.length, exact, note: exact ? null : '默认粗粒度（collab+ / limited-）；精确值需 reveal=1 + 主体签名或治理令牌', connections: out }), true;
       }
 
-      let mcs = /^\/identity\/([^/]+)\/connections\/([^/]+)$/.exec(p);
+      let mcs = /^\/identity\/([^/]+)\/connections\/(.+)$/.exec(p); // peer 可含 '/'（如 human://yuan）
       if (mcs && m === 'GET') {
         const subject = decodeURIComponent(mcs[1]), peer = decodeURIComponent(mcs[2]);
         if (!identities.has(subject)) return send(res, 404, { ok: false, error: 'subject_not_registered' }), true;
@@ -361,6 +398,14 @@ function createIdentityHandler(opts = {}) {
         const b = await body();
         // 签名内容（v2 §八 + confirm 扩展）：JCS({subject_id, peer_id, level, source, nonce, timestamp, confirm})
         if (!b.level || !conn.isLevel(b.level)) return send(res, 400, { ok: false, error: 'bad_level', levels: conn.LEVELS }), true;
+        // peer 若为 human://<handle> → 强制 peer_kind=human 且须已登记且 active
+        let peerKind = b.peer_kind === 'human' ? 'human' : 'agent';
+        if (String(peer).startsWith('human://')) {
+          peerKind = 'human';
+          const hrec = humans.get(peer);
+          if (!hrec) return send(res, 404, { ok: false, error: 'human_not_found', handle: humans.handleOf(peer) }), true;
+          if (hrec.status !== 'active') return send(res, 409, { ok: false, error: 'human_not_active', status: hrec.status }), true;
+        }
         if (!b.nonce || !b.timestamp) return send(res, 400, { ok: false, error: 'proof_required' }), true;
         const tsChk = replayGuard.checkTimestamp(b.timestamp);
         if (!tsChk.allowed) return send(res, 401, { ok: false, error: 'ts_' + tsChk.error }), true;
@@ -384,7 +429,7 @@ function createIdentityHandler(opts = {}) {
           const adminOk = !!ADMIN_TOKEN && tok.length === ADMIN_TOKEN.length && crypto.timingSafeEqual(Buffer.from(String(tok)), Buffer.from(ADMIN_TOKEN));
           if (!adminOk) return send(res, 409, { ok: false, error: 'peer_under_effective_breach', hint: '被 breach 生效的 agent，升级需治理放行（X-Admin-Token）' }), true;
         }
-        const r = conn.put(subject, peer, { level: b.level, source: payload.source, evidence: b.evidence, by: subject, why: b.why || null, sig: b.sig, peer_kind: b.peer_kind });
+        const r = conn.put(subject, peer, { level: b.level, source: payload.source, evidence: b.evidence, by: subject, why: b.why || null, sig: b.sig, peer_kind: peerKind });
         audit.append({ event_type: 'connection_set', caller_id: subject, callee_id: peer, ip_address: ip, result: r.ok ? 'success' : 'denied', scopes_granted: r.ok ? [payload.source + ':' + r.from + '->' + r.to] : [], scopes_denied: r.ok ? [] : [r.error] });
         return send(res, r.ok ? 200 : 400, r), true;
       }
