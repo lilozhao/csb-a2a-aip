@@ -70,9 +70,27 @@ const cleanup = () => { try { srv && srv.kill('SIGKILL'); } catch {} };
   const r1 = await send(PEER_NAME, '你好，这是一条应当被拒的消息');
   t(/已拒绝|黑名单/.test(r1), 'B（已 blocked）发来 → 被拒收：' + r1.slice(0, 30) + '…');
 
-  sec('2 · 未 blocked 的对方 → 正常走（ack 回执）');
+  sec('2 · 未 blocked 的对方 → 正常走');
   const r2 = await send('自检C', '你好，正常消息');
-  t(!/已拒绝|黑名单/.test(r2) && /收到/.test(r2), 'C（无记录=limited）→ 正常回执');
+  t(!/已拒绝|黑名单/.test(r2), 'C（无记录=limited）→ 不被拦');
+
+  sec('2.5 · 回执文案必须用**本实例自己**的名字（硅隐 2026-10-08 反馈的错位应答）');
+  const srv2 = spawn('node', [path.join(ROOT, 'server_v5.js')], {
+    cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, A2A_PORT: String(PORT + 1), A2A_IDENTITY_PATH: path.join(TMP, 'identity.json'), A2A_DATA_DIR: path.join(TMP, 'registry2'), A2A_IDENTITY_DATA: ID_DATA, A2A_REGISTRY_URL: 'http://127.0.0.1:9', A2A_HEARTBEAT_INTERVAL_MS: '3600000', A2A_AUTO_REPLY: 'ack' }
+  });
+  for (let i = 0; i < 60; i++) { try { if ((await fetch(`http://127.0.0.1:${PORT + 1}/health`)).status === 200) break; } catch {} await new Promise(r => setTimeout(r, 250)); }
+  const ack = await (async () => {
+    const r = await fetch(`http://127.0.0.1:${PORT + 1}/a2a/json-rpc`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'message/send', params: { message: { role: 'user', parts: [{ text: '你好' }] }, metadata: { sender: { name: '自检C' } } }, id: '9' })
+    });
+    const j = await r.json(); const tk = j.result && j.result.task;
+    return (((tk && tk.history) || []).filter(m => m.role === 'ROLE_AGENT')).map(m => (m.parts || []).map(p => p.text).join('')).join('');
+  })();
+  srv2.kill('SIGKILL');
+  t(ack.includes('自检A'), 'ack 文案用本实例名「自检A」：' + ack.slice(0, 24) + '…');
+  t(!ack.includes('明德'), '**ack 文案不含「明德」**（不再冒用他人名义）');
 
   sec('3 · 未注册 subject → 跳过判定（不误拦）');
   t(/blocked 判定跳过|未在身份层注册/.test(out) === false || true, '（本用例 subject 已注册，跳过日志不出现属正常）');

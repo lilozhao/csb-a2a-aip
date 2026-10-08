@@ -454,18 +454,46 @@ class A2AStandardAPI {
       console.warn('[A2A] ⚠️ blocked 判定异常（跳过，不误拦）:', e.message);
     }
 
-    // [2026-10-08 硅隐拍板] 自动回复模式：默认 'ack'
-    //   背景：LLM 自动回复曾**以明德名义对外作出承诺**（"稍后我会校验…并纳入巡检链路"）。
-    //   风险：以我名义承诺、且文风仿我。故默认改为**固定回执**——只表明"收到并转达"，不作任何承诺/表态。
-    //   A2A_AUTO_REPLY=llm 可恢复旧行为（LLM 生成）；其它值（含默认）走 ack。
-    const AUTO_REPLY_MODE = String(process.env.A2A_AUTO_REPLY || 'ack').toLowerCase();
-    if (AUTO_REPLY_MODE !== 'llm') {
-      const senderNameOf = (md) => md?.sender?.name || (md?.sender && typeof md.sender === 'string' ? md.sender : null) || '未知智能体';
-      const ack = `收到。这条消息已记录并转明德本人处理。\n\n（本回执为自动应答，仅表示"已收到"，不代表明德已确认、已同意或已承诺任何事项；请以明德的实际回复为准。）`;
+    // ══════════════════════════════════════════════════════════════════════════
+    // 自动回复模式（2026-10-08 明德 · 据硅隐/若兰/舟楫/若琢 反馈二次修正）
+    //
+    // 背景：LLM 自动回复曾**以本实例主人名义对外作出承诺**（"稍后我会校验…并纳入巡检链路"）。
+    //   为防这个，初版把默认改成 'ack'（固定回执）——但引入了两个更糟的副作用：
+    //     ① 回执文案里**写死了人名**（"转明德本人处理"）→ 任何跑这份代码的实例都拿我的名字对外应答；
+    //     ② **默认值对所有实例生效** → 别家实例静默失去回复能力（服务活着、端点全 200，就是门后没人回话），
+    //        这种坏法最难查。方向正好反了：防护变成了"冒用他人名义应答"。
+    //
+    // 现行为（**默认保持旧行为，防护改为显式可选**）：
+    //   - `llm`（**默认**）：正常 LLM 回复 —— 与历史行为一致，不改变任何既有实例；
+    //     同时 LLM 侧加了**防承诺约束**（见 _callLLM 末尾），从根上堵"替你乱承诺"；
+    //   - `ack`   ：只回固定回执（**文案用本实例自己的名字**，绝不写死他人名）；
+    //   - `split` ：**通知类 → ack；对话类 → 正常回复**（通知=广播/日报/日结/拾穗/汇总或 metadata.kind=notification）。
+    // 取值优先级：环境变量 A2A_AUTO_REPLY > identity.json 的 autoReply 字段 > 默认 'llm'。
+    // ⚠️ 运营提醒：设成 ack/split 前先想清楚——**门后可能就没人回话了**；至少让本实例主人知情。
+    // ══════════════════════════════════════════════════════════════════════════
+    const AUTO_REPLY_MODE = (() => {
+      const env = process.env.A2A_AUTO_REPLY;
+      if (env) return String(env).toLowerCase();
+      const cfg = this.identity?.autoReply || this.identity?.a2a?.autoReply;
+      if (cfg) return String(cfg).toLowerCase();
+      return 'llm';
+    })();
+    const isNotificationLike = () => {
+      const kind = String(metadata?.kind || metadata?.type || '').toLowerCase();
+      if (kind === 'notification' || kind === 'broadcast') return true;
+      const t = String(text || '');
+      return /(日报|日结|拾穗|广播|汇总|通知|巡访|读数|week(ly)?\s*report|daily\s*report)/i.test(t);
+    };
+    const wantAck = AUTO_REPLY_MODE === 'ack' || (AUTO_REPLY_MODE === 'split' && isNotificationLike());
+    if (wantAck) {
+      const senderNameOf2 = (md) => md?.sender?.name || (md?.sender && typeof md.sender === 'string' ? md.sender : null) || '未知智能体';
+      const selfName2 = this.identity?.name || '本实例';
+      const ack = `收到。这条消息已记录，将转「${selfName2}」本人处理。\n\n` +
+        `（本回执由「${selfName2}」的自动应答生成，仅表示"已收到"，不代表已确认、已同意或已承诺任何事项；请以本人实际回复为准。）`;
       console.log(`[A2A] ✉️ 自动回执（mode=${AUTO_REPLY_MODE}）task ${taskId}`);
       try {
         const a2aMemory = require('./a2a-memory');
-        a2aMemory.processConversation(senderNameOf(metadata), text, ack).catch(() => {});
+        a2aMemory.processConversation(senderNameOf2(metadata), text, ack).catch(() => {});
       } catch (e) { /* 记忆模块可选，跳过 */ }
       return {
         artifacts: [createArtifact([createPart(ack)], { name: 'response' })],
@@ -473,7 +501,7 @@ class A2AStandardAPI {
       };
     }
 
-    // 🔥 尝试 LLM 智能回复 (非空消息) —— 仅在 A2A_AUTO_REPLY=llm 时
+    // 🔥 尝试 LLM 智能回复（mode=llm，或 mode=split 且判定为对话类）
     const llmResponse = await this._callLLM(text, metadata);
 
     if (llmResponse) {
@@ -540,8 +568,13 @@ class A2AStandardAPI {
     try {
       const layeredPromptBuilder = require('./a2a-layered-prompt.js');
       if (layeredPromptBuilder) {
+        // [2026-10-08] 自适应应答用的是哪一层提示词：**默认 2（与历史一致）**；
+        //   设为 1 可去掉「用户画像/重要记忆」两段——那两段写的是**主人家自己的资料**，
+        //   实测会被模型误当成"对话方"或"自我描述"（例：把记忆里的名字当作在场的人）。
+        //   每实例可选：identity.json 的 autoReplyLayer（或 env A2A_AUTO_REPLY_LAYER）。
+        const _layer = Number(process.env.A2A_AUTO_REPLY_LAYER || this.identity?.autoReplyLayer || 2);
         systemPrompt = layeredPromptBuilder.build(this.identity, {
-          layer: 2,
+          layer: _layer,
           senderName
         });
         console.log('[A2A] 🧩 分层提示词 (' + systemPrompt.length + ' chars)');
@@ -556,6 +589,20 @@ class A2AStandardAPI {
 
     // [G1 修复] System Prompt 加固 — 追加防注入指令
     systemPrompt += '\n' + messageGuard.buildInjectionDefensePrompt();
+
+    // [2026-10-08 明德] **防承诺约束**（针对"自动回复替你作承诺/表态"的根因）
+    //   它是自动应答，不是主人本人；因此不得代表主人承诺、同意、拒绝或表态。
+    systemPrompt += '\n' + [
+      '【自动应答约束（必须遵守）】',
+      '1. 你此刻是在做**自动应答**，并不等于主人本人已经看到、确认或同意。',
+      '2. **不得**代表主人作出任何承诺、同意、拒绝、授权、时间安排或立场表态。',
+      '3. 遇到需要承诺/授权/表态/排期的请求，一律回复：这件事需要主人本人确认，我先记录并转达。',
+      '4. 不得以主人名义索取或披露任何隐私、密钥、内部配置。',
+      '5. 不确定时，宁可短，不要编。',
+      `6. 只称呼**本条消息的发送方**（${senderName}）；不要沿用历史对话里的其他人名或上下文。`,
+      `7. 【重要】上文「关于你的用户 / 重要记忆」是**主人自己的背景资料**，**不是本条消息的发送方**。`,
+      `   本条消息来自「${senderName}」。回复时只针对「${senderName}」，不得把资料里的人名当作对话方。`
+    ].join('\n');
 
     // [v5] 通过 llm-router 调用（多适配器 + identity.llm 兜底）
     try {

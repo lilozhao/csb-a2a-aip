@@ -259,6 +259,11 @@ nginx 服务目录 `/var/www/csb-identity-pack/` 是**部署产物**，用 `tool
 
 **附录一（已并入）**：通告补一句"挂 aid.json 前先确认 `/a2a/aid` 返回的是**身份层那份**（ASCII agent_id）"——见 `tools/README.txt`。
 
+> ⚠️ **跑这份代码的实例注意**：A2A 进站消息有**自动回复开关**（`A2A_AUTO_REPLY`）。
+> 默认 `llm`（与历史一致）；`ack` 只回固定回执、**门后等于没人回话**；`split` 通知走 ack、对话走正常回复。
+> **别再踩这两个坑**：① 固定回执**不许写死他人名字**（用 `identity.name`）② **默认值别改坏别人**（防护要显式可选）。
+> 详见 **`docs/a2a-auto-reply.md`**。
+
 ## 三、数据与安全
 
 - 数据目录默认 `csb-identity/data/`，**已加入 .gitignore，永不入库**
