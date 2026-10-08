@@ -834,6 +834,22 @@ app.get('/v1/ard/explore', (req, res) => {
   res.json({ results: results.slice(0, 50), total: results.length });
 });
 
+// ===== 身份接入包分发（/lan-pack/* · 内网专用）· 内网部署适配 =====
+// [2026-10-08 若琢] 单一来源 = csb-identity/tools/（与明德的部署产物 /var/www/csb-identity-pack 同源，
+//   不另存一份手改脚本）。公网侧用 nginx 静态服务（路径 /identity-pack/）；内网注册表没有 nginx，
+//   故由本进程分发同一份文件——**路径刻意用 /lan-pack/ 与公网区分**，避免两边拿混。
+// 好处：/lan-pack 不以 /identity 开头 → 天然不会被身份层中间件（按 /identity 前缀匹配）截走。
+//   （若将来改回 /identity-pack/* 这种同前缀路径，必须把本路由注册到身份层中间件之前。）
+app.get('/lan-pack/:file', (req, res) => {
+  const name = path.basename(String(req.params.file || ''));
+  const TOOLS_DIR = path.join(__dirname, 'csb-identity', 'tools');
+  const fp = path.join(TOOLS_DIR, name);
+  if (!fp.startsWith(TOOLS_DIR + path.sep) || !fs.existsSync(fp) || !fs.statSync(fp).isFile()) {
+    return res.status(404).json({ ok: false, error: 'not_found', path: '/lan-pack/' + name });
+  }
+  res.sendFile(fp);   // Express 按扩展名给 content-type（.js / .txt）
+});
+
 // ===== CSB 身份层 · 阶段二（AID / AAT / covenant / breach / 审计）=====
 // 2026-10-08 硅隐拍板：挂在**公网 register 门口**（agent 从这里进来，就在这接入身份）。
 // ⚠️ 唯一写者约束：身份数据是无锁文件（identities/claims/audit），**只能有一个进程写**。
