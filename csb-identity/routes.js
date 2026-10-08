@@ -52,6 +52,33 @@ function createIdentityHandler(opts = {}) {
   const saveIdentities = () => { const o = {}; for (const [k, v] of identities) o[k] = v; fs.writeFileSync(F.identities, JSON.stringify({ updated_at: new Date().toISOString(), identities: o }, null, 2)); };
   S.useClaimsFile(F.claims);
 
+  // ---- 唯一写者锁（防两个进程同写一份数据 → 互相覆盖 / 断链）----
+  // 说明：identities/claims/audit 均为无锁文件，**只能一个进程写**。
+  // 若本数据目录已被另一个存活进程占用 → 抛错；挂载方(try/catch)会**降级不挂载**，
+  // 既不会双写，也不会让 A2A/register 主服务崩掉。陈旧锁用 PID 存活探测自动清除。
+  const LOCK_FILE = path.join(DATA_DIR, '.writer.lock');
+  (function acquireWriterLock() {
+    try {
+      if (fs.existsSync(LOCK_FILE)) {
+        let o = {};
+        try { o = JSON.parse(fs.readFileSync(LOCK_FILE, 'utf8')); } catch {}
+        if (o.pid && o.pid !== process.pid) {
+          let alive = false;
+          try { process.kill(o.pid, 0); alive = true; } catch {}
+          if (alive) {
+            const e = new Error(`数据目录已被 pid ${o.pid} 占用（${o.dir || ''}）——拒绝成为第二个写者`);
+            e.code = 'DATA_DIR_LOCKED';
+            throw e;
+          }
+        }
+      }
+      fs.writeFileSync(LOCK_FILE, JSON.stringify({ pid: process.pid, since: new Date().toISOString(), dir: DATA_DIR }, null, 2));
+    } catch (e) {
+      if (e.code === 'DATA_DIR_LOCKED') throw e;
+      log('WARN', '写者锁建立失败（继续运行）:', e.message);
+    }
+  })();
+
   // ---- 服务身份 ----
   const desiredAgentId = opts.serviceAgentId || `csb-identity@${opts.host || 'localhost'}:${opts.port || 3100}`;
   const desiredEndpoint = `http://${opts.host || 'localhost'}:${opts.port || 3100}/a2a/json-rpc`;

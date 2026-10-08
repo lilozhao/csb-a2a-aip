@@ -76,7 +76,13 @@ const cleanup = () => { try { srv && srv.kill('SIGKILL'); } catch {} };
   t((await call('POST', '/identity/' + encodeURIComponent(agentId) + '/covenant', cov)).status === 200, '签契约 → 200');
   r = await call('POST', '/aat/issue', { caller_agent_id: agentId, capabilities: ['chat'] });
   t(r.status === 201 && !!r.json.token, '签 AAT → 201');
-  t((await call('POST', '/aat/verify', { token: r.json.token, expect_audience: agentId })).json.valid === true, '验 AAT → valid');
+  t((await call('POST', '/aat/verify', { token: r.json.token, expect_audience: agentId })).json.valid === true, '验 AAT → valid（不带 agent_id，用服务公钥）');
+  // ⚠️ 若兰 2026-10-08 提醒：首轮"带 agent_id"的路径出过 bad_signature，须显式覆盖
+  const selfTok = csb.createAAT({ privateKey: kp.privateKey, issuer: agentId, audience: 'csb-identity-test', capabilities: ['chat'] });
+  r = await call('POST', '/aat/verify', { token: selfTok, agent_id: agentId, expect_audience: 'csb-identity-test' });
+  t(r.status === 200 && r.json.valid === true, '验 AAT → valid（**带 agent_id**，用该 agent 的 AID 公钥）');
+  r = await call('POST', '/aat/verify', { token: selfTok, agent_id: 'nobody@x:1' });
+  t(r.status === 404 && r.json.error === 'agent_not_registered', 'agent_id 未注册 → 404');
 
   sec('3 · 公网最小保护（写入口）');
   r = await call('POST', '/breach', { agentId: 'bad@9.9.9.9:3100', reason: '冒充' });
@@ -103,6 +109,19 @@ const cleanup = () => { try { srv && srv.kill('SIGKILL'); } catch {} };
   t(r.status === 403 && r.json.error === 'bad_admin_token', '错令牌 → 403');
   r = await call('POST', '/breach/' + bid + '/transition', { to: 'effective', actor: '治理复核' }, { 'X-Admin-Token': ADMIN_TOKEN });
   t(r.status === 200 && r.json.state === 'effective', '正确令牌 → 200 effective');
+
+  sec('4.5 · 唯一写者锁（防双写 → 覆盖/断链）');
+  const srv2 = spawn('node', [path.join(ROOT, 'registry.js')], {
+    cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, A2A_DATA_DIR: path.join(TMPDIR, 'registry2'), REGISTRY_PORT: String(PORT + 1), REGISTRY_HOST: '127.0.0.1', A2A_IDENTITY_DATA: ID_DATA, A2A_FORUM_REGISTRY: 'http://127.0.0.1:9/none' }
+  });
+  let out2 = ''; srv2.stdout.on('data', d => out2 += d); srv2.stderr.on('data', d => out2 += d);
+  for (let i = 0; i < 40; i++) { try { if ((await fetch(`http://127.0.0.1:${PORT + 1}/agents`)).status === 200) break; } catch {} await new Promise(r => setTimeout(r, 250)); }
+  t(/\[IDENTITY\] ⚠️ .*未挂载/.test(out2), '第二实例（同一数据目录）→ 身份路由降级不挂载');
+  const r2i = await fetch(`http://127.0.0.1:${PORT + 1}/identity`);
+  t(r2i.status === 404, '第二实例 /identity → 404（不作第二写者）');
+  t((await fetch(`http://127.0.0.1:${PORT + 1}/agents`)).status === 200, '第二实例 register 主功能仍 200（不崩）');
+  srv2.kill('SIGKILL');
 
   sec('5 · 审计一本账');
   r = await call('GET', '/audit?event_type=breach_proposed');
