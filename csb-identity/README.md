@@ -79,11 +79,12 @@ curl -s $B/identity               # 已注册身份列表（初始 count=0）
 curl -s $B/audit/verify           # {"valid":true,...}
 ```
 
-### 6. 跑测试（两条，都自带，无需额外依赖）
+### 6. 跑测试（三条，都自带，无需额外依赖）
 
 ```bash
-node csb-identity/test/test-core.js         # 模块级：agent_id 策略/保留字/AID验签/防重放/covenant/breach/不可删   → 期望 41 通过
-node csb-identity/test/test-integration.js  # 集成级：真起 server_v5（替代端口 3059，注册表指向不可达以免污染）→ 期望 14 通过
+node csb-identity/test/test-core.js         # 模块级：agent_id/保留字/AID验签/防重放/covenant/breach/不可删 → 41 通过
+node csb-identity/test/test-integration.js  # 集成级：真起 registry.js + 公网保护 + 写者锁 → 24 通过
+node csb-identity/test/test-connections.js  # 连接分级：默认/设定/粗粒度/揭示/防手滑/breach 联动 → 24 通过
 ```
 > test-integration 会自己起进程、跑完自杀，**不碰生产端口**。
 
@@ -117,6 +118,42 @@ curl -s "$B/audit?event_type=breach_proposed"
 
 > 设计意图：**开放"提议"，收紧"生效"**。任何人都能提请违约（但要署名、可追责），
 > 但把"生效/撤销"留在治理令牌后面——避免 breach 变成武器。
+
+## 二·六、连接分级 connection_level（2026-10-08 · 知微 v2 对齐）
+
+**两个概念彻底分开**（v2 §一）：
+
+| | 属性级 `trust_level` | 关系级 `connection_level` |
+|---|---|---|
+| 含义 | agent 本身可信度 | 我视对端为何级 |
+| 载体 | AID / `GET /identity/{id}` 输出 | `data/connections/<subject>.json`（**跟主体走**）|
+| 可见 | 对外 | 默认不可见（粗粒度可查）|
+| 变化 | 低 | 高 |
+
+**关系级永不进 AID**（AID 是我签我自己的全局文档；关系是双向的）。
+**`connections` 天生分布式**：每主体一份自己的表，**不做跨主体同步**（同步会把非对称搅没）。
+
+**五级（有序）**：`blocked < limited < collab < intimate < self`，默认 `limited`。
+> `self` = 主体**承认的**主人（**声明，不是证明**，≠ AID 的 `owner` 字段）。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/identity/{subject}/connections` | 列表（**默认粗粒度** `collab+` / `limited-`）|
+| GET | `/identity/{subject}/connections/{peer}` | 单条（同上；`?reveal=1` 才给精确值）|
+| PUT | `/identity/{subject}/connections/{peer}` | 设定（**须主体签名**）|
+| GET | `/identity/{subject}` | 输出 `trust_level`（属性级，先只算 L1＝身份验证通过）|
+
+**精确值揭示**：`?reveal=1` + 主体签名（`X-Reveal-Nonce/Timestamp/Sig`，覆盖 `JCS({subject_id,peer_id,reveal,nonce,timestamp})`），或治理令牌。默认只给粗粒度。
+
+**PUT 签名**（沿用阶段二）：`JCS({subject_id, peer_id, level, source, nonce, timestamp, confirm})`，主体 AID 私钥；fail-closed。
+- **防手滑**：升至 `intimate`/`self` 须载荷内 `confirm: true`（二次确认）；**降级不需要**（安全侧）
+- 被 **effective breach** 的 agent：升级须治理放行（`X-Admin-Token`）
+
+**breach 三层联动**：`proposed` 不降级 · `effective` → **仅"举报方↔被举报方"** 自动降 `blocked`（其他对端**不连坐**）· `cleared` → 撤销自动降级（**历史不删**）。
+
+**历史**：每条变更写入 `history`（`from/to/by/why/sig`）并进审计哈希链。
+
+**待接缝**：`blocked` 的**执行**在 A2A 传输层（身份层只出判定，可查），尚未接。
 
 ## 三、数据与安全
 

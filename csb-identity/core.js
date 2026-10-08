@@ -283,6 +283,8 @@ class BreachRegistry {
       const d = e.details || {};
       if (!d.breach_id) continue;
       const rec = this.records.get(d.breach_id) || { breach_id: d.breach_id, agent_id: d.agent_id, state: null, history: [] };
+      // 记录发起人（proposed 那条的 actor 即 reporter）——供连接分级自动降级用
+      if (!rec.reporter && (d.state === 'proposed' || d.to_state === 'proposed')) rec.reporter = d.actor || d.reporter || null;
       rec.state = d.to_state || d.state || rec.state;
       rec.history.push({ seq: e.seq, at: e.timestamp, to: d.to_state || d.state, actor: d.actor || d.reporter, reason: d.reason });
       this.records.set(d.breach_id, rec);

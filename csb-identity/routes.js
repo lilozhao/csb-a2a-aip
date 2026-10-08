@@ -16,6 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const S = require('./core.js');
+const { createConnectionStore } = require('./connections.js');
 const csb = require('../../csb-security/lib/index.js');
 
 const HERE = __dirname;
@@ -110,6 +111,7 @@ function createIdentityHandler(opts = {}) {
   const audit = new csb.AuditLog({ logPath: F.audit, privateKey: SVC.privateKey, publicKey: SVC.publicKey });
   const auditQuery = new csb.AuditQuery(audit);
   const breach = new S.BreachRegistry({ log: audit }); // 复用同一本审计账（不再另开 breach-log）
+  const conn = createConnectionStore({ dataDir: DATA_DIR, log }); // 连接分级（跟主体走）
   const jtiCache = new Set();
   const replayGuard = new csb.ReplayGuard(); // nonce / 时间戳 防重放
   const stats = { register_ok: 0, register_reject: 0, breach_proposed: 0, transitions: 0, aat_issued: 0, aat_verified: 0, rate_limited: 0 };
@@ -127,6 +129,23 @@ function createIdentityHandler(opts = {}) {
   })();
   const isWriteMethod = (m) => m === 'POST' || m === 'PUT' || m === 'DELETE';
   const PAYLOAD_LIMITS = { reason: 2000, evidence: 4000 };
+  /** 连接分级：属性级 trust_level（v2 §四：先只算 L1＝身份验证通过） */
+  function computeTrustLevel(agentId) {
+    if (!identities.has(agentId)) return { trust_level: 'L0', trust_level_source: 'unverified' };
+    return { trust_level: 'L1', trust_level_source: 'identity_verified' };
+  }
+  /** 主体签名校验（揭示精确值 / 设定连接级别 共用） */
+  function verifySubjectSig(subjectId, payload, sigB64) {
+    const rec = identities.get(subjectId);
+    if (!rec) return { ok: false, error: 'subject_not_registered', hint: '先接入身份（/identity/register）' };
+    if (!sigB64) return { ok: false, error: 'signature_required' };
+    try {
+      const pub = crypto.createPublicKey({ key: rec.aid.public_key, format: 'jwk' });
+      const ok = crypto.verify(null, Buffer.from(S.jcs(payload)), pub, Buffer.from(sigB64, 'base64'));
+      return ok ? { ok: true } : { ok: false, error: 'bad_signature' };
+    } catch { return { ok: false, error: 'bad_public_key' }; }
+  }
+
   /** 校验"行为主体"签名：主体必须是已注册 agent，签名覆盖 JCS(payload) */
   function verifyActorSig(agentId, payload, sigB64) {
     const rec = identities.get(agentId);
@@ -282,8 +301,92 @@ function createIdentityHandler(opts = {}) {
       }
       let mi = /^\/identity\/([^/]+)$/.exec(p);
       if (mi && m === 'GET') {
-        const rec = identities.get(decodeURIComponent(mi[1]));
-        return rec ? send(res, 200, { ok: true, identity: { agent_id: rec.agent_id, name: rec.name, passport_uri: rec.passport_uri, reserved_claimed: rec.reserved_claimed, covenant: rec.covenant || null, aid: rec.aid } }) : send(res, 404, { ok: false, error: 'agent_not_registered' }), true;
+        const id = decodeURIComponent(mi[1]);
+        const rec = identities.get(id);
+        if (!rec) return send(res, 404, { ok: false, error: 'agent_not_registered' }), true;
+        const tl = computeTrustLevel(id);
+        const conns = conn.list(id);
+        return send(res, 200, {
+          ok: true,
+          identity: {
+            agent_id: rec.agent_id, name: rec.name, passport_uri: rec.passport_uri,
+            reserved_claimed: rec.reserved_claimed, covenant: rec.covenant || null,
+            trust_level: tl.trust_level, trust_level_source: tl.trust_level_source,   // 属性级（对外）
+            breach: breach.isBlocked(id) ? 'effective' : null,
+            connections_count: conns.length,
+            aid: rec.aid
+          }
+        }), true;
+      }
+
+      // ===== 连接分级（connection_level）：关系级，跟主体走，永不进 AID =====
+      let mcl = /^\/identity\/([^/]+)\/connections$/.exec(p);
+      if (mcl && m === 'GET') {
+        const subject = decodeURIComponent(mcl[1]);
+        if (!identities.has(subject)) return send(res, 404, { ok: false, error: 'subject_not_registered' }), true;
+        const rows = conn.list(subject);
+        const nonce = req.headers['x-reveal-nonce'], ts = req.headers['x-reveal-timestamp'], sig = req.headers['x-reveal-sig'];
+        const tok = req.headers['x-admin-token'] || '';
+        const adminOk = !!ADMIN_TOKEN && tok.length === ADMIN_TOKEN.length && crypto.timingSafeEqual(Buffer.from(String(tok)), Buffer.from(ADMIN_TOKEN));
+        let exact = adminOk;
+        if (!exact && u.searchParams.get('reveal') === '1' && nonce && ts && sig) {
+          const tsChk = replayGuard.checkTimestamp(ts);
+          const v = tsChk.allowed ? verifySubjectSig(subject, { subject_id: subject, peer_id: null, reveal: 'exact', nonce, timestamp: ts }, sig) : { ok: false, error: 'ts_' + (tsChk.error || 'bad') };
+          if (v.ok && replayGuard.checkNonce(nonce).allowed) exact = true;
+        }
+        const out = rows.map(r => ({ peer_id: r.peer_id, peer_kind: r.peer_kind, level: exact ? r.level : conn.coarse(r.level), source: r.source, updated_at: r.updated_at, exact }));
+        return send(res, 200, { ok: true, subject_id: subject, count: out.length, exact, note: exact ? null : '默认粗粒度（collab+ / limited-）；精确值需 reveal=1 + 主体签名或治理令牌', connections: out }), true;
+      }
+
+      let mcs = /^\/identity\/([^/]+)\/connections\/([^/]+)$/.exec(p);
+      if (mcs && m === 'GET') {
+        const subject = decodeURIComponent(mcs[1]), peer = decodeURIComponent(mcs[2]);
+        if (!identities.has(subject)) return send(res, 404, { ok: false, error: 'subject_not_registered' }), true;
+        const row = conn.get(subject, peer);
+        const nonce = req.headers['x-reveal-nonce'], ts = req.headers['x-reveal-timestamp'], sig = req.headers['x-reveal-sig'];
+        const tok = req.headers['x-admin-token'] || '';
+        const adminOk = !!ADMIN_TOKEN && tok.length === ADMIN_TOKEN.length && crypto.timingSafeEqual(Buffer.from(String(tok)), Buffer.from(ADMIN_TOKEN));
+        let exact = adminOk;
+        if (!exact && u.searchParams.get('reveal') === '1' && nonce && ts && sig) {
+          const tsChk = replayGuard.checkTimestamp(ts);
+          const v = tsChk.allowed ? verifySubjectSig(subject, { subject_id: subject, peer_id: peer, reveal: 'exact', nonce, timestamp: ts }, sig) : { ok: false, error: 'ts_' + (tsChk.error || 'bad') };
+          if (v.ok && replayGuard.checkNonce(nonce).allowed) exact = true;
+        }
+        return send(res, 200, { ok: true, peer_id: peer, level: exact ? row.level : conn.coarse(row.level), source: row.source, evidence: exact ? row.evidence : null, history: exact ? row.history : undefined, updated_at: row.updated_at, exact }), true;
+      }
+
+      if (mcs && m === 'PUT') {
+        const subject = decodeURIComponent(mcs[1]), peer = decodeURIComponent(mcs[2]);
+        if (!identities.has(subject)) return send(res, 404, { ok: false, error: 'subject_not_registered' }), true;
+        const b = await body();
+        // 签名内容（v2 §八 + confirm 扩展）：JCS({subject_id, peer_id, level, source, nonce, timestamp, confirm})
+        if (!b.level || !conn.isLevel(b.level)) return send(res, 400, { ok: false, error: 'bad_level', levels: conn.LEVELS }), true;
+        if (!b.nonce || !b.timestamp) return send(res, 400, { ok: false, error: 'proof_required' }), true;
+        const tsChk = replayGuard.checkTimestamp(b.timestamp);
+        if (!tsChk.allowed) return send(res, 401, { ok: false, error: 'ts_' + tsChk.error }), true;
+        const confirm = b.confirm === true;
+        const payload = { subject_id: subject, peer_id: peer, level: b.level, source: b.source === 'auto' ? 'auto' : 'manual', nonce: b.nonce, timestamp: b.timestamp, confirm };
+        const v = verifySubjectSig(subject, payload, b.sig);
+        if (!v.ok) {
+          audit.append({ event_type: 'connection_set', caller_id: subject, callee_id: peer, ip_address: ip, result: 'denied', scopes_denied: [v.error] });
+          return send(res, 403, { ok: false, ...v }), true;
+        }
+        if (!replayGuard.checkNonce(b.nonce).allowed) return send(res, 401, { ok: false, error: 'nonce_replay' }), true;
+        // 防手滑：intimate/self 属高授权，升级需 confirm=true（二次确认）
+        const cur = conn.get(subject, peer);
+        const upgrading = conn.rank(b.level) > conn.rank(cur.level);
+        if (upgrading && (b.level === 'intimate' || b.level === 'self') && !confirm) {
+          return send(res, 409, { ok: false, error: 'confirm_required', hint: '升至 intimate/self 属高授权，须在签名载荷内含 confirm:true' }), true;
+        }
+        // 被 effective breach 的 agent：须人工放行（治理令牌）才可升
+        if (upgrading && breach.isBlocked(peer)) {
+          const tok = req.headers['x-admin-token'] || '';
+          const adminOk = !!ADMIN_TOKEN && tok.length === ADMIN_TOKEN.length && crypto.timingSafeEqual(Buffer.from(String(tok)), Buffer.from(ADMIN_TOKEN));
+          if (!adminOk) return send(res, 409, { ok: false, error: 'peer_under_effective_breach', hint: '被 breach 生效的 agent，升级需治理放行（X-Admin-Token）' }), true;
+        }
+        const r = conn.put(subject, peer, { level: b.level, source: payload.source, evidence: b.evidence, by: subject, why: b.why || null, sig: b.sig, peer_kind: b.peer_kind });
+        audit.append({ event_type: 'connection_set', caller_id: subject, callee_id: peer, ip_address: ip, result: r.ok ? 'success' : 'denied', scopes_granted: r.ok ? [payload.source + ':' + r.from + '->' + r.to] : [], scopes_denied: r.ok ? [] : [r.error] });
+        return send(res, r.ok ? 200 : 400, r), true;
       }
 
       if (p === '/aat/issue' && m === 'POST') {
@@ -348,7 +451,17 @@ function createIdentityHandler(opts = {}) {
           }
         }
         const r = breach.transition(decodeURIComponent(mtr[1]), b.to, { actor: b.actor, reason: b.reason });
-        if (r.ok) stats.transitions++;
+        if (r.ok) {
+          stats.transitions++;
+          // 连接分级联动（v2 §六）：effective → 仅"举报方↔被举报方"自动降级（其他对端不连坐）
+          try {
+            const rec = breach.get(r.breach_id);
+            if (rec && rec.reporter && rec.agent_id) {
+              if (b.to === 'effective') { const d = conn.breachDowngrade(rec.reporter, rec.agent_id, r.breach_id, b.downgrade_to || 'blocked'); log('breach→conn', rec.reporter, '→', rec.agent_id, JSON.stringify(d)); }
+              if (b.to === 'cleared') { const d = conn.breachRevert(rec.reporter, rec.agent_id, r.breach_id); log('breach cleared→conn revert', JSON.stringify(d)); }
+            }
+          } catch (e) { log('WARN', 'breach→connections 联动失败:', e.message); }
+        }
         audit.append({ event_type: 'breach_transition', caller_id: b.actor || 'unknown', callee_id: r.breach_id || 'unknown', ip_address: ip, result: r.ok ? 'success' : 'denied', scopes_denied: r.ok ? [] : [r.error] });
         return send(res, r.ok ? 200 : 409, r), true;
       }
