@@ -31,6 +31,18 @@ function createConnectionStore({ dataDir, log = () => {} } = {}) {
   fs.mkdirSync(DIR, { recursive: true });
   const fileOf = (subject) => path.join(DIR, sanitize(subject) + '.json');
 
+  // 轻量缓存（mtime 失效）：避免每次读身份都全量解析该主体的关系文件（若兰 2026-10-08 反馈）
+  const cache = new Map(); // subject -> { mtimeMs, rows }
+  function loadCached(subject) {
+    const f = fileOf(subject);
+    let mtimeMs = 0;
+    try { mtimeMs = fs.statSync(f).mtimeMs; } catch { mtimeMs = 0; }
+    const hit = cache.get(subject);
+    if (hit && hit.mtimeMs === mtimeMs) return hit.rows;
+    const rows = Object.values(load(subject).rows);
+    cache.set(subject, { mtimeMs, rows });
+    return rows;
+  }
   function load(subject) {
     const f = fileOf(subject);
     if (!fs.existsSync(f)) return { subject_id: subject, updated_at: null, rows: {} };
@@ -57,11 +69,12 @@ function createConnectionStore({ dataDir, log = () => {} } = {}) {
     if (!row) return { subject_id: subject, peer_id: peer, peer_kind: 'agent', level: DEFAULT_LEVEL, source: 'default', evidence: null, history: [], updated_at: null };
     return row;
   }
-  /** 列该主体的全部关系 */
-  function list(subject) {
-    const db = load(subject);
-    return Object.values(db.rows);
-  }
+  /** 列该主体的全部关系（带缓存） */
+  function list(subject) { return loadCached(subject); }
+  /** 计数（带缓存，不重复解析） */
+  function count(subject) { return loadCached(subject).length; }
+  /** 粗粒度档位（隐私：连接数本身也是隐私——「他有多少亲密关系」） */
+  function band(n) { return n === 0 ? 'none' : (n <= 4 ? 'few' : 'many'); }
 
   /**
    * 设定级别（升级/降级）。**调用方必须先验签**（本函数只负责落库与留痕）。
@@ -110,7 +123,7 @@ function createConnectionStore({ dataDir, log = () => {} } = {}) {
     return put(reporter, target, { level: revertTo, source: 'auto', by: 'system:breach-cleared', why: 'revert ' + breachId, evidence: breachId, peer_kind: row.peer_kind });
   }
 
-  return { LEVELS, DEFAULT_LEVEL, rank, isLevel, coarse, load, save, get, list, put, breachDowngrade, breachRevert, DIR };
+  return { LEVELS, DEFAULT_LEVEL, rank, isLevel, coarse, band, load, save, get, list, count, put, breachDowngrade, breachRevert, DIR };
 }
 
 module.exports = { createConnectionStore, LEVELS, DEFAULT_LEVEL, rank, coarse, isLevel };

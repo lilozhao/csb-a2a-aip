@@ -147,8 +147,14 @@ curl -s "$B/audit?event_type=breach_proposed"
 **精确值揭示**：`?reveal=1` + 主体签名（`X-Reveal-Nonce/Timestamp/Sig`，覆盖 `JCS({subject_id,peer_id,reveal,nonce,timestamp})`），或治理令牌。默认只给粗粒度。
 
 **PUT 签名**（沿用阶段二）：`JCS({subject_id, peer_id, level, source, nonce, timestamp, confirm})`，主体 AID 私钥；fail-closed。
-- **防手滑**：升至 `intimate`/`self` 须载荷内 `confirm: true`（二次确认）；**降级不需要**（安全侧）
+- **防手滑**：**目标级别是 `intimate`/`self` 且非降级** → 须载荷内 `confirm: true`（二次确认）；
+  ⚠️ 判定是"非降级"，**不是**"upgrading"——否则"已是 self 再 PUT self（重签）"会绕过二次确认（若兰 2026-10-08 指出并已修）
+- **降级不需要 confirm**（安全侧不该设障）
 - 被 **effective breach** 的 agent：升级须治理放行（`X-Admin-Token`）
+- ⚠️ `peer_kind` **不在签名载荷内**——它由 peer URI **派生**（`human://` 开头即 human），调用方不能自报覆盖；故不可篡改
+- ⚠️ **reveal 签名是一次性的**（nonce 进 `ReplayGuard`），不可复用；列表与单条**载荷不同**（列表 `peer_id: null`），跨端点重放也不成立
+- ⚠️ **连接数也是隐私**：`GET /identity/{id}` 只给 `connections_band`（none/few/many）；
+  列表在非揭示态只给 `count_band`，**不给精确 count**（若兰 2026-10-08 反馈）
 
 **breach 三层联动**：`proposed` 不降级 · `effective` → **仅"举报方↔被举报方"** 自动降 `blocked`（其他对端**不连坐**）· `cleared` → 撤销自动降级（**历史不删**）。
 
@@ -178,6 +184,15 @@ curl -s "$B/audit?event_type=breach_proposed"
 | PUT | `/human/{handle}/key` | **留位**（H2=C 启用后绑定人公钥）→ 现返回 501 |
 
 **互斥规则**：人的 handle 不得与在册 agent 显示名同名（反之亦然）→ 防"拿人的身份冒充 agent 名"。
+
+⚠️ **保留名在两侧的差异（务必别忘）**：
+
+| | agent 侧 | human 侧（本轮）|
+|---|---|---|
+| 保留名策略 | **本人可凭公钥认领**（`isClaimedBy`）| H2 无密钥 → **一律治理登记**（`X-Admin-Token`）|
+| 原因 | 有 AID 公钥可验证归属 | 无法验证归属 → 不能放开 |
+
+⇒ **C 阶段（人的密钥 attest）上线时，必须同步给 human 侧开"本人凭公钥认领"的口子**，否则会漏（若兰 2026-10-08 提醒）。
 **诚实标注**：D2=A 下 `human_handle` 与 agent 一样是**声明（TOFU）**，不是"证明"；`AID.owner` 由 **agent 自签** ⇒ 当前语义是"**该 agent 声称属于该人**"，**不是**该人确认。冒名 owner 在 C 之前**可能**（缓解：保留表 + 互斥 + 可 suspend + 未来 C 可验）。
 
 ## 三、数据与安全

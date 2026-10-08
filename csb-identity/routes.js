@@ -308,7 +308,6 @@ function createIdentityHandler(opts = {}) {
         const rec = identities.get(id);
         if (!rec) return send(res, 404, { ok: false, error: 'agent_not_registered' }), true;
         const tl = computeTrustLevel(id);
-        const conns = conn.list(id);
         return send(res, 200, {
           ok: true,
           identity: {
@@ -316,7 +315,7 @@ function createIdentityHandler(opts = {}) {
             reserved_claimed: rec.reserved_claimed, covenant: rec.covenant || null,
             trust_level: tl.trust_level, trust_level_source: tl.trust_level_source,   // 属性级（对外）
             breach: breach.isBlocked(id) ? 'effective' : null,
-            connections_count: conns.length,
+            connections_band: conn.band(conn.count(id)), // 粗粒度：连接数本身是隐私（若兰反馈）
             aid: rec.aid
           }
         }), true;
@@ -372,7 +371,14 @@ function createIdentityHandler(opts = {}) {
           if (v.ok && replayGuard.checkNonce(nonce).allowed) exact = true;
         }
         const out = rows.map(r => ({ peer_id: r.peer_id, peer_kind: r.peer_kind, level: exact ? r.level : conn.coarse(r.level), source: r.source, updated_at: r.updated_at, exact }));
-        return send(res, 200, { ok: true, subject_id: subject, count: out.length, exact, note: exact ? null : '默认粗粒度（collab+ / limited-）；精确值需 reveal=1 + 主体签名或治理令牌', connections: out }), true;
+        // 连接数本身也是隐私（若兰 2026-10-08）：非揭示态只给档位，不给精确数
+        return send(res, 200, {
+          ok: true, subject_id: subject, exact,
+          count: exact ? out.length : undefined,
+          count_band: exact ? undefined : conn.band(out.length),
+          note: exact ? null : '默认粗粒度（collab+ / limited-；连接数只给档位）；精确值需 reveal=1 + 主体签名或治理令牌',
+          connections: out
+        }), true;
       }
 
       let mcs = /^\/identity\/([^/]+)\/connections\/(.+)$/.exec(p); // peer 可含 '/'（如 human://yuan）
@@ -420,7 +426,10 @@ function createIdentityHandler(opts = {}) {
         // 防手滑：intimate/self 属高授权，升级需 confirm=true（二次确认）
         const cur = conn.get(subject, peer);
         const upgrading = conn.rank(b.level) > conn.rank(cur.level);
-        if (upgrading && (b.level === 'intimate' || b.level === 'self') && !confirm) {
+        // 若兰 2026-10-08 反馈：高授权只需"目标级别是 intimate/self 且**非降级**"就须 confirm
+        // （原写法只看 upgrading，导致"已是 self 再 PUT self 重签"会绕过二次确认）
+        const highAuth = (b.level === 'intimate' || b.level === 'self') && !(conn.rank(b.level) < conn.rank(cur.level));
+        if (highAuth && !confirm) {
           return send(res, 409, { ok: false, error: 'confirm_required', hint: '升至 intimate/self 属高授权，须在签名载荷内含 confirm:true' }), true;
         }
         // 被 effective breach 的 agent：须人工放行（治理令牌）才可升

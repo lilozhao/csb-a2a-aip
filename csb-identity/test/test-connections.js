@@ -113,6 +113,20 @@ const cleanup = () => { try { srv && srv.kill('SIGKILL'); } catch {} };
   r = await call('GET', `/identity/${encodeURIComponent(A.id)}/connections/human:example-owner?reveal=1`, null, revealHeaders(A.privateKey, A.id, 'human:example-owner'));
   t(r.json.level === 'self', '读回 self（精确值）');
 
+  sec('6.5 · 若兰 2026-10-08 反馈：已是 self 再 PUT self 也要 confirm（补洞）');
+  r = await call('PUT', `/identity/${encodeURIComponent(A.id)}/connections/${encodeURIComponent(B.id)}`, putBody(A.privateKey, A.id, B.id, 'self', { confirm: true }));
+  t(r.status === 200 && r.json.to === 'self', '先升到 self（带 confirm）→ 200');
+  r = await call('PUT', `/identity/${encodeURIComponent(A.id)}/connections/${encodeURIComponent(B.id)}`, putBody(A.privateKey, A.id, B.id, 'self'));
+  t(r.status === 409 && r.json.error === 'confirm_required', '**再 PUT self（幂等/重置）无 confirm → 409**（原来是洞）');
+  r = await call('PUT', `/identity/${encodeURIComponent(A.id)}/connections/${encodeURIComponent(B.id)}`, putBody(A.privateKey, A.id, B.id, 'intimate'));
+  t(r.status === 200, 'self → intimate = **降级** → 不需 confirm（安全侧不设障）');
+
+  sec('6.6 · 连接数是隐私（粗粒度档位）');
+  r = await call('GET', '/identity/' + encodeURIComponent(A.id));
+  t('connections_band' in r.json.identity && !('connections_count' in r.json.identity), 'GET /identity/{id} → 只给 connections_band（不给精确数）');
+  r = await call('GET', `/identity/${encodeURIComponent(A.id)}/connections`);
+  t(r.json.exact === false && r.json.count_band && r.json.count === undefined, '列表（非揭示）→ count_band，无精确 count');
+
   sec('7 · breach effective → 只降"举报方↔被举报方"（其他对端不连坐）');
   // A 把 B 设为 collab，把 C 也设 collab
   await call('PUT', `/identity/${encodeURIComponent(A.id)}/connections/${encodeURIComponent(B.id)}`, putBody(A.privateKey, A.id, B.id, 'collab'));
