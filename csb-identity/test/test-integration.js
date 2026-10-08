@@ -110,6 +110,15 @@ const cleanup = () => { try { srv && srv.kill('SIGKILL'); } catch {} };
   r = await call('POST', '/breach/' + bid + '/transition', { to: 'effective', actor: '治理复核' }, { 'X-Admin-Token': ADMIN_TOKEN });
   t(r.status === 200 && r.json.state === 'effective', '正确令牌 → 200 effective');
 
+  sec('4.2 · /health 暴露身份挂载状态（若琢反馈：降级时外观正常，极难排查）');
+  let hl = await call('GET', '/health');
+  t(hl.status === 200 && hl.json.identity && hl.json.identity.mounted === true, '/health → identity.mounted=true（可观测）');
+
+  sec('4.3 · 路由前缀收紧（若琢反馈：/identity-pack 被 /identity 截走）');
+  const rp = await fetch(BASE + '/identity-pack/csb-onboard.js');
+  const rpText = await rp.text();
+  t(!rpText.includes('"error":"not_found"'), '/identity-pack/... 不再被身份 handler 吞（未被本模块兜底 404）');
+
   sec('4.5 · 唯一写者锁（防双写 → 覆盖/断链）');
   const srv2 = spawn('node', [path.join(ROOT, 'registry.js')], {
     cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'],
@@ -122,6 +131,22 @@ const cleanup = () => { try { srv && srv.kill('SIGKILL'); } catch {} };
   t(r2i.status === 404, '第二实例 /identity → 404（不作第二写者）');
   t((await fetch(`http://127.0.0.1:${PORT + 1}/agents`)).status === 200, '第二实例 register 主功能仍 200（不崩）');
   srv2.kill('SIGKILL');
+  t(true, '（第二实例已被杀）');
+
+  sec('4.6 · 陈旧锁接管（僵尸/pid 复用/心跳过期 → 不应卡死）');
+  const LOCKF = path.join(ID_DATA, '.writer.lock');
+  // 造一个"看起来活着但其实不是本写者"的锁：pid=1 + 伪造 starttime + 心跳过期
+  fs.writeFileSync(LOCKF, JSON.stringify({ pid: 1, starttime: 'FAKE-STARTTIME-XXXX', dir: ID_DATA, since: '2020-01-01T00:00:00.000Z', beat: '2020-01-01T00:00:00.000Z' }, null, 2));
+  const srv3 = spawn('node', [path.join(ROOT, 'registry.js')], {
+    cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, A2A_DATA_DIR: path.join(TMPDIR, 'registry3'), REGISTRY_PORT: String(PORT + 2), REGISTRY_HOST: '127.0.0.1', A2A_IDENTITY_DATA: ID_DATA, A2A_FORUM_REGISTRY: 'http://127.0.0.1:9/none' }
+  });
+  let out3 = ''; srv3.stdout.on('data', d => out3 += d); srv3.stderr.on('data', d => out3 += d);
+  for (let i = 0; i < 40; i++) { try { if ((await fetch(`http://127.0.0.1:${PORT + 2}/agents`)).status === 200) break; } catch {} await new Promise(r => setTimeout(r, 250)); }
+  t(/\[IDENTITY\] ✅/.test(out3), '陈旧锁 → **成功接管并挂载**（不再永久卡死）');
+  const h3 = await (await fetch(`http://127.0.0.1:${PORT + 2}/health`)).json();
+  t(h3.identity && h3.identity.mounted === true, '接管后 /health → identity.mounted=true');
+  srv3.kill('SIGKILL');
 
   sec('5 · 审计一本账');
   r = await call('GET', '/audit?event_type=breach_proposed');

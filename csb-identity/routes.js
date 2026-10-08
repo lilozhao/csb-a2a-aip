@@ -56,25 +56,48 @@ function createIdentityHandler(opts = {}) {
 
   // ---- 唯一写者锁（防两个进程同写一份数据 → 互相覆盖 / 断链）----
   // 说明：identities/claims/audit 均为无锁文件，**只能一个进程写**。
-  // 若本数据目录已被另一个存活进程占用 → 抛错；挂载方(try/catch)会**降级不挂载**，
-  // 既不会双写，也不会让 A2A/register 主服务崩掉。陈旧锁用 PID 存活探测自动清除。
+  // 判定"占用中"必须同时满足三条（若琢 2026-10-08 反馈：僵尸进程会让 process.kill(pid,0) 误判 → 锁永久卡死）：
+  //   ① pid 存在；② **不是僵尸**（/proc/<pid>/status State: Z）；③ starttime 与锁记录一致（防 PID 复用）；
+  //   ④ 心跳新鲜（beat 超过 STALE_MS 视为陈旧，可接管——兜底，覆盖 /proc 读不到的极端情形）。
+  // 占用 → 抛 DATA_DIR_LOCKED → 挂载方 try/catch **降级不挂载**（不双写、也不让主服务崩）。
   const LOCK_FILE = path.join(DATA_DIR, '.writer.lock');
+  const LOCK_BEAT_MS = 30 * 1000;      // 心跳间隔
+  const LOCK_STALE_MS = 5 * 60 * 1000; // 心跳超过此值 → 视为陈旧，可接管
+  function procInfo(pid) {
+    try {
+      const st = fs.readFileSync('/proc/' + pid + '/stat', 'utf8');
+      const rest = st.slice(st.lastIndexOf(')') + 2).split(' ');   // 跳过 comm（含空格/括号）
+      return { state: rest[0], starttime: rest[19] };              // 3=state, 22=starttime → rest[19]
+    } catch { return null; }
+  }
+  let lockBeatTimer = null;
   (function acquireWriterLock() {
     try {
       if (fs.existsSync(LOCK_FILE)) {
         let o = {};
         try { o = JSON.parse(fs.readFileSync(LOCK_FILE, 'utf8')); } catch {}
-        if (o.pid && o.pid !== process.pid) {
-          let alive = false;
-          try { process.kill(o.pid, 0); alive = true; } catch {}
-          if (alive) {
-            const e = new Error(`数据目录已被 pid ${o.pid} 占用（${o.dir || ''}）——拒绝成为第二个写者`);
-            e.code = 'DATA_DIR_LOCKED';
-            throw e;
-          }
+        const info = o.pid ? procInfo(o.pid) : null;
+        const beatAge = o.beat ? (Date.now() - Date.parse(o.beat)) : Infinity;
+        const samePid = o.pid === process.pid;
+        const alive = !!info && info.state !== 'Z' && (!o.starttime || String(o.starttime) === String(info.starttime));
+        const fresh = beatAge <= LOCK_STALE_MS;
+        if (!samePid && alive && fresh) {
+          const e = new Error(`数据目录已被 pid ${o.pid} 占用（${o.dir || ''}，state=${info.state}，心跳 ${Math.round(beatAge / 1000)}s 前）——拒绝成为第二个写者`);
+          e.code = 'DATA_DIR_LOCKED';
+          throw e;
         }
+        log('WARN', '接管陈旧/僵尸写者锁：', JSON.stringify({ lock: o, now: info, beatAgeMs: beatAge === Infinity ? null : beatAge }));
       }
-      fs.writeFileSync(LOCK_FILE, JSON.stringify({ pid: process.pid, since: new Date().toISOString(), dir: DATA_DIR }, null, 2));
+      const info = procInfo(process.pid) || {};
+      fs.writeFileSync(LOCK_FILE, JSON.stringify({ pid: process.pid, starttime: info.starttime || null, state: info.state || null, dir: DATA_DIR, since: new Date().toISOString(), beat: new Date().toISOString() }, null, 2));
+      // 心跳（改写 beat，避免"锁在但写者其实死了"）
+      lockBeatTimer = setInterval(() => {
+        try {
+          const cur = JSON.parse(fs.readFileSync(LOCK_FILE, 'utf8'));
+          if (cur.pid === process.pid) { cur.beat = new Date().toISOString(); fs.writeFileSync(LOCK_FILE, JSON.stringify(cur, null, 2)); }
+        } catch {}
+      }, LOCK_BEAT_MS);
+      if (lockBeatTimer.unref) lockBeatTimer.unref();
     } catch (e) {
       if (e.code === 'DATA_DIR_LOCKED') throw e;
       log('WARN', '写者锁建立失败（继续运行）:', e.message);
@@ -188,8 +211,12 @@ function createIdentityHandler(opts = {}) {
     const p = u.pathname, m = req.method, ip = clientIp(req);
 
     // 只接管自己的路径，其它放行（返回 false）
-    const MINE = p === '/ready' || p === '/service/aid' || p.startsWith('/identity') || p.startsWith('/reserved') ||
-      p.startsWith('/aat') || p.startsWith('/breach') || p.startsWith('/audit') || p.startsWith('/human') || p === '/registry/onboarding';
+    // ⚠️ 前缀必须"精确或带斜杠"（若琢 2026-10-08 反馈）：
+    //   原写法 p.startsWith('/identity') 会把 /identity-pack/... 也截走 → 走本 handler 的兜底 404，
+    //   而返回格式与真 404 一样 → 极难排查。故统一用 under()。
+    const under = (x) => p === x || p.startsWith(x + '/');
+    const MINE = p === '/ready' || p === '/service/aid' || under('/identity') || under('/reserved') ||
+      under('/aat') || under('/breach') || under('/audit') || under('/human') || p === '/registry/onboarding';
     if (!MINE) return false;
 
     // 限流（/ready 豁免）

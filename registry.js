@@ -852,10 +852,23 @@ try {
     Promise.resolve(identityHandler(req, res)).then((handled) => { if (!handled) next(); }).catch(next);
   });
   global.__identityHandler = identityHandler;
+  global.__identityStatus = { mounted: true, at: new Date().toISOString() };
   console.log('[IDENTITY] ✅ 阶段二身份路由已挂载（公网 register :' + PORT + '）');
 } catch (e) {
+  global.__identityStatus = { mounted: false, reason: e.message, code: e.code || null, at: new Date().toISOString() };
   console.warn('[IDENTITY] ⚠️ 阶段二身份路由未挂载（降级）:', e.message);
 }
+
+// 健康检查（2026-10-08 加：暴露身份路由挂载状态——若琢反馈"降级时外观完全正常，极难排查"）
+app.get('/health', (req, res) => {
+  let agentCount = 0;
+  try { agentCount = (loadRegistry().agents || []).length; } catch {}
+  res.json({
+    ok: true, service: 'a2a-registry', port: PORT, agents: agentCount,
+    identity: global.__identityStatus || { mounted: null, reason: 'not_initialized' },
+    uptime: Math.floor(process.uptime()), now: new Date().toISOString()
+  });
+});
 
 // ==================== 启动服务 ====================
 

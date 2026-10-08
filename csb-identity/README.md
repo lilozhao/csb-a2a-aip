@@ -195,6 +195,30 @@ curl -s "$B/audit?event_type=breach_proposed"
 ⇒ **C 阶段（人的密钥 attest）上线时，必须同步给 human 侧开"本人凭公钥认领"的口子**，否则会漏（若兰 2026-10-08 提醒）。
 **诚实标注**：D2=A 下 `human_handle` 与 agent 一样是**声明（TOFU）**，不是"证明"；`AID.owner` 由 **agent 自签** ⇒ 当前语义是"**该 agent 声称属于该人**"，**不是**该人确认。冒名 owner 在 C 之前**可能**（缓解：保留表 + 互斥 + 可 suspend + 未来 C 可验）。
 
+## 二·八、可观测与防呆（2026-10-08 · 若琢反馈后加固）
+
+**① `GET /health`（registry）暴露身份挂载状态**
+以前降级时"外观完全正常、只有新端点 404"，极难排查。现在：
+```json
+{ "ok": true, "service": "a2a-registry", "agents": 9,
+  "identity": { "mounted": true|false, "reason": "...", "code": "...", "at": "..." } }
+```
+**排查顺序**：`/health` 看 `identity.mounted` → 假 → 看 `reason`（通常是写者锁）。
+
+**② 写者锁判据（加固：僵尸/pid 复用/心跳）**
+`data/.writer.lock` 记录 `{pid, starttime, state, dir, since, beat}`。判定"占用中"须**同时**满足：
+1. pid 存在；
+2. **不是僵尸**（`/proc/<pid>/stat` 的 state ≠ `Z`）——否则 `process.kill(pid,0)` 会误判为存活，锁永久卡死；
+3. `starttime` 与锁记录一致（防 **PID 复用**）；
+4. `beat` 新鲜（30s 心跳；超过 5 分钟视为陈旧 → 可接管）。
+
+任一条不满足 → **接管**（并 WARN 记录接管了什么）。占用时 → 抛 `DATA_DIR_LOCKED` → **降级不挂载**（不双写、不影响 register 主服务）。
+
+**③ 路由前缀"精确或带斜杠"**
+`under(x) = p === x || p.startsWith(x + '/')`。
+⚠️ 原写法 `p.startsWith('/identity')` 会把 **`/identity-pack/...`** 也截走 → 走本模块兜底 404，
+而返回格式与真 404 一样 → 极难排查（若琢 2026-10-08 连踩两次）。**新增任何前缀路由，一律用 `under()`。**
+
 ## 三、数据与安全
 
 - 数据目录默认 `csb-identity/data/`，**已加入 .gitignore，永不入库**
