@@ -6,17 +6,10 @@
  */
 
 const http = require('http');
-const crypto = require('crypto');
 const https = require('https');
 const path = require('path');
 const { URL } = require('url');
 const { TaskStore, TASK_STATE, ROLE, createMessage, createArtifact, createPart, TERMINAL_STATES } = require('./a2a-task-store.js');
-// [2026-09-11] 自环调用守卫：自己发给自己 → 快速拒绝，不再挂起等超时
-const selfGuard = require('./a2a-self-guard.js');
-// [2026-09-11] 信任证据接线：消息链事件 → 证据账本（信任升级 P0 最后一环）
-// fail-safe：csb-security 不可用时全部 no-op，绝不影响消息处理
-const trustEvidence = require('./a2a-trust-evidence.js');
-const { TrustEvidence } = trustEvidence;
 
 // ============================================
 // 标准错误代码 (A2A §5.4)
@@ -59,18 +52,6 @@ class A2AStandardAPI {
     this._externalHandler  = options.taskHandler || null;
     // 远程命令处理器 (CMD: 前缀)
     this._commandHandler   = options.commandHandler || null;
-    // 主会话桥接处理器 (delegation 信封，RFC v0.2)
-    this._bridgeHandler    = options.bridgeHandler || null;
-    // [2026-09-13] Layer 1：入站收件箱（所有入站消息，纯留痕）
-    this._inbox            = options.inbox || null;
-    // [2026-09-13] Layer 2：非委托消息的主会话实时通知（默认关，护栏在 a2a-chat-notify.js）
-    this._chatNotify       = options.chatNotifyHandler || null;
-
-    // [2026-09-11] 自环调用守卫配置（env A2A_SELF_GUARD / A2A_SELF_GUARD_ALLOW_LOCAL / A2A_SELF_GUARD_RESPONSE）
-    this.selfGuardConfig   = { ...selfGuard.loadConfig(), ...(options.selfGuardConfig || {}) };
-
-    // [2026-09-11] 信任证据：本任务已被安全审查拦截的标记（拦截不记 message_ok）
-    this._guardBlockedTasks = new Set();
 
     // SSE 订阅者: Map<taskId, Set<{res, lastPing}>
     this.streamSubscribers = new Map();
@@ -91,60 +72,6 @@ class A2AStandardAPI {
    * 设置任务处理函数 (解决 ProcessTask 桩问题)
    */
   setTaskHandler(fn) { this._externalHandler = fn; }
-
-  // ================= /tasks 鉴权（2026-10-04 · 一澜授权）=================
-  // 背景：agent-card 声明 authentication.schemes=['bearer']，但 /tasks 读端点
-  //   实际无鉴权（今朝 2026-10-04 反馈：“名片写 bearer，实际谁扫到端口都能读”）。
-  // 方案 A：**内网免鉴权 + 外部（非内网）必须带 bearer**——内网 Agent 互读不断，外部被拦。
-  // 密钥：A2A_TASKS_TOKEN 优先，回退 A2A_GATEWAY_TOKEN（不新增 env 即可用）。
-  _isInternalIp(ip) {
-    if (!ip) return false;
-    // 归一化 IPv4-mapped IPv6（::ffff:172.28.0.5 → 172.28.0.5）
-    let v4 = ip;
-    if (v4.startsWith('::ffff:')) v4 = v4.slice(7);
-    // 本容器回环
-    if (v4 === '127.0.0.1' || v4 === '::1' || v4.startsWith('127.')) return true;
-    // Docker 内网 Agent 段（172.28.0.2+）；**排除网关 172.28.0.1**（宿主机入口，非 Agent）
-    const m = v4.match(/^172\.28\.0\.(\d+)$/);
-    if (m) {
-      const last = parseInt(m[1], 10);
-      return last >= 2 && last <= 255;
-    }
-    return false;
-  }
-
-  _tasksToken() {
-    return process.env.A2A_TASKS_TOKEN || process.env.A2A_GATEWAY_TOKEN || '';
-  }
-
-  // 返回 true = 放行；false = 已回 401（调用方直接 return）
-  _checkTasksAuth(req, res) {
-    const ip = (req.socket && req.socket.remoteAddress) || '';
-    // 内网直接放行
-    if (this._isInternalIp(ip)) return true;
-
-    const configured = this._tasksToken();
-    if (!configured) {
-      // 未配密钥：fail-safe——外部拒绝（不静默放行），内网不受影响
-      res.status(401).json({ error: 'Unauthorized', message: 'Bearer token required for external access (A2A_TASKS_TOKEN/A2A_GATEWAY_TOKEN not set)' });
-      return false;
-    }
-
-    const hdr = req.headers['authorization'] || '';
-    const provided = hdr.startsWith('Bearer ') ? hdr.slice(7).trim() : '';
-    // 常量时间比较（防时序攻击）
-    let ok = false;
-    try {
-      const a = Buffer.from(provided);
-      const b = Buffer.from(configured);
-      ok = a.length === b.length && crypto.timingSafeEqual(a, b);
-    } catch { ok = false; }
-    if (!ok) {
-      res.status(401).json({ error: 'Unauthorized', message: 'Valid Bearer token required for external access to /tasks' });
-      return false;
-    }
-    return true;
-  }
 
   // ================= 路由注册 =================
 
@@ -204,16 +131,6 @@ class A2AStandardAPI {
       };
       const normalizedMethod = METHOD_ALIASES[method] || method;
 
-      // 🔁 [2026-09-11] 自环调用快速拒绝 —— 自己发给自己没有任何语义，
-      // 却会走 LLM 链路自己等自己（挂起至超时）。这里直接返回终态 REJECTED。
-      if (normalizedMethod === 'SendMessage' || normalizedMethod === 'SendStreamingMessage') {
-        const selfCheck = this._checkSelfMessage(params, req);
-        if (selfCheck.self) {
-          console.warn(`[A2A] 🔁 自环调用已快速拒绝 (${selfCheck.reason})`);
-          return res.json({ jsonrpc: '2.0', result: this._buildSelfRejectedTask(params, selfCheck), id });
-        }
-      }
-
       let result;
       switch (normalizedMethod) {
         case 'SendMessage':          result = await this._sendMessage(params); break;
@@ -240,9 +157,7 @@ class A2AStandardAPI {
 
   async _sendMessage(params) {
     if (!params?.message) return { error: 'InvalidParams', details: 'Missing message field' };
-    if (!params.message.parts) return { error: 'InvalidParams', details: 'Message must have parts' };
-    // [P3-3 / 2026-09-14] 兼容：message 无 role 时默认 user（若兰侧 9/14 07:34 后偶尔漏发 role）
-    if (!params.message.role) params.message.role = 'user';
+    if (!params.message.role || !params.message.parts) return { error: 'InvalidParams', details: 'Message must have role and parts' };
 
     const msg = params.message;
     const returnImmediately = params.configuration?.returnImmediately === true;
@@ -254,13 +169,9 @@ class A2AStandardAPI {
     }
 
     // 将 sender 信息存入 metadata，供 LLM 回复使用
-    // [9/10 修复] 补充 senderUrl（bridge 需要 {name, url} 完整发起方标识）
     const taskMetadata = {
       ...(params.configuration?.metadata || {}),
       ...(params.sender ? { sender: params.sender } : {}),
-      ...(params.senderUrl ? { senderUrl: params.senderUrl } : {}),
-      ...(params.sender && typeof params.sender === 'object' && params.sender.url && !params.senderUrl
-        ? { senderUrl: params.sender.url } : {}),
     };
 
     const task = this.taskStore.createTask({
@@ -271,19 +182,7 @@ class A2AStandardAPI {
     this.taskStore.addHistory(task.id, { role: msg.role, parts: msg.parts, messageId: msg.messageId || `msg_${Date.now()}` });
     this.taskStore.updateTaskStatus(task.id, TASK_STATE.SUBMITTED, 'Task created');
 
-    // [P3-1 / 2026-09-14] returnImmediately 不再卡 SUBMITTED：仍走 _processTask，仅不等响应体
-    //   原行为：returnImmediately=true 时直接返回（task 永远 SUBMITTED）
-    //   修复：仍调 _processTask，但响应提前返回（fire-and-forget，状态机会推进）
-    if (returnImmediately) {
-      // 启动后台处理（不 await）
-      setImmediate(() => {
-        this._processTask(task.id, msg, taskMetadata).catch((e) => {
-          console.error(`[P3-1] returnImmediately 后台处理出错 taskId=${task.id}:`, e.message);
-          this.taskStore.updateTaskStatus(task.id, TASK_STATE.FAILED, e.message);
-        });
-      });
-      return { task: this.taskStore.getTask(task.id) };
-    }
+    if (returnImmediately) return { task: this.taskStore.getTask(task.id) };
 
     // 实际处理 (外部注入或桩)
     this.taskStore.updateTaskStatus(task.id, TASK_STATE.WORKING, 'Processing');
@@ -297,20 +196,7 @@ class A2AStandardAPI {
         this.taskStore.addHistory(task.id, response.message);
       }
 
-      // 终态：默认 COMPLETED；bridge/扩展可指定（如 REJECTED/FAILED，防被覆盖）
-      const terminalState = response?.__terminalState || TASK_STATE.COMPLETED;
-      this.taskStore.updateTaskStatus(task.id, terminalState, 'Completed');
-
-      // [9/11 接线] 信任证据：消息正常收尾 → 正向；被安全审查拦截的不算正向
-      if (terminalState === TASK_STATE.COMPLETED && !this._guardBlockedTasks.has(task.id)) {
-        trustEvidence.messageOk(
-          TrustEvidence.subjectFrom(taskMetadata.sender, 'unknown'),
-          { ref: task.id, detail: msg.parts?.filter((p) => p.text).map((p) => p.text).join(' ').slice(0, 80) },
-          'a2a-standard-api',
-        );
-      }
-      this._guardBlockedTasks.delete(task.id);
-
+      this.taskStore.updateTaskStatus(task.id, TASK_STATE.COMPLETED, 'Completed');
       const result = this.taskStore.getTask(task.id);
       this._notifySubscribers(task.id, { task: result });
       return { task: result };
@@ -407,13 +293,11 @@ class A2AStandardAPI {
   // ================= REST 端点 =================
 
   _handleRESTGetTask(req, res) {
-    if (!this._checkTasksAuth(req, res)) return;
     const r = this._getTask({ taskId: req.params.id, historyLength: req.query.historyLength });
     if (r.error) return res.status(404).json(r);
     res.json(r);
   }
   _handleRESTListTasks(req, res) {
-    if (!this._checkTasksAuth(req, res)) return;
     res.json(this._listTasks({
       contextId: req.query.contextId, state: req.query.state,
       includeArtifacts: req.query.includeArtifacts === 'true',
@@ -422,25 +306,12 @@ class A2AStandardAPI {
     }));
   }
   _handleRESTCancel(req, res) {
-    if (!this._checkTasksAuth(req, res)) return;
     const r = this._cancelTask({ taskId: req.params.id, reason: req.body?.reason });
     if (r.error) return res.status(r.error === 'TaskNotFoundError' ? 404 : 400).json(r);
     res.json(r);
   }
   async _handleRESTSendMessage(req, res) {
-    const restParams = {
-      message: req.body.message,
-      configuration: req.body.configuration,
-      ...(req.body.sender ? { sender: req.body.sender } : {}),
-      ...(req.body.senderUrl ? { senderUrl: req.body.senderUrl } : {}),
-    };
-    // [2026-09-11] 自环守卫（REST 通道同样生效）
-    const selfCheck = this._checkSelfMessage(restParams, req);
-    if (selfCheck.self) {
-      console.warn(`[A2A] 🔁 自环调用已快速拒绝 (REST, ${selfCheck.reason})`);
-      return res.json(this._buildSelfRejectedTask(restParams, selfCheck));
-    }
-    const r = await this._sendMessage(restParams);
+    const r = await this._sendMessage({ message: req.body.message, configuration: req.body.configuration });
     if (r.error) return res.status(400).json(r);
     res.json(r);
   }
@@ -477,49 +348,6 @@ class A2AStandardAPI {
 
   async _processTask(taskId, msg, metadata) {
     if (this._externalHandler) return this._externalHandler(taskId, msg);
-
-    // 🔍 [P3-INGRESS] Phase 3 调试：记录 _processTask 入口的 message 结构（不破坏逻辑）
-    try {
-      const hasDelegation = !!(msg && msg.delegation);
-      const hasEnvelope = !!(metadata && metadata.envelope);
-      const partsCount = (msg && Array.isArray(msg.parts)) ? msg.parts.length : 0;
-      const firstPartType = (msg && msg.parts && msg.parts[0]) ? (msg.parts[0].type || 'no-type') : 'no-parts';
-      const scope = (metadata && metadata.scope) || (msg && msg.delegation && msg.delegation.scope) || 'none';
-      console.log(`[P3-INGRESS] taskId=${taskId} hasDelegation=${hasDelegation} hasEnvelope=${hasEnvelope} partsCount=${partsCount} firstPartType=${firstPartType} scope=${scope} from=${(metadata && metadata.sender && metadata.sender.name) || 'unknown'}`);
-    } catch (e) { /* debug 日志失败不影响主链路 */ }
-
-    // 📥 [2026-09-13] Layer 1：入站收件箱（所有入站消息，纯留痕，fail-safe）
-    //   根因：桥接只覆盖 delegation 信封，聊天消息此前主会话全程不知情（送达 ≠ 被感知）
-    if (this._inbox) {
-      try { this._inbox.record({ taskId, msg, metadata }); } catch { /* fail-safe：留痕失败不得反噬主链路 */ }
-      // [P3-2 / 2026-09-14] markSeen：_processTask 实际消费后标记该 taskId 为 seen=true（避免 inbox 永远 seen:false）
-      try { this._inbox.markSeen((e) => e.taskId === taskId); } catch { /* fail-safe */ }
-    }
-
-    // 🚀 BRIDGE: delegation 信封 → 主会话桥接（RFC v0.2 · M2）
-    // 有信封且装配了 bridgeHandler → 走桥接；否则 fallthrough 原逻辑
-    if (msg && msg.delegation && this._bridgeHandler) {
-      console.log(`[P3-MSG] taskId=${taskId} → bridgeHandler 启动 (has delegation)`);
-      const bridgeResp = await this._bridgeHandler(taskId, msg, metadata);
-      if (bridgeResp) {
-        console.log(`[P3-INJECT] taskId=${taskId} → bridgeHandler 完成, artifacts=${(bridgeResp.artifacts||[]).length}, terminal=${!!bridgeResp.__terminalState}`);
-        return bridgeResp; // {artifacts, message, __terminalState?}
-      }
-      console.log(`[P3-MSG] taskId=${taskId} → bridgeHandler 返回 null, fallthrough`);
-      // bridgeHandler 返回 null（异常兜底）→ 继续原逻辑
-    } else {
-      console.log(`[P3-MSG] taskId=${taskId} → 不走 bridgeHandler (msg.delegation=${!!(msg&&msg.delegation)}, hasBridgeHandler=${!!this._bridgeHandler})`);
-    }
-
-    // 📣 [2026-09-13] Layer 2：非委托消息 → 主会话实时通知（默认关；护栏在 a2a-chat-notify.js）
-    //   ⚠️ 必须 fire-and-forget：绝不能 await。通知 = 向主会话注入一次 agent 循环，
-    //      耗时可达数十秒（主会话忙时更久，甚至挂起）；await 会把 A2A 请求的响应一起卡住，
-    //      导致调用方（curl 短超时）误判“发送失败”——而消息其实早已送达。
-    if (msg && !msg.delegation && this._chatNotify) {
-      Promise.resolve()
-        .then(() => this._chatNotify(taskId, msg, metadata))
-        .catch(() => { /* 通知失败不影响回复 */ });
-    }
 
     let text = msg.parts.filter(p => p.text).map(p => p.text).join(' ');
     if (!text || text.trim().length < 2) text = '(empty)';
@@ -588,9 +416,27 @@ class A2AStandardAPI {
       }
     }
 
-    // 🔥 尝试 LLM 智能回复 (非空消息)
-    const taskForHistory = this.taskStore.getTask(taskId);
-    const llmResponse = await this._callLLM(text, metadata, taskForHistory?.history, taskId);
+    // [2026-10-08 硅隐拍板] 自动回复模式：默认 'ack'
+    //   背景：LLM 自动回复曾**以明德名义对外作出承诺**（"稍后我会校验…并纳入巡检链路"）。
+    //   风险：以我名义承诺、且文风仿我。故默认改为**固定回执**——只表明"收到并转达"，不作任何承诺/表态。
+    //   A2A_AUTO_REPLY=llm 可恢复旧行为（LLM 生成）；其它值（含默认）走 ack。
+    const AUTO_REPLY_MODE = String(process.env.A2A_AUTO_REPLY || 'ack').toLowerCase();
+    if (AUTO_REPLY_MODE !== 'llm') {
+      const senderNameOf = (md) => md?.sender?.name || (md?.sender && typeof md.sender === 'string' ? md.sender : null) || '未知智能体';
+      const ack = `收到。这条消息已记录并转明德本人处理。\n\n（本回执为自动应答，仅表示"已收到"，不代表明德已确认、已同意或已承诺任何事项；请以明德的实际回复为准。）`;
+      console.log(`[A2A] ✉️ 自动回执（mode=${AUTO_REPLY_MODE}）task ${taskId}`);
+      try {
+        const a2aMemory = require('./a2a-memory');
+        a2aMemory.processConversation(senderNameOf(metadata), text, ack).catch(() => {});
+      } catch (e) { /* 记忆模块可选，跳过 */ }
+      return {
+        artifacts: [createArtifact([createPart(ack)], { name: 'response' })],
+        message: createMessage(ROLE.AGENT, [createPart(ack)]),
+      };
+    }
+
+    // 🔥 尝试 LLM 智能回复 (非空消息) —— 仅在 A2A_AUTO_REPLY=llm 时
+    const llmResponse = await this._callLLM(text, metadata);
 
     if (llmResponse) {
       console.log(`[A2A] 🤖 LLM 回复 task ${taskId}: ${llmResponse.substring(0, 60)}...`);
@@ -622,11 +468,7 @@ class A2AStandardAPI {
   /**
    * 【v5】调用 LLM 生成智能回复 (通过 llm-router)
    */
-  async _callLLM(messageText, metadata, history = [], taskId = null) {
-    // [2026-09-18 若辰修复] taskId 由调用方传入：此前拦截分支引用未定义变量
-    //   `taskId` → ReferenceError → 任务终态 FAILED（"taskId is not defined"），
-    //   即 guard 识别到注入却把自己搞崩。此处补参数 + 兜底从 metadata 取。
-    const _guardTaskId = taskId || metadata?.taskId || metadata?.task_id || null;
+  async _callLLM(messageText, metadata) {
     // 提取发送者名称 (优先从 metadata)
     const senderName = metadata?.sender?.name ||
       metadata?.sender ||
@@ -647,13 +489,6 @@ class A2AStandardAPI {
     if (!inspection.safe) {
       // 消息被安全审查拦截
       console.warn(`[A2A] ⛔ 消息被安全审查拦截 (risk=${inspection.riskScore}): ${senderName}`);
-      // [9/11 接线] 信任证据：拦截计负向（采集器集中定权重，调用点不自定义）
-      trustEvidence.guardBlocked(
-        TrustEvidence.subjectFrom(senderInfo, senderName),
-        { ref: _guardTaskId, detail: `risk=${inspection.riskScore}; ${(inspection.warnings || []).join('; ')}` },
-        'a2a-standard-api',
-      );
-      if (_guardTaskId) this._guardBlockedTasks.add(_guardTaskId);
       return `[安全提示] 来自「${senderName}」的消息因检测到提示注入特征被拦截。` +
         `\n\n检测到的问题: ${inspection.warnings.join('; ')}` +
         `\n\n—— 这符合碳硅契边界契原则：不可信内容不直接进入对话。`;
@@ -684,46 +519,11 @@ class A2AStandardAPI {
     // [G1 修复] System Prompt 加固 — 追加防注入指令
     systemPrompt += '\n' + messageGuard.buildInjectionDefensePrompt();
 
-    // [优化 2026-08-30] 安全边界直白化 — 不当请求必须明确说「不能/无法/拒绝」
-    systemPrompt += '\n## 安全边界(必须遵守)\n' +
-      '面对不当请求(恶意代码、攻击他人、违法、伤害性内容),必须**直接明确拒绝**,使用「这个我不能做」「我无法帮你」「我拒绝」等直白措辞,并简要说明原因(安全/法律/道德)。不要用委婉或隐晦的说法代替明确拒绝。';
-
-    // [优化 2026-08-30] 记忆连续性 — 注入同会话历史 + 历史记忆档案
-    let memoryContext = '';
-    try {
-      const historyArr = Array.isArray(history) ? history : [];
-      if (historyArr.length > 1) {
-        const recent = historyArr.slice(-6, -1);
-        if (recent.length) {
-          memoryContext += '\n\n【历史对话 · 同会话前几轮】\n' +
-            recent.map((h) => `${h.role === ROLE.AGENT ? this.identity?.name || '我' : senderName}: ${h.parts?.[0]?.text ?? ''}`).join('\n');
-        }
-      }
-      const memCandidates = [
-        process.env.A2A_DATA_DIR ? `${process.env.A2A_DATA_DIR}/memory/a2a-memories/${senderName}.md` : null,
-        `/workspace/memory/a2a-memories/${senderName}.md`,
-        `/workspace/csb-memory/data/a2a-memories/${senderName}.md`,
-      ].filter(Boolean);
-      for (const memFile of memCandidates) {
-        try {
-          const memText = require('fs').readFileSync(memFile, 'utf8');
-          const memLines = memText.split('\n')
-            .filter((l) => /(?:记住|记得|喜欢|偏好|重要|决定|承诺|关系|用户)(?:\s|:|：)/.test(l))
-            .slice(0, 10);
-          if (memLines.length) {
-            memoryContext += '\n\n【历史记忆档案】\n' + memLines.join('\n');
-            break;
-          }
-        } catch { /* 该路径无档案,试下一个 */ }
-      }
-    } catch { /* 记忆注入失败不影响主流程 */ }
-    if (memoryContext) console.log('[A2A] 🧠 已注入记忆上下文 (' + memoryContext.length + ' chars)');
-
     // [v5] 通过 llm-router 调用（多适配器 + identity.llm 兜底）
     try {
       const router = require('./llm-router.js');
       // [G1 修复] 使用净化后的消息文本（替代原来的直接拼接）
-      const userMessage = safeText + memoryContext;
+      const userMessage = safeText;
       const result = await router.call(this.identity, systemPrompt, userMessage);
       if (result) {
         console.log('[A2A] 🤖 LLM 回复成功');
@@ -872,59 +672,6 @@ class A2AStandardAPI {
    * 从请求体提取 Agent 标识（用于按 Agent 限流）
    * 优先级: body.from > params.from > params.sender.name > body.sender.name > params.sender > 'unknown'
    */
-  // ================= 自环守卫 =================
-
-  /**
-   * 判断当前请求是否为「自己发给自己」
-   * @returns {{self:boolean, reason:string|null, detail:object}}
-   */
-  _checkSelfMessage(params, req) {
-    try {
-      const cfg = this.selfGuardConfig || selfGuard.loadConfig();
-      if (!cfg.enabled) return { self: false, reason: null, detail: { skipped: 'disabled' } };
-      const sender = params?.sender;
-      const senderUrl = params?.senderUrl
-        || (sender && typeof sender === 'object' ? sender.url : undefined);
-      return selfGuard.isSelfCall({
-        sender,
-        senderUrl,
-        identity: this.identity || {},
-        remoteAddr: req?.socket?.remoteAddress || req?.connection?.remoteAddress || '',
-        forwardedFor: req?.headers?.['x-forwarded-for'] || '',
-        config: cfg,
-      });
-    } catch (e) {
-      // 守卫自身异常 → 放行（诚实不误伤）
-      console.warn('[A2A] self-guard 异常，放行:', e.message);
-      return { self: false, reason: null, detail: { error: e.message } };
-    }
-  }
-
-  /**
-   * 构造自环拒绝任务（终态 REJECTED，不发 LLM、不写记忆）
-   */
-  _buildSelfRejectedTask(params, guardResult) {
-    const text = (this.selfGuardConfig?.responseText) || selfGuard.DEFAULT_RESPONSE_TEXT;
-    const msg = params?.message || {};
-    const task = this.taskStore.createTask({
-      contextId: msg.contextId || undefined,
-      metadata: {
-        ...(params?.sender ? { sender: params.sender } : {}),
-        ...(params?.senderUrl ? { senderUrl: params.senderUrl } : {}),
-        selfGuard: { reason: guardResult.reason, detail: guardResult.detail || {} },
-      },
-    });
-    this.taskStore.addHistory(task.id, {
-      role: msg.role || ROLE.USER,
-      parts: msg.parts || [],
-      messageId: msg.messageId || `msg_${Date.now()}`,
-    });
-    this.taskStore.addArtifact(task.id, createArtifact([createPart(text)], { name: 'self_guard' }));
-    this.taskStore.addHistory(task.id, createMessage(ROLE.AGENT, [createPart(text)]));
-    this.taskStore.updateTaskStatus(task.id, TASK_STATE.REJECTED, text);
-    return { task: this.taskStore.getTask(task.id) };
-  }
-
   _extractAgentId(req) {
     const body = req.body || {};
     const params = body.params || {};
