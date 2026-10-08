@@ -84,8 +84,33 @@ function createIdentityHandler(opts = {}) {
   const auditQuery = new csb.AuditQuery(audit);
   const breach = new S.BreachRegistry({ log: audit }); // 复用同一本审计账（不再另开 breach-log）
   const jtiCache = new Set();
+  const replayGuard = new csb.ReplayGuard(); // nonce / 时间戳 防重放
   const stats = { register_ok: 0, register_reject: 0, breach_proposed: 0, transitions: 0, aat_issued: 0, aat_verified: 0, rate_limited: 0 };
   const cleanup = setInterval(() => rateLimiter.cleanup(), 60 * 1000); if (cleanup.unref) cleanup.unref();
+
+  // ==== 公网最小保护（2026-10-08 · 硅隐拍板"开始做"）====
+  // ① 写操作独立限流（比读更严）：单主体/单 IP 各 20 次/分钟
+  const WRITE_LIMIT = parseInt(process.env.IDENTITY_WRITE_LIMIT || '20', 10); // 写操作/分钟（按主体与 IP）
+  const writeLimiter = new csb.RateLimiter({ limits: { agent: WRITE_LIMIT, ip: WRITE_LIMIT } });
+  // ② 治理令牌：effective/cleared 属治理动作，需令牌（env 或 <dataDir>/admin-token，600）
+  const ADMIN_TOKEN = (() => {
+    if (process.env.IDENTITY_ADMIN_TOKEN) return process.env.IDENTITY_ADMIN_TOKEN.trim();
+    try { const f = path.join(DATA_DIR, 'admin-token'); if (fs.existsSync(f)) return fs.readFileSync(f, 'utf8').trim(); } catch {}
+    return null;
+  })();
+  const isWriteMethod = (m) => m === 'POST' || m === 'PUT' || m === 'DELETE';
+  const PAYLOAD_LIMITS = { reason: 2000, evidence: 4000 };
+  /** 校验"行为主体"签名：主体必须是已注册 agent，签名覆盖 JCS(payload) */
+  function verifyActorSig(agentId, payload, sigB64) {
+    const rec = identities.get(agentId);
+    if (!rec) return { ok: false, error: 'reporter_not_registered', hint: '先接入身份（/identity/register）再发起' };
+    if (!sigB64) return { ok: false, error: 'signature_required', hint: '签名内容 = JCS({agentId,reason,evidence,reporter,nonce,timestamp})' };
+    try {
+      const pub = crypto.createPublicKey({ key: rec.aid.public_key, format: 'jwk' });
+      const ok = crypto.verify(null, Buffer.from(S.jcs(payload)), pub, Buffer.from(sigB64, 'base64'));
+      return ok ? { ok: true } : { ok: false, error: 'bad_actor_signature' };
+    } catch { return { ok: false, error: 'bad_public_key' }; }
+  }
 
   async function fetchRegistry() {
     const out = { ok: false, agents: [], sources: {} };
@@ -127,6 +152,16 @@ function createIdentityHandler(opts = {}) {
         audit.append({ event_type: 'rate_limited', caller_id: agent, ip_address: ip, result: 'denied', scopes_denied: [rl.reason] });
         const ra = Math.ceil((rl.retryAfterMs || 1000) / 1000);
         return send(res, 429, { ok: false, error: rl.reason, retry_after_s: ra }, { 'Retry-After': String(ra) }), true;
+      }
+      // 写操作额外限流（更严）
+      if (isWriteMethod(m)) {
+        const wl = writeLimiter.check({ agentId: agent, ip });
+        if (!wl.allowed) {
+          stats.rate_limited++;
+          audit.append({ event_type: 'rate_limited', caller_id: agent, ip_address: ip, result: 'denied', scopes_denied: ['write_' + wl.reason] });
+          const ra = Math.ceil((wl.retryAfterMs || 1000) / 1000);
+          return send(res, 429, { ok: false, error: 'write_rate_limited', detail: wl.reason, retry_after_s: ra }, { 'Retry-After': String(ra) }), true;
+        }
       }
     }
     const body = async () => (req.body !== undefined && req.body !== null ? req.body : await readBodyRaw(req));
@@ -252,6 +287,19 @@ function createIdentityHandler(opts = {}) {
 
       if (p === '/breach' && m === 'POST') {
         const b = await body();
+        // —— 公网最小保护：主体需已注册 + 签名 + 时间窗 + 防重放 + 长度上限 ——
+        if (!b.reporter) return send(res, 400, { ok: false, error: 'reporter_required' }), true;
+        if (!b.nonce || !b.timestamp) return send(res, 400, { ok: false, error: 'proof_required', hint: '须带 nonce + timestamp' }), true;
+        const tsChk = replayGuard.checkTimestamp(b.timestamp);
+        if (!tsChk.allowed) return send(res, 401, { ok: false, error: 'ts_' + tsChk.error }), true;
+        if ((b.reason || '').length > PAYLOAD_LIMITS.reason || (b.evidence || '').length > PAYLOAD_LIMITS.evidence) return send(res, 413, { ok: false, error: 'payload_too_long' }), true;
+        const sigChk = verifyActorSig(b.reporter, { agentId: b.agentId, reason: b.reason, evidence: b.evidence || null, reporter: b.reporter, nonce: b.nonce, timestamp: b.timestamp }, b.reporter_sig);
+        if (!sigChk.ok) {
+          audit.append({ event_type: 'breach_proposed', caller_id: b.reporter, callee_id: b.agentId || 'unknown', ip_address: ip, result: 'denied', scopes_denied: [sigChk.error] });
+          return send(res, 403, { ok: false, ...sigChk }), true;
+        }
+        const nonceChk = replayGuard.checkNonce(b.nonce);
+        if (!nonceChk.allowed) return send(res, 401, { ok: false, error: 'nonce_' + nonceChk.error }), true;
         const r = breach.propose({ agentId: b.agentId, reason: b.reason, evidence: b.evidence, reporter: b.reporter, reporterSig: b.reporter_sig });
         if (r.ok) stats.breach_proposed++;
         audit.append({ event_type: 'breach_proposed', caller_id: b.reporter || 'unknown', callee_id: b.agentId || 'unknown', ip_address: ip, result: r.ok ? 'success' : 'denied', scopes_denied: r.ok ? [] : [r.error] });
@@ -261,6 +309,17 @@ function createIdentityHandler(opts = {}) {
       let mtr = /^\/breach\/([^/]+)\/transition$/.exec(p);
       if (mtr && m === 'POST') {
         const b = await body();
+        // —— 公网最小保护：effective / cleared 属治理动作，需治理令牌 ——
+        if (b.to === 'effective' || b.to === 'cleared') {
+          if (!ADMIN_TOKEN) return send(res, 503, { ok: false, error: 'governance_token_not_configured', hint: '在 ' + path.join(DATA_DIR, 'admin-token') + ' 放置令牌（600）或设 IDENTITY_ADMIN_TOKEN' }), true;
+          const tok = req.headers['x-admin-token'] || (b.admin_token || '');
+          const a = Buffer.from(String(tok)), c = Buffer.from(ADMIN_TOKEN);
+          const same = a.length === c.length && crypto.timingSafeEqual(a, c);
+          if (!same) {
+            audit.append({ event_type: 'breach_transition', caller_id: b.actor || 'unknown', callee_id: decodeURIComponent(mtr[1]), ip_address: ip, result: 'denied', scopes_denied: ['bad_admin_token'] });
+            return send(res, 403, { ok: false, error: 'bad_admin_token' }), true;
+          }
+        }
         const r = breach.transition(decodeURIComponent(mtr[1]), b.to, { actor: b.actor, reason: b.reason });
         if (r.ok) stats.transitions++;
         audit.append({ event_type: 'breach_transition', caller_id: b.actor || 'unknown', callee_id: r.breach_id || 'unknown', ip_address: ip, result: r.ok ? 'success' : 'denied', scopes_denied: r.ok ? [] : [r.error] });

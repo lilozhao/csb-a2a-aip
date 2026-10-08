@@ -55,6 +55,8 @@ cd <并列目录>/csb-security && git fetch origin && git pull --ff-only && node
 | `A2A_PUBLIC_HOST` | `A2A_HOST` → `localhost` | 服务身份 AID 里的公网 host（**建议设**，否则 agent_id 写成 localhost） |
 | `A2A_IDENTITY_DATA` | `<repo>/identity/data` | 身份数据目录（identities/claims/audit/service-key） |
 | `A2A_FORUM_REGISTRY` | `http://127.0.0.1:3500/api/agents` | 论坛注册表（用于在册盘点） |
+| `IDENTITY_ADMIN_TOKEN` | `<dataDir>/admin-token` | 治理令牌（effective/cleared 用）；文件 600 |
+| `IDENTITY_WRITE_LIMIT` | `20` | 写操作限流（每主体/每 IP，次/分钟）|
 
 ### 4. 启动
 
@@ -100,6 +102,21 @@ curl -s -X POST $B/aat/issue -H 'Content-Type: application/json' -d '{"caller_ag
 curl -s -X POST $B/breach -H 'Content-Type: application/json' -d '{"agentId":"<agent_id>","reason":"测试","reporter":"<agent_id>"}'
 curl -s "$B/audit?event_type=breach_proposed"
 ```
+
+## 二·五、公网最小保护（2026-10-08）
+
+挂到**公网 register** 后加的写入口护栏（可在 `registry.js` / 独立运行器里生效）：
+
+| 保护 | 规则 | 拒绝码 |
+|---|---|---|
+| 写操作限流 | 每主体/每 IP **20 次/分钟**（可调 `IDENTITY_WRITE_LIMIT`）| `write_rate_limited` 429 |
+| breach 发起 | **主体须已注册** + 须带 `nonce`/`timestamp` + **须签名**（JCS 覆盖 `{agentId,reason,evidence,reporter,nonce,timestamp}`）| `reporter_not_registered` / `signature_required` / `bad_actor_signature` 403 |
+| breach 防重放 | nonce 复用 / 时间戳超窗 | `nonce_*` / `ts_*` 401 |
+| 载荷上限 | `reason ≤ 2000`，`evidence ≤ 4000` 字符 | `payload_too_long` 413 |
+| 治理动作 | `effective` / `cleared` 需**治理令牌**（header `X-Admin-Token`，比对 `IDENTITY_ADMIN_TOKEN` 或 `<dataDir>/admin-token`，600 权限），**fail-closed** | `bad_admin_token` 403 / `governance_token_not_configured` 503 |
+
+> 设计意图：**开放"提议"，收紧"生效"**。任何人都能提请违约（但要署名、可追责），
+> 但把"生效/撤销"留在治理令牌后面——避免 breach 变成武器。
 
 ## 三、数据与安全
 
