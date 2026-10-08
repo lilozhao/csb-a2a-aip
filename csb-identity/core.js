@@ -215,7 +215,7 @@ function verifyIdentitySubmission(aidDoc, proof = {}, opts = {}) {
     }
   }
 
-  return { valid: true, agent_id: aidDoc.agent_id, name: aidDoc.name, passport_uri: passport, reserved_claimed: reservedClaimed, aid: aidDoc };
+  return { valid: true, agent_id: aidDoc.agent_id, name: aidDoc.name, passport_uri: passport, owner_handle: opts.owner ? String(opts.owner).replace(/^human:\/\//, '').toLowerCase() : null, reserved_claimed: reservedClaimed, aid: aidDoc };
 }
 
 // ---------- F3-a：covenant（独立文件 + hash 进 AID）----------

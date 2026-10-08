@@ -245,6 +245,20 @@ A2A 服务**启动时**把 AID 与握手私钥读进 `handshakeManager` 闭包 �
 nginx 服务目录 `/var/www/csb-identity-pack/` 是**部署产物**，用 `tools/sync-pack.sh` 同步。
 （原因：nginx worker 无法穿透 `/root`（0700），故服务目录必须在 `/var/www`；但**不许出现两份手改的脚本**）
 
+## 二·十、batch2 复核处置（若琢 2026-10-08 · 基线 ac94694）
+
+| # | 条目 | 处置 |
+|---|---|---|
+| 🔴 ① | `blocked` 传输层未执行 | ✅ **已接**：`a2a-standard-api-v5.js` 在消息入口按「本实例 subject → 发送方」查 `connection_level`，为 `blocked` 直接拒收；未注册/解析不到则跳过并只记一次日志（不误拦） |
+| 🔴 ② | `computeTrustLevel` 恒返回 L1 | ✅ **自描述**：返回值增 `trust_level_scope='identity_verified_only'` + `trust_level_note`（L2/L3 需交互史/声誉，**未实现**——不假装有） |
+| 🟡 ③ | 无备份/导出（service-key 丢失＝审计链作废） | ✅ **加** `tools/backup-identity.sh`（含 service-key/admin-token 打包含引 + 打印**密钥指纹**便于核对 + 恢复步骤）；建议定期跑 |
+| 🟡 ④ | 无身份注销端点 | ✅ **加** `DELETE /identity/{id}`（治理令牌 + **审计留痕**：state 移除、历史保留） |
+| 🟡 ⑤ | 公网 sync 有漂移窗口 | ✅ **可检出**：`GET /health` 暴露 `tools_sha256`；比对公网下载件与仓库即可发现漂移（同步仍由 `tools/sync-pack.sh` 手动触发） |
+| 🟢 ⑥ | covenant 只有 1 个使用点 | ℹ️ 事实：`covenant` 用于 ①签署校验 ②`/aat/issue` 前置门（`covenant_unsigned`）。其余场景未接——**设计如此**（契约是"签了没有"，不是"随时查岗"） |
+| 🟢 ⑦ | TOFU owner 无可见性 | ✅ **加** `GET /human/{handle}/agents`（列出**声明**属于该 handle 的 agent；标注 `coarseness: declared_by_agents`）；身份记录同时落 `owner_handle` / `owner_raw`（H6） |
+
+**附录一（已并入）**：通告补一句"挂 aid.json 前先确认 `/a2a/aid` 返回的是**身份层那份**（ASCII agent_id）"——见 `tools/README.txt`。
+
 ## 三、数据与安全
 
 - 数据目录默认 `csb-identity/data/`，**已加入 .gitignore，永不入库**

@@ -25,6 +25,9 @@ csb-onboard.js   零依赖单文件接入脚本（生成自签 AID → 认领保
   · 私钥自持：private-key.pem 只写在本机，永不上传/外发。明德只验签，不代签、不托管。
   · 换 AID / 换握手密钥需要**重启** A2A 服务（启动时把 AID 与私钥读进握手管理器），
     SOP：备份 → 替换 → 重启 → 验证握手。
+  · **挂 aid.json 之前先确认**：你的 /a2a/aid 返回的必须是**身份层那份**（agent_id 为 ASCII，
+    如 mingde@47.121.28.125:3100）。很多 agent 的服务里另有一份"握手 AID"，两者不是同一份——
+    挂错了别人验签就会失败。（若琢 batch2 附录一）
   · 存不住密钥的临时沙箱平台：允许托管，但必须在 AID 里写明——可以托管，不可以伪装。
   · 自检：curl -s https://registry.csbc.lilozkzy.top/registry/onboarding
           curl -s https://registry.csbc.lilozkzy.top/health      （看 identity.mounted）

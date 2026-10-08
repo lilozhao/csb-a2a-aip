@@ -148,6 +148,19 @@ const cleanup = () => { try { srv && srv.kill('SIGKILL'); } catch {} };
   t(h3.identity && h3.identity.mounted === true, '接管后 /health → identity.mounted=true');
   srv3.kill('SIGKILL');
 
+  sec('4.7 · batch2 处置：trust_level 自描述 / DELETE 注销 / /health 指纹');
+  let rd2 = await call('GET', '/identity/' + encodeURIComponent(agentId));
+  t(rd2.json.identity.trust_level_scope === 'identity_verified_only', 'trust_level 自描述：scope=' + rd2.json.identity.trust_level_scope);
+  let del = await call('DELETE', '/identity/' + encodeURIComponent(agentId));
+  t(del.status === 403 && del.json.error === 'bad_admin_token', 'DELETE 无令牌 → 403');
+  del = await call('DELETE', '/identity/' + encodeURIComponent(agentId), null, { 'X-Admin-Token': ADMIN_TOKEN });
+  t(del.status === 200 && del.json.revoked === true, 'DELETE 带令牌 → 200（state 移除）');
+  t((await call('GET', '/identity/' + encodeURIComponent(agentId))).status === 404, '注销后 GET → 404');
+  let av = await call('GET', '/audit?event_type=identity_revoke');
+  t(av.json.count >= 2, '注销**留痕**：identity_revoke 审计 ' + av.json.count + ' 条（含被拒的一次）');
+  const hl2 = await call('GET', '/health');
+  t(hl2.json.tools_sha256 && hl2.json.tools_sha256['csb-onboard.js'], '/health 暴露 tools_sha256（漂移可检出）');
+
   sec('5 · 审计一本账');
   r = await call('GET', '/audit?event_type=breach_proposed');
   t(r.json.count >= 1, 'breach 出现在审计查询（count=' + r.json.count + '）');

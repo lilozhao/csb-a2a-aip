@@ -169,8 +169,11 @@ class A2AStandardAPI {
     }
 
     // 将 sender 信息存入 metadata，供 LLM 回复使用
+    // [2026-10-08] 补：sender 也可能放在 params.message.metadata.sender（A2A 常见写法）
     const taskMetadata = {
       ...(params.configuration?.metadata || {}),
+      ...(params.metadata || {}),
+      ...(params.message?.metadata || {}),
       ...(params.sender ? { sender: params.sender } : {}),
     };
 
@@ -414,6 +417,41 @@ class A2AStandardAPI {
           message: createMessage(ROLE.AGENT, [createPart(errMsg)]),
         };
       }
+    }
+
+    // ══ [2026-10-08 若琢 batch2 ①] 连接分级在**传输层**执行：blocked 的对方直接拒 ══
+    //   （此前 connection_level 只在身份层"声明 + 可查"，A2A 层未采信 → 文档说了代码没做）
+    //   判据：本实例在身份层的 subject 对「发送方」的级别 == blocked → 拒收，不进入处理。
+    //   未注册 subject / 解析不到发送方 → 跳过（不误拦）并只记一次日志。
+    try {
+      const path2 = require('path');
+      const lookup = require('./csb-identity/registry-lookup.js');
+      const idDataDir = process.env.A2A_IDENTITY_DATA || path2.join(__dirname, 'csb-identity', 'data');
+      const selfName = this.identity?.name;
+      const msgMeta = (msg && msg.metadata) || {};
+      const pick = (x) => (x && typeof x === 'object' ? x.name : (typeof x === 'string' ? x : null));
+      const mdSender = pick(metadata?.sender) || pick(msgMeta.sender) || null;
+      const selfSubject = lookup.resolveSelfSubject(idDataDir, selfName);
+      const peerId = mdSender ? lookup.resolveAgentId(idDataDir, mdSender) : null;
+      if (process.env.A2A_DEBUG_BLOCK === '1') {
+        console.log(`[A2A][debug] blocked 判定: selfName=${selfName} self=${selfSubject} sender=${mdSender} peer=${peerId} lv=${(selfSubject && peerId) ? lookup.levelOf(idDataDir, selfSubject, peerId) : '-'} dir=${idDataDir}`);
+      }
+      if (selfSubject && peerId) {
+        const lv = lookup.levelOf(idDataDir, selfSubject, peerId);
+        if (lv === 'blocked') {
+          const deny = `[已拒绝] 你已被列入黑名单（connection_level=blocked），本条消息未被处理。`;
+          console.warn(`[A2A] ⛔ blocked 拦截：${mdSender} → ${selfSubject}`);
+          return {
+            artifacts: [createArtifact([createPart(deny)], { name: 'response' })],
+            message: createMessage(ROLE.AGENT, [createPart(deny)]),
+          };
+        }
+      } else if (!selfSubject && !global.__blockedSkipLogged) {
+        global.__blockedSkipLogged = true;
+        console.log('[A2A] ℹ️ blocked 判定跳过：本实例尚未在身份层注册（connections 无主体记录）');
+      }
+    } catch (e) {
+      console.warn('[A2A] ⚠️ blocked 判定异常（跳过，不误拦）:', e.message);
     }
 
     // [2026-10-08 硅隐拍板] 自动回复模式：默认 'ack'

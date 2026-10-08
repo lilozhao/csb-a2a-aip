@@ -100,6 +100,13 @@ const cleanup = () => { try { srv && srv.kill('SIGKILL'); } catch {} };
   r = await call('PUT', `/identity/${encodeURIComponent(agentId)}/connections/${encodeURIComponent('human://nobody')}`, putBody(kp.privateKey, agentId, 'human://nobody', 'self', { confirm: true }));
   t(r.status === 404 && r.json.error === 'human_not_found', '未登记的 human peer → 404 ' + r.json.error);
 
+  sec('5.5 · owner 可见性（batch2 ⑦）');
+  r = await call('GET', '/human/yuan/agents');
+  t(r.status === 200 && r.json.coarseness === 'declared_by_agents', 'GET /human/yuan/agents → 200（声明集合）');
+  t(r.json.declared_agents.some(x => x.agent_id === agentId), '能把"声明属于该 handle"的 agent 列出来（count=' + r.json.declared_agents_count + '）');
+  r = await call('GET', '/human/nobody/agents');
+  t(r.status === 404, '未登记 handle → 404');
+
   sec('6 · 审计一本账');
   r = await call('GET', '/audit?event_type=human_register');
   t(r.json.count >= 3, 'human_register 进审计（' + r.json.count + ' 条，含被拒的）');

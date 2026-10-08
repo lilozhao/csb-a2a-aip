@@ -879,9 +879,18 @@ try {
 app.get('/health', (req, res) => {
   let agentCount = 0;
   try { agentCount = (loadRegistry().agents || []).length; } catch {}
+  // 接入包指纹（若琢 batch2 ⑤：公网分发是"手动 cp"，无漂移检测 → 暴露指纹以便比对）
+  let tools = {};
+  try {
+    const _crypto = require('crypto'), _fs = require('fs'), _path = require('path');
+    const _dir = _path.join(__dirname, 'csb-identity', 'tools');
+    const _h = (f) => _crypto.createHash('sha256').update(_fs.readFileSync(_path.join(_dir, f))).digest('hex').slice(0, 16);
+    tools = { 'csb-onboard.js': _h('csb-onboard.js'), 'README.txt': _h('README.txt'), dir: _dir };
+  } catch (e) { tools = { error: e.message }; }
   res.json({
     ok: true, service: 'a2a-registry', port: PORT, agents: agentCount,
     identity: global.__identityStatus || { mounted: null, reason: 'not_initialized' },
+    tools_sha256: tools,
     uptime: Math.floor(process.uptime()), now: new Date().toISOString()
   });
 });

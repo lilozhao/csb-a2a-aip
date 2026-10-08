@@ -298,6 +298,9 @@ function createIdentityHandler(opts = {}) {
         identities.set(r.agent_id, {
           agent_id: r.agent_id, name: r.name,
           passport_uri: r.passport_uri || (prev && prev.passport_uri) || null,
+          // H6：不迁移旧串——owner 归一到裸 handle（owner_handle），原始写法留 owner_raw
+          owner_handle: r.owner_handle || (prev && prev.owner_handle) || null,
+          owner_raw: b.owner || (prev && prev.owner_raw) || null,
           reserved_claimed: r.reserved_claimed || (prev && prev.reserved_claimed) || false,
           aid: r.aid, covenant: prev ? prev.covenant : undefined,
           registered_at: (prev && prev.registered_at) || new Date().toISOString(), updated_at: new Date().toISOString()
@@ -341,11 +344,35 @@ function createIdentityHandler(opts = {}) {
             agent_id: rec.agent_id, name: rec.name, passport_uri: rec.passport_uri,
             reserved_claimed: rec.reserved_claimed, covenant: rec.covenant || null,
             trust_level: tl.trust_level, trust_level_source: tl.trust_level_source,   // 属性级（对外）
+            // 若琢 batch2 ②：恒 L1 会让读者误以为"已算过等级"——显式自描述
+            trust_level_scope: 'identity_verified_only',
+            trust_level_note: 'L1 = 身份验证通过（当前唯一可计算档）；L2/L3 需交互史/声誉，尚未实现',
             breach: breach.isBlocked(id) ? 'effective' : null,
             connections_band: conn.band(conn.count(id)), // 粗粒度：连接数本身是隐私（若兰反馈）
             aid: rec.aid
           }
         }), true;
+      }
+
+      // 注销身份（若琢 batch2 ④）：治理令牌 + **审计留痕**（state 可删，历史不可删）
+      let mdel = /^\/identity\/([^/]+)$/.exec(p);
+      if (mdel && m === 'DELETE') {
+        const id = decodeURIComponent(mdel[1]);
+        if (!ADMIN_TOKEN) return send(res, 503, { ok: false, error: 'governance_token_not_configured' }), true;
+        const tok = req.headers['x-admin-token'] || '';
+        const okTok = tok.length === ADMIN_TOKEN.length && crypto.timingSafeEqual(Buffer.from(String(tok)), Buffer.from(ADMIN_TOKEN));
+        if (!okTok) {
+          audit.append({ event_type: 'identity_revoke', caller_id: id, ip_address: ip, result: 'denied', scopes_denied: ['bad_admin_token'] });
+          return send(res, 403, { ok: false, error: 'bad_admin_token' }), true;
+        }
+        if (!identities.has(id)) return send(res, 404, { ok: false, error: 'agent_not_registered' }), true;
+        const rec = identities.get(id);
+        identities.delete(id);
+        saveIdentities();
+        // ⚠️ 审计链只追加、不删除：注销留下的是一条"已注销"记录（历史保留），不是抹去
+        audit.append({ event_type: 'identity_revoke', caller_id: id, callee_id: SVC.agentId, ip_address: ip, result: 'success', scopes_granted: ['identity:revoked'] });
+        log('revoke', id, 'by governance');
+        return send(res, 200, { ok: true, agent_id: id, revoked: true, note: 'state 已移除；审计链保留该次注销记录（历史不可删）' }), true;
       }
 
       // ===== 人类标识 human_handle（H1=B 独立命名空间）=====
@@ -370,6 +397,16 @@ function createIdentityHandler(opts = {}) {
       if (p === '/human' && m === 'GET') {
         const all = humans.list();
         return send(res, 200, { ok: true, count: all.length, humans: all.map(h => humans.view(h)) }), true;
+      }
+      // 该 handle 名下"声明属于它"的 agent 列表（若琢 batch2 ⑦：TOFU owner 缺可见性）
+      // ⚠️ 语义：agent 的**自报集合**（AID.owner 由 agent 自签），不是该人确认过的名单
+      let mha = /^\/human\/([^/]+)\/agents$/.exec(p);
+      if (mha && m === 'GET') {
+        const h = S.nameKey(decodeURIComponent(mha[1]));
+        if (!humans.exists(h)) return send(res, 404, { ok: false, error: 'human_not_found' }), true;
+        const agents = [...identities.values()].filter(x => x.owner_handle && S.nameKey(x.owner_handle) === h)
+          .map(x => ({ agent_id: x.agent_id, name: x.name, passport_uri: x.passport_uri, registered_at: x.registered_at }));
+        return send(res, 200, { ok: true, human_uri: uriOr(h), declared_agents_count: agents.length, coarseness: 'declared_by_agents', declared_agents: agents }), true;
       }
       let mh = /^\/human\/([^/]+)$/.exec(p);
       if (mh && m === 'GET') {
