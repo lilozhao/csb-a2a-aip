@@ -773,28 +773,11 @@ app.get('/a2a/aid', (req, res) => {
   }
 });
 
-// ===== CSB 身份层 · 阶段二（AID / AAT / covenant / breach / 审计）=====
-// 目录名用 csb-identity/（根 .gitignore 的 /identity* 规则会忽略 identity*/ 命名）
-// 与 A2A 同进程挂载；数据自治于 identity/data/；加载失败自动降级，不影响 A2A 既有功能。
-// 设计源：知微《阶段二「签名+契约」接口草稿 v1》；实现：明德 🎋 2026-10-08。详见 identity/README.md
-try {
-  const { createIdentityHandler } = require('./csb-identity/routes.js');
-  const identityHandler = createIdentityHandler({
-    dataDir: process.env.A2A_IDENTITY_DATA || path.join(__dirname, 'csb-identity', 'data'),
-    registryUrl: REGISTRY_URL,
-    forumRegistryUrl: process.env.A2A_FORUM_REGISTRY || 'http://127.0.0.1:3500/api/agents',
-    host: process.env.A2A_PUBLIC_HOST || process.env.A2A_HOST || 'localhost',
-    port,
-    limits: { agent: parseInt(process.env.A2A_RATE_LIMIT || '60', 10) }
-  });
-  app.use((req, res, next) => {
-    Promise.resolve(identityHandler(req, res)).then((handled) => { if (!handled) next(); }).catch(next);
-  });
-  global.__identityHandler = identityHandler;
-  console.log('[IDENTITY] ✅ 阶段二身份路由已挂载: /identity* /reserved* /aat* /breach* /audit* /ready /registry/onboarding');
-} catch (e) {
-  console.warn('[IDENTITY] ⚠️ 阶段二身份路由未挂载（降级）:', e.message);
-}
+// ===== CSB 身份层 · 阶段二：已迁往公网 register(registry.js :3099) =====
+// 2026-10-08 硅隐拍板：身份挂在 agent 进来的门口（公网 register）。
+// ⚠️ 身份数据是无锁文件，**唯一写者**原则 —— 本进程不再挂载，
+//    否则与 registry(:3099) 同时写 identities/claims/audit 会互相覆盖、断链。
+// 见 csb-identity/README.md。
 
 // Prometheus 指标端点 (A2A-020)
 app.get('/metrics', (req, res) => {

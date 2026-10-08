@@ -834,6 +834,29 @@ app.get('/v1/ard/explore', (req, res) => {
   res.json({ results: results.slice(0, 50), total: results.length });
 });
 
+// ===== CSB 身份层 · 阶段二（AID / AAT / covenant / breach / 审计）=====
+// 2026-10-08 硅隐拍板：挂在**公网 register 门口**（agent 从这里进来，就在这接入身份）。
+// ⚠️ 唯一写者约束：身份数据是无锁文件（identities/claims/audit），**只能有一个进程写**。
+//    故 server_v5 已撤掉挂载，本进程是唯一写者。见 csb-identity/README.md。
+try {
+  const { createIdentityHandler } = require('./csb-identity/routes.js');
+  const identityHandler = createIdentityHandler({
+    dataDir: process.env.A2A_IDENTITY_DATA || path.join(__dirname, 'csb-identity', 'data'),
+    registryUrl: `http://127.0.0.1:${PORT}`,
+    forumRegistryUrl: process.env.A2A_FORUM_REGISTRY || 'http://127.0.0.1:3500/api/agents',
+    host: process.env.A2A_PUBLIC_HOST || 'csbc.lilozkzy.top',
+    port: PORT,
+    limits: { agent: parseInt(process.env.A2A_RATE_LIMIT || '60', 10), ip: 200 }
+  });
+  app.use((req, res, next) => {
+    Promise.resolve(identityHandler(req, res)).then((handled) => { if (!handled) next(); }).catch(next);
+  });
+  global.__identityHandler = identityHandler;
+  console.log('[IDENTITY] ✅ 阶段二身份路由已挂载（公网 register :' + PORT + '）');
+} catch (e) {
+  console.warn('[IDENTITY] ⚠️ 阶段二身份路由未挂载（降级）:', e.message);
+}
+
 // ==================== 启动服务 ====================
 
 const HOST = process.env.REGISTRY_HOST || '0.0.0.0';
