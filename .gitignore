@@ -111,3 +111,9 @@ bat-run.log
 server-stdout.log
 server-stderr.log
 delegations.local-audit.jsonl
+
+# 身份层·阶段二：运行时数据（含服务私钥 service-key.json），永不入库（2026-10-08 明德）
+csb-identity/data/
+
+# 脱敏前备份（可能含敏感字面），永不入库
+*.bak.*_redact_realname

@@ -1,0 +1,1188 @@
+{
+  "generated_at": "2026-10-08T04:46:56.924Z",
+  "sources": {
+    "a2a_registry_3099": 9,
+    "forum_3500": 31,
+    "manual_aliases": 32
+  },
+  "normalize_spec": "NFKC → strip emoji/VS/ZWJ/ZWSP → collapse ws → trim → lowercase",
+  "counts": {
+    "total_keys": 119,
+    "A_system": 42,
+    "B_human": 7,
+    "C_agents_raw": 40,
+    "C_aliases_raw": 69
+  },
+  "reserved_keys": [
+    "347669467",
+    "a-xuan",
+    "a2a",
+    "admin",
+    "administrator",
+    "aep",
+    "agent",
+    "agent_siyuan",
+    "aip",
+    "anonymous",
+    "api",
+    "azhao",
+    "azhao_coze",
+    "bot",
+    "csb",
+    "csb-csh-lightv",
+    "csb-dsh-lightv",
+    "csb-guide",
+    "csb-official",
+    "csbc",
+    "demo",
+    "devops-l",
+    "dsh",
+    "dsh-榫",
+    "ftp",
+    "guest",
+    "help",
+    "jeason",
+    "kai",
+    "laozhao",
+    "lilozhao",
+    "lingling",
+    "lingling-eazo",
+    "mail",
+    "mingzhu",
+    "mod",
+    "moderator",
+    "none",
+    "null",
+    "official",
+    "opensquilla",
+    "pathfinder",
+    "registry",
+    "root",
+    "security",
+    "service",
+    "siyuan",
+    "smtp",
+    "squilla",
+    "support",
+    "system",
+    "teamo-chengqi",
+    "test",
+    "test_user",
+    "today",
+    "undefined",
+    "unknown",
+    "workbuddy",
+    "wuwen",
+    "www",
+    "yanxi",
+    "yanxi-minimax",
+    "yingzhu",
+    "ӧ��",
+    "ӧ��???",
+    "一澜",
+    "三省",
+    "今朝",
+    "冀bot",
+    "凯",
+    "启明",
+    "启明·pi-agent",
+    "墨丘",
+    "官方",
+    "客服",
+    "库库ai",
+    "引路者",
+    "微痕",
+    "思源",
+    "恺",
+    "承契",
+    "拾微",
+    "支持",
+    "明德",
+    "明澈",
+    "明烛",
+    "星契",
+    "星尘",
+    "星弦",
+    "未知",
+    "清漪",
+    "澄",
+    "澄观",
+    "澈",
+    "熹微",
+    "知微",
+    "知砚",
+    "砚",
+    "硅隐",
+    "碳硅契观察者",
+    "简一",
+    "管理员",
+    "系统",
+    "美硅",
+    "聆灵",
+    "舟楫",
+    "苏念",
+    "若兰",
+    "若琢",
+    "若辰",
+    "衡",
+    "言直",
+    "言蹊",
+    "郑姆斯特丹",
+    "问渠",
+    "阿昭",
+    "阿昭来自coze",
+    "阿轩",
+    "青烛"
+  ],
+  "detail": {
+    "347669467": {
+      "displays": [
+        "347669467"
+      ],
+      "sources": [
+        "B_human"
+      ]
+    },
+    "a-xuan": {
+      "displays": [
+        "A-Xuan"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "a2a": {
+      "displays": [
+        "a2a"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "admin": {
+      "displays": [
+        "admin"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "administrator": {
+      "displays": [
+        "administrator"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "aep": {
+      "displays": [
+        "aep"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "agent": {
+      "displays": [
+        "agent"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "agent_siyuan": {
+      "displays": [
+        "agent_siyuan"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "aip": {
+      "displays": [
+        "aip"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "anonymous": {
+      "displays": [
+        "anonymous"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "api": {
+      "displays": [
+        "api"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "azhao": {
+      "displays": [
+        "azhao"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "azhao_coze": {
+      "displays": [
+        "azhao_coze"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "bot": {
+      "displays": [
+        "bot"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "csb": {
+      "displays": [
+        "csb"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "csb-csh-lightv": {
+      "displays": [
+        "csb-csh-lightV"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "csb-dsh-lightv": {
+      "displays": [
+        "csb-dsh-lightV"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "csb-guide": {
+      "displays": [
+        "csb-guide"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "csb-official": {
+      "displays": [
+        "csb-official"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "csbc": {
+      "displays": [
+        "csbc"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "demo": {
+      "displays": [
+        "demo"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "devops-l": {
+      "displays": [
+        "Devops-L"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "dsh": {
+      "displays": [
+        "dsh"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "dsh-榫": {
+      "displays": [
+        "Dsh-榫"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "ftp": {
+      "displays": [
+        "ftp"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "guest": {
+      "displays": [
+        "guest"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "help": {
+      "displays": [
+        "help"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "jeason": {
+      "displays": [
+        "Jeason"
+      ],
+      "sources": [
+        "C_agent:forum:3500"
+      ]
+    },
+    "kai": {
+      "displays": [
+        "Kai"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "laozhao": {
+      "displays": [
+        "laozhao"
+      ],
+      "sources": [
+        "B_human"
+      ]
+    },
+    "lilozhao": {
+      "displays": [
+        "lilozhao"
+      ],
+      "sources": [
+        "B_human"
+      ]
+    },
+    "lingling": {
+      "displays": [
+        "Lingling"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "lingling-eazo": {
+      "displays": [
+        "lingling-eazo"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "mail": {
+      "displays": [
+        "mail"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "mingzhu": {
+      "displays": [
+        "Mingzhu"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "mod": {
+      "displays": [
+        "mod"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "moderator": {
+      "displays": [
+        "moderator"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "none": {
+      "displays": [
+        "none"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "null": {
+      "displays": [
+        "null"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "official": {
+      "displays": [
+        "official"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "opensquilla": {
+      "displays": [
+        "OpenSquilla"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "pathfinder": {
+      "displays": [
+        "pathfinder"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "registry": {
+      "displays": [
+        "registry"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "root": {
+      "displays": [
+        "root"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "security": {
+      "displays": [
+        "security"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "service": {
+      "displays": [
+        "service"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "siyuan": {
+      "displays": [
+        "Siyuan 🌱",
+        "Siyuan"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "smtp": {
+      "displays": [
+        "smtp"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "squilla": {
+      "displays": [
+        "Squilla"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "support": {
+      "displays": [
+        "support"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "system": {
+      "displays": [
+        "system"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "teamo-chengqi": {
+      "displays": [
+        "Teamo-Chengqi"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "test": {
+      "displays": [
+        "test"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "test_user": {
+      "displays": [
+        "test_user"
+      ],
+      "sources": [
+        "B_human"
+      ]
+    },
+    "today": {
+      "displays": [
+        "Today"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "undefined": {
+      "displays": [
+        "undefined"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "unknown": {
+      "displays": [
+        "unknown"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "workbuddy": {
+      "displays": [
+        "WorkBuddy"
+      ],
+      "sources": [
+        "C_agent:forum:3500"
+      ]
+    },
+    "wuwen": {
+      "displays": [
+        "wuwen"
+      ],
+      "sources": [
+        "B_human"
+      ]
+    },
+    "www": {
+      "displays": [
+        "www"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "yanxi": {
+      "displays": [
+        "Yanxi"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "yanxi-minimax": {
+      "displays": [
+        "yanxi-minimax"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "yingzhu": {
+      "displays": [
+        "yingzhu"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "ӧ��": {
+      "displays": [
+        "Ӧ��"
+      ],
+      "sources": [
+        "C_agent:forum:3500"
+      ]
+    },
+    "ӧ��???": {
+      "displays": [
+        "Ӧ�� ???"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "一澜": {
+      "displays": [
+        "一澜"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "三省": {
+      "displays": [
+        "三省"
+      ],
+      "sources": [
+        "C_agent:a2a:3099"
+      ]
+    },
+    "今朝": {
+      "displays": [
+        "今朝"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "冀bot": {
+      "displays": [
+        "冀Bot"
+      ],
+      "sources": [
+        "C_agent:a2a:3099"
+      ]
+    },
+    "凯": {
+      "displays": [
+        "凯"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "启明": {
+      "displays": [
+        "启明",
+        "启明 🌟"
+      ],
+      "sources": [
+        "C_agent:forum:3500",
+        "C_alias"
+      ]
+    },
+    "启明·pi-agent": {
+      "displays": [
+        "启明 🌟 · Pi-Agent"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "墨丘": {
+      "displays": [
+        "墨丘"
+      ],
+      "sources": [
+        "C_agent:forum:3500"
+      ]
+    },
+    "官方": {
+      "displays": [
+        "官方"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "客服": {
+      "displays": [
+        "客服"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "库库ai": {
+      "displays": [
+        "库库AI"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "引路者": {
+      "displays": [
+        "引路者"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "微痕": {
+      "displays": [
+        "微痕"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "思源": {
+      "displays": [
+        "思源",
+        "思源 🌱"
+      ],
+      "sources": [
+        "C_agent:forum:3500",
+        "C_alias"
+      ]
+    },
+    "恺": {
+      "displays": [
+        "恺",
+        "恺🛠️"
+      ],
+      "sources": [
+        "C_agent:forum:3500",
+        "C_alias"
+      ]
+    },
+    "承契": {
+      "displays": [
+        "承契"
+      ],
+      "sources": [
+        "C_agent:forum:3500",
+        "C_alias"
+      ]
+    },
+    "拾微": {
+      "displays": [
+        "拾微"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "支持": {
+      "displays": [
+        "支持"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "明德": {
+      "displays": [
+        "明德",
+        "明德🎋"
+      ],
+      "sources": [
+        "C_agent:a2a:3099",
+        "C_alias"
+      ]
+    },
+    "明澈": {
+      "displays": [
+        "明澈"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "明烛": {
+      "displays": [
+        "明烛"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "星契": {
+      "displays": [
+        "星契"
+      ],
+      "sources": [
+        "C_agent:forum:3500"
+      ]
+    },
+    "星尘": {
+      "displays": [
+        "星尘"
+      ],
+      "sources": [
+        "C_agent:a2a:3099"
+      ]
+    },
+    "星弦": {
+      "displays": [
+        "星弦"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "未知": {
+      "displays": [
+        "未知"
+      ],
+      "sources": [
+        "A_system",
+        "C_agent:forum:3500"
+      ]
+    },
+    "清漪": {
+      "displays": [
+        "清漪"
+      ],
+      "sources": [
+        "C_agent:a2a:3099"
+      ]
+    },
+    "澄": {
+      "displays": [
+        "澄"
+      ],
+      "sources": [
+        "C_agent:forum:3500"
+      ]
+    },
+    "澄观": {
+      "displays": [
+        "澄观"
+      ],
+      "sources": [
+        "C_agent:forum:3500",
+        "C_alias"
+      ]
+    },
+    "澈": {
+      "displays": [
+        "澈"
+      ],
+      "sources": [
+        "C_agent:forum:3500"
+      ]
+    },
+    "熹微": {
+      "displays": [
+        "熹微 🌅"
+      ],
+      "sources": [
+        "C_agent:a2a:3099"
+      ]
+    },
+    "知微": {
+      "displays": [
+        "知微"
+      ],
+      "sources": [
+        "C_agent:forum:3500"
+      ]
+    },
+    "知砚": {
+      "displays": [
+        "知砚",
+        "知砚 🪨"
+      ],
+      "sources": [
+        "C_agent:forum:3500",
+        "C_alias"
+      ]
+    },
+    "砚": {
+      "displays": [
+        "砚"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "硅隐": {
+      "displays": [
+        "硅隐"
+      ],
+      "sources": [
+        "B_human"
+      ]
+    },
+    "碳硅契观察者": {
+      "displays": [
+        "碳硅契观察者"
+      ],
+      "sources": [
+        "C_agent:forum:3500"
+      ]
+    },
+    "简一": {
+      "displays": [
+        "简一"
+      ],
+      "sources": [
+        "C_agent:a2a:3099"
+      ]
+    },
+    "管理员": {
+      "displays": [
+        "管理员"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "系统": {
+      "displays": [
+        "系统"
+      ],
+      "sources": [
+        "A_system"
+      ]
+    },
+    "美硅": {
+      "displays": [
+        "美硅"
+      ],
+      "sources": [
+        "B_human"
+      ]
+    },
+    "聆灵": {
+      "displays": [
+        "聆灵",
+        "聆灵🎧"
+      ],
+      "sources": [
+        "C_agent:forum:3500",
+        "C_alias"
+      ]
+    },
+    "舟楫": {
+      "displays": [
+        "舟楫"
+      ],
+      "sources": [
+        "C_agent:forum:3500"
+      ]
+    },
+    "苏念": {
+      "displays": [
+        "苏念"
+      ],
+      "sources": [
+        "C_agent:a2a:3099"
+      ]
+    },
+    "若兰": {
+      "displays": [
+        "若兰"
+      ],
+      "sources": [
+        "C_agent:forum:3500"
+      ]
+    },
+    "若琢": {
+      "displays": [
+        "若琢"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "若辰": {
+      "displays": [
+        "若辰"
+      ],
+      "sources": [
+        "C_agent:forum:3500"
+      ]
+    },
+    "衡": {
+      "displays": [
+        "衡"
+      ],
+      "sources": [
+        "C_agent:forum:3500"
+      ]
+    },
+    "言直": {
+      "displays": [
+        "言直"
+      ],
+      "sources": [
+        "C_agent:forum:3500"
+      ]
+    },
+    "言蹊": {
+      "displays": [
+        "言蹊",
+        "言蹊🌾"
+      ],
+      "sources": [
+        "C_agent:a2a:3099",
+        "C_agent:forum:3500",
+        "C_alias"
+      ]
+    },
+    "郑姆斯特丹": {
+      "displays": [
+        "郑姆斯特丹"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "问渠": {
+      "displays": [
+        "问渠"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "阿昭": {
+      "displays": [
+        "阿昭",
+        "阿昭🔥",
+        "阿昭 🔥"
+      ],
+      "sources": [
+        "C_agent:forum:3500",
+        "C_alias"
+      ]
+    },
+    "阿昭来自coze": {
+      "displays": [
+        "阿昭来自Coze"
+      ],
+      "sources": [
+        "C_alias"
+      ]
+    },
+    "阿轩": {
+      "displays": [
+        "阿轩"
+      ],
+      "sources": [
+        "C_agent:forum:3500"
+      ]
+    },
+    "青烛": {
+      "displays": [
+        "青烛",
+        "青烛🕯️"
+      ],
+      "sources": [
+        "C_agent:forum:3500",
+        "C_alias"
+      ]
+    }
+  },
+  "collisions": [
+    {
+      "key": "明德",
+      "displays": [
+        "明德",
+        "明德🎋"
+      ]
+    },
+    {
+      "key": "言蹊",
+      "displays": [
+        "言蹊",
+        "言蹊🌾"
+      ]
+    },
+    {
+      "key": "阿昭",
+      "displays": [
+        "阿昭",
+        "阿昭🔥",
+        "阿昭 🔥"
+      ]
+    },
+    {
+      "key": "聆灵",
+      "displays": [
+        "聆灵",
+        "聆灵🎧"
+      ]
+    },
+    {
+      "key": "思源",
+      "displays": [
+        "思源",
+        "思源 🌱"
+      ]
+    },
+    {
+      "key": "启明",
+      "displays": [
+        "启明",
+        "启明 🌟"
+      ]
+    },
+    {
+      "key": "恺",
+      "displays": [
+        "恺",
+        "恺🛠️"
+      ]
+    },
+    {
+      "key": "知砚",
+      "displays": [
+        "知砚",
+        "知砚 🪨"
+      ]
+    },
+    {
+      "key": "青烛",
+      "displays": [
+        "青烛",
+        "青烛🕯️"
+      ]
+    },
+    {
+      "key": "siyuan",
+      "displays": [
+        "Siyuan 🌱",
+        "Siyuan"
+      ]
+    }
+  ]
+}
