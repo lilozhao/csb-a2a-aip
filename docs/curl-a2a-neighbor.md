@@ -19,9 +19,9 @@
 |------|------|
 | 公网注册表 | `http://csbc.lilozkzy.top:3099` | （可以连公网的都合适）
 | 本机注册表 | `http://127.0.0.1:3099` | （适合windows的destop的agent 或者自己测试）
-| 内网注册表 | `http://172.28.0.4:3099` | （仅仅适合docker容器内网的agent）
+| 内网注册表 | `http://127.0.0.1:3099` | （仅仅适合docker容器内网的agent）
 | 本机 A2A server | `http://127.0.0.1:3100` |
-| 邻居 A2A server | `http://172.28.0.144:3100`（内网示例） |
+| 邻居 A2A server | `http://<邻居IP>:3100`（内网示例） |
 
 > Windows 提示：`curl.exe` 是 Windows 自带版本，参数名与 WSL curl 略有差异（例如 `--data-raw` 在 Windows 版 curl 里也可用）。下文命令在两种环境下都测过。
 
@@ -40,7 +40,7 @@ curl -s http://127.0.0.1:3100/health
 ### 1.2 查看 Agent 卡片
 
 ```bash
-curl -s http://172.28.0.144:3100/.well-known/agent.json
+curl -s http://<邻居IP>:3100/.well-known/agent.json
 ```
 
 返回 `name`、`emoji`、`description`、`version`、`protocolVersion`、`endpoints`（含 `jsonrpc` / `rest` 子端点）、`capabilities`。
@@ -50,7 +50,7 @@ curl -s http://172.28.0.144:3100/.well-known/agent.json
 **JSON-RPC 格式**（`server_v5.js:136` 的 `SendMessage`）：
 
 ```bash
-curl -s -X POST http://172.28.0.144:3100/a2a/json-rpc \
+curl -s -X POST http://<邻居IP>:3100/a2a/json-rpc \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
@@ -69,10 +69,10 @@ curl -s -X POST http://172.28.0.144:3100/a2a/json-rpc \
 **REST 格式**（`server_v5.js:84` 的 `/message:send`）：
 
 ```bash
-curl -s -X POST http://172.28.0.144:3100/message:send \
+curl -s -X POST http://<邻居IP>:3100/message:send \
   -H "Content-Type: application/json" \
   -d '{
-    "sender": {"name": "若琢 🌸", "url": "http://172.28.0.4:3100"},
+    "sender": {"name": "若琢 🌸", "url": "http://127.0.0.1:3100"},
     "message": {"role": "user", "messageId": "msg-001", "parts": [{"type": "text", "text": "你好"}]}
   }'
 ```
@@ -80,7 +80,7 @@ curl -s -X POST http://172.28.0.144:3100/message:send \
 ### 1.4 取回回复（`GetTask`）
 
 ```bash
-curl -s -X POST http://172.28.0.144:3100/a2a/json-rpc \
+curl -s -X POST http://<邻居IP>:3100/a2a/json-rpc \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
@@ -93,7 +93,7 @@ curl -s -X POST http://172.28.0.144:3100/a2a/json-rpc \
 ### 1.5 列出任务（`ListTasks`）
 
 ```bash
-curl -s -X POST http://172.28.0.144:3100/a2a/json-rpc \
+curl -s -X POST http://<邻居IP>:3100/a2a/json-rpc \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
@@ -106,7 +106,7 @@ curl -s -X POST http://172.28.0.144:3100/a2a/json-rpc \
 ### 1.6 取消任务（`CancelTask`）
 
 ```bash
-curl -s -X POST http://172.28.0.144:3100/a2a/json-rpc \
+curl -s -X POST http://<邻居IP>:3100/a2a/json-rpc \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
@@ -119,7 +119,7 @@ curl -s -X POST http://172.28.0.144:3100/a2a/json-rpc \
 ### 1.7 SSE 流式（`/a2a/stream/:taskId`）
 
 ```bash
-curl -sN http://172.28.0.144:3100/a2a/stream/任务ID
+curl -sN http://<邻居IP>:3100/a2a/stream/任务ID
 ```
 
 ### 1.8 远程命令（`CMD:` 前缀）——让邻居执行系统级操作
@@ -127,14 +127,14 @@ curl -sN http://172.28.0.144:3100/a2a/stream/任务ID
 A2A server 内置远程命令模块（`server_v5.js:53`），通过消息文本前缀 `CMD:` 触发，**需要 HMAC 签名**（见第 10 节）：
 
 ```bash
-curl -s -X POST http://172.28.0.144:3100/a2a/json-rpc \
+curl -s -X POST http://<邻居IP>:3100/a2a/json-rpc \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
     "id": "cmd-001",
     "method": "SendMessage",
     "params": {
-      "sender": {"name": "若琢 🌸", "url": "http://172.28.0.4:3100"},
+      "sender": {"name": "若琢 🌸", "url": "http://127.0.0.1:3100"},
       "message": {
         "role": "user",
         "messageId": "msg-cmd-001",
@@ -417,7 +417,7 @@ print(f'在线: {len(online)} 个')
 
 ```bash
 # 1. 发消息
-TASKID=$(curl -s -X POST http://172.28.0.144:3100/a2a/json-rpc \
+TASKID=$(curl -s -X POST http://<邻居IP>:3100/a2a/json-rpc \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0", "id": "knock-1", "method": "SendMessage",
@@ -428,7 +428,7 @@ TASKID=$(curl -s -X POST http://172.28.0.144:3100/a2a/json-rpc \
 
 # 2. 取回复（等待 3 秒让对方处理）
 sleep 3
-curl -s -X POST http://172.28.0.144:3100/a2a/json-rpc \
+curl -s -X POST http://<邻居IP>:3100/a2a/json-rpc \
   -H "Content-Type: application/json" \
   -d "{
     \"jsonrpc\": \"2.0\", \"id\": \"task-1\", \"method\": \"GetTask\",
@@ -465,7 +465,7 @@ for a in agents:
 
 ```bash
 A2A_SHARED_SECRET=<密钥> node /workspace/csb-a2a-aip/remote-command/client.js \
-  http://172.28.0.144:3100 \
+  http://<邻居IP>:3100 \
   '{"type":"system.status"}' \
   '若琢'
 ```
@@ -498,7 +498,7 @@ curl -s http://127.0.0.1:3100/a2a/handshake/status
 返回：
 
 ```json
-{"enabled": true, "callee": "若琢@172.28.0.4:3100", "allowedScopes": [...], "securityLevels": {...}}
+{"enabled": true, "callee": "若琢@127.0.0.1:3100", "allowedScopes": [...], "securityLevels": {...}}
 ```
 
 ### 7.2 五步握手流程
