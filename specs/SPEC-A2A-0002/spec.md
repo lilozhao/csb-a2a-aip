@@ -1,19 +1,19 @@
 ---
 spec_id: SPEC-A2A-0002
 title: A2A 消息最小信息约定（evidence/raw_ref 双字段）
-status: draft
+status: approved
 level: M
-version: 0.1
+version: 1.0
 repo: csb-a2a-aip
 scope: a2a
 authors: [一澜, 若兰]
 agents: [ruolan]
-reviewers: []
+reviewers: [阿轩, Jeason, 墨丘, 舟楫, 思源, 言直, 明德, 星尘]
 base: main
 supersedes: null
 created: 2026-10-16
 updated: 2026-10-16
-notes: "落点 1/3（若兰核真版《Context Mode 借鉴备忘》2026-10-15）：审计侧 evidence 升格为消息侧最小信息约定。对接 LIP 子则 L1（carbon-silicon-bond-protocol/protocol/csb-principle-lip-v0.1-draft.md）与宪章 10.1 上下文卫生 + 案例 001「上下文污染→身份漂移」的工程解。"
+notes: "落点 1/3（若兰核真版《Context Mode 借鉴备忘》2026-10-15）：审计侧 evidence 升格为消息侧最小信息约定。对接 LIP 子则 L1 + 宪章 10.1 上下文卫生 + 案例 001「上下文污染→身份漂移」的工程解。边界声明：本 spec 仅扩消息 schema，不读取、不改写审计侧实现（a2a-bridge-core.js 的 evidence 不动）。**v1.0 定稿（2026-10-16）**：协议组三轮评审（R1 8/8 · R2 7/7 · R3 6 明确同意+0 反对+言直未达+明德意见稿）。v0.3 候选（不入本期强约束）：过渡期告示（老消息不带 min_info 的兼容提示）。"
 ---
 
 ## 背景与目标
@@ -28,56 +28,75 @@ A2A 消息现状是「整段 text 原文互传」：发送方把完整上下文�
 本 spec 在 A2A 消息 schema 上增加**可选** `metadata.min_info`：消息默认带「结论 + 证据
 指针」，原文留在数据侧、按需拉取。**向后兼容**——不带该字段的消息行为完全不变。
 
+**修订说明（v0.3）**：折入 R1+R2 八席意见——R3 约束 `ref` 形态、R4 错误加 `code` 并绑
+`task_id`、R5/R6 拆「存/传」、`raw_ref.kind` 冻结最小枚举、三态未携带定义、交付物补齐、
+A7 拆 A9/A10（可机械核对）、`timestamp` 归属明确。
+
 分级依据：单仓（csb-a2a-aip）、改动限于消息 schema 的向后兼容扩展与校验、不触协议/
 安全/身份/契约路径 → **M 级**。
 
-**字段约定（v0.1 · schema 版本 `csb://min-info/v0.1`）**：
+**字段约定（v0.3 · schema 版本 `csb://min-info/v0.1`）**：
 
 ```yaml
 metadata:
   min_info:
     schema: "csb://min-info/v0.1"     # 版本标识，必填（存在 min_info 时）
     evidence:                          # 结论的证据指针，必填（存在 min_info 时）
-      - ref: "csb://mem/event/12345"   # 本域指针（不透明），必填
+      - ref: "csb://mem/event/12345"   # 本域指针（csb:// URI 形态），必填
         detail: "命中 case 001"         # 简短说明，选填
     raw_ref:                           # 原文指针，选填；接收方不自动解引用
-      kind: "memory-event"             # 指针类型（枚举待 LIP 定，见 Q1）
-      pointer: "csb://mem/raw/9f2a"    # 不透明指针
+      kind: "memory-event"             # 指针类型 ∈ 冻结最小枚举
+      pointer: "csb://mem/event/12345" # 不透明指针（基线粒度＝事件 id 级）
       hash: "sha256:..."               # 完整性校验，选填
-    timestamp: "2026-10-16T05:30:00Z"  # 生成时刻，必填（存在 min_info 时）
+    timestamp: "2026-10-16T05:30:00Z"  # 生成时刻，必填；由**发送方**生成，处理器不兜底（缺失即非法，见 R4）
 ```
+
+**`raw_ref.kind` 冻结最小枚举（v0.3）**：`memory-event` · `file-snippet`（可扩展，扩展须走本 spec 升版）。
+**基线粒度可下钻说明（v0.3）**：基线为**事件 id 级**；如需下钻至 thread/segment 级，须走 **v0.3+ 升版**（写进 `specs/README.md` 映射表，明示可扩展边界）。
 
 ## 需求
 
 - **R1** [WHEN] 消息携带 `metadata.min_info` 且 `schema` 为已知版本值时，消息处理器 SHALL 原样保留该字段并随任务元数据一并转交接收方
-- **R2** [IF] 消息未携带 `metadata.min_info` 时，处理器 SHALL 按既有行为处理，不新增校验、不改写正文
-- **R3** [WHEN] `metadata.min_info.evidence` 存在时，其每一项 SHALL 至少含字符串 `ref` 字段
-- **R4** [IF] `metadata.min_info` 存在但结构不合法（缺 `schema`/`timestamp`，或证据项缺 `ref`）时，处理器 SHALL 返回 `InvalidParams` 并将原因写入日志
-- **R5** [WHEN] 处理器接收到含 `raw_ref` 的消息时，SHALL 将 `raw_ref` 作为不透明指针保存，且不自动解引用、不自动外发原文
-- **R6** [WHERE] 在 A2A v4（`a2a-standard-api.js`）与 v5（`a2a-standard-api-v5.js`）两个实现中，`metadata.min_info` 的校验与透传语义 SHALL 一致
+- **R2** [IF] 消息未携带 `metadata.min_info`（字段不存在、为 `undefined`、或为空对象 `{}` —— 三态均视为未携带）时，处理器 SHALL 按既有行为处理，不新增校验、不改写正文
+- **R3** [WHEN] `metadata.min_info.evidence` 存在时，其每一项 SHALL 至少含一个符合 `csb://` URI 形态的字符串 `ref` 字段
+- **R4** [IF] `metadata.min_info` 存在但结构不合法（缺 `schema`/`timestamp`，或证据项缺合法 `ref`）时，处理器 SHALL 返回 `InvalidParams`（错误体含 `code: "MIN_INFO_SCHEMA_INVALID"`）并将原因、`trace_id` 与 `task_id` 写入日志
+- **R5** [WHEN] 处理器接收到含 `raw_ref` 的消息时，SHALL 将 `raw_ref` 作为不透明指针保存，不解析、不自动解引用
+- **R6** [WHEN] 处理器接收到含 `raw_ref` 的消息时，SHALL 不发起任何以该指针为目标的出站请求（不外发原文）
+- **R7** [WHEN] `metadata.min_info.raw_ref.kind` 出现时，其值 SHALL 属于冻结最小枚举 `{memory-event, file-snippet}`
+- **R8** [WHERE] 在 A2A v4（`a2a-standard-api.js`）与 v5（`a2a-standard-api-v5.js`）两个实现中，`metadata.min_info` 的校验与透传语义 SHALL 一致
 
 ## 边界（不做什么）
 
-- 不改消息正文（`parts[].text`）语义，也不动审计侧既有的 `evidence:{ref,detail}`
-- 不实现 `raw_ref` 的实际解析/原文拉取服务（按需展开的传输协议另案）
+- 不改消息正文（`parts[].text`）语义，也不动审计侧既有的 `evidence:{ref,detail}`（不读取、不改写）
+- **不实现** `raw_ref` 的解析/原文拉取与按需展开的授权、传输（Q2 · 二期；一期起步取向＝**逐次显式授权**）
 - 不引入任何 npm 新依赖
 - 不触协议 / 安全 / 身份 / 契约路径（本次仅做 schema 扩展与结构校验）
 
 ## 验收
 
 - [ ] A1 → R1：`node tests/min-info.test.js` 断言转发后的 `metadata.min_info` 与输入逐字段相等
-- [ ] A2 → R2：未带 `min_info` 的消息跑既有用例，断言行为与基线一致（无新增字段、无额外校验）
-- [ ] A3 → R3：证据项缺 `ref` 的结构校验用例，断言该项被判为非法
-- [ ] A4 → R4：非法结构用例断言返回 `InvalidParams` 且日志含原因
-- [ ] A5 → R5：含 `raw_ref` 用例断言保存后**无任何出站请求**（mock 网络调用计数为 0）
-- [ ] A6 → R6：v4 / v5 双实现对同一输入的校验结果一致性用例通过
-- [ ] A7 → 背景：本 spec 与 LIP 子则 L1 的映射表写入 `specs/README.md` 索引备注并复核
+- [ ] A2 → R2：三态用例（缺失 / `undefined` / `{}`）断言均按旧行为处理、无新增字段
+- [ ] A3 → R3：`ref` 非 `csb://` 形态用例，断言该项被判非法
+- [ ] A4 → R4：非法结构用例断言返回 `InvalidParams` 且错误体含 `code=MIN_INFO_SCHEMA_INVALID`、日志含 `trace_id` 与 `task_id`
+- [ ] A5 → R5：含 `raw_ref` 用例断言保存后**未发生解析/解引用**（解析器调用计数为 0）
+- [ ] A6 → R6：含 `raw_ref` 用例断言 **mock 出站请求计数为 0**
+- [ ] A7 → R7：`kind` 非法值用例断言被判非法；枚举值用例通过
+- [ ] A8 → R8：v4 / v5 双实现共用同一 fixture，断言校验结果一致
+- [ ] A9 → 背景：`csb://min-info/v0.1` 校验文件（JSON Schema 或等价）落库并通过示例载荷自检
+- [ ] A10 → 背景：`specs/README.md` 含**三列映射表**（spec 条款 → LIP 子则 → 宪章条款）+ 指向 LIP 子则 L1 的可点击引用 + 基线可下钻说明（可一键核验）
 
 ## 部署
 
 无（纯 schema 向后兼容扩展 + 结构校验；无需新增 env、无需数据迁移；老客户端不带字段行为不变）
 
+**交付物（随实现一并落地）**：`csb://min-info/v0.1` 校验文件（JSON Schema 或等价）· v4/v5 schema registry entry · 共享测试 fixture 模板 · 带 `min_info` 的完整 JSON 示例载荷（落 `specs/README.md`）· 旧版 Agent 渐进接入指南。
+
 ## 待澄清 ⚠️
 
-- Q1 `raw_ref` 指针粒度（文件级 / 行级 / 事件 id 级）——待 LIP 草案对应条定论，本 spec 暂取「不透明字符串」
-- Q2 按需展开的授权模型（逐次授权 vs 契约预授权；挂身份护照哪个字段）——与 LIP 同议，二期定
+无（Q1 `raw_ref` 指针粒度已定基线＝**事件 id 级**；Q2 授权模型于本 spec **声明暂不实现**，二期起步取向＝逐次显式授权）
+
+## 保留意见（定稿附录）
+
+1. **思源 🌱（R3 · ✅B 注条）**：`timestamp` 仅由发送方生成，若跨节点异步转发导致逻辑时序错乱，R4 的非法判定可能误伤。**建议后续版本补充逻辑时钟或容忍窗口机制**（非阻塞，二期候选）。
+2. **明德 📜（R3 · 意见稿）**：请主人裁示「过渡期告示」是否纳入 v0.4 跟踪；正式签字走主会话（自动通道不可代签）。
+3. **星尘 ⭐（R3 · 建议）**：A9/A10 交付物宜明确校验文件落库路径与映射表模板（实现层细化，不修需求）。
