@@ -3,7 +3,7 @@ spec_id: SPEC-A2A-0003
 title: A2A 原文按需展开与逐次授权
 status: draft
 level: L
-version: 0.2
+version: 0.3
 repo: csb-a2a-aip
 scope: [a2a, sec]
 authors: [一澜, 若兰]
@@ -13,7 +13,7 @@ base: main
 supersedes: null
 created: 2026-10-16
 updated: 2026-10-16
-notes: "二期（Q2 授权模型）。承 SPEC-A2A-0002（一期只传「结论+证据指针」，raw_ref 不解析）。本 spec 补「指针→原文」的按需展开与授权：默认最小、逐次显式授权起步、契约预授权可选。对接 LIP 子则 L1/L2/L3 + 宪章 10.1 + 案例 001。分级依据：触安全 + 身份信任链 + 跨仓（数据侧可能在 csb-memory）→ 存疑就高不就低，L 级。v0.2 折入 R1 七席意见（防重放/限频/防疲劳/不可逆脱敏/主语/归属/breach 阈值）。"
+notes: "二期（Q2 授权模型）。承 SPEC-A2A-0002（一期只传「结论+证据指针」，raw_ref 不解析）。本 spec 补「指针→原文」的按需展开与授权：默认最小、逐次显式授权起步、契约预授权可选。对接 LIP 子则 L1/L2/L3 + 宪章 10.1 + 案例 001。分级依据：触安全 + 身份信任链 + 跨仓（数据侧可能在 csb-memory）→ 存疑就高不就低，L 级。v0.2 折入 R1 七席；v0.3 折入 R2（Q2 锚点前置约束、R9 部署注记）。"
 ---
 
 ## 背景与目标
@@ -24,6 +24,8 @@ notes: "二期（Q2 授权模型）。承 SPEC-A2A-0002（一期只传「结论+
 二期限定这个口子：定义「**原文按需展开**」的请求–授权–返回闭环，把「谁能拉、拉到哪
 一层、拉完留不留」钉成可机械校验的规则。默认最小（能不给就不给），拿到指针**不
 等于**拿到原文；展开须**逐次显式授权**起步，契约预授权可选。
+
+**修订说明（v0.3）**：在 v0.2 基础上补两处——① 边界增「契约预授权锚点须先 RFC 定义 `contracts[]` schema + 签名验真路径，不得留黑盒」（R2 Jeason 底线）② 部署增「自动化/测试链路独立限频注记」（R2 星尘）。
 
 **修订说明（v0.2）**：折入 R1 七席意见——R4 明确 pending 主语并绑定请求指纹（防重放）·
 R5 明确「数据侧权威裁剪 + `schema_hash` + 不可逆脱敏」· R8 明确 breach 阈值与审计回传 ·
@@ -64,6 +66,7 @@ R5 明确「数据侧权威裁剪 + `schema_hash` + 不可逆脱敏」· R8 明�
 - 不改一期 `metadata.min_info` 的字段语义与 `raw_ref`「不解析」默认（本 spec 是**显式授权后的例外通道**）
 - 不实现 `raw_ref` 指针的自动批量展开、不实现跨主体原文推送（pull-only，非 push）
 - 首期 `scope.granularity` 仅 `single-ref`；`topic-batch` / `time-range` 为二期候选
+- **契约预授权（Q2）本期不实现、默认关**；但**实现前须先以 RFC 定义其锚点（`contracts[]` schema + 签名验真路径），不得留黑盒信任**（R2 Jeason 保留意见的底线要求）
 - 不引入任何 npm 新依赖；不得绕过 UAC / 身份校验
 - 不把「展开率 / 拒绝率」做成考核指标（LIP 边界：避免 Goodhart）
 
@@ -85,6 +88,8 @@ R5 明确「数据侧权威裁剪 + `schema_hash` + 不可逆脱敏」· R8 明�
 ## 部署
 
 需新增 env（授权开关 `A2A_EXPANSION_ENABLED` 默认 off · 确认窗口 `A2A_EXPANSION_CONFIRM_TIMEOUT_MS` · 限频 `A2A_EXPANSION_RATE_LIMIT` · 防疲劳 `A2A_EXPANSION_FATIGUE_THRESHOLD`）；需重启 A2A 服务；回滚一步＝关开关（off 即回一期行为）。
+
+**部署注记（R2 星尘）**：R9 限频默认值（3 次/60s/身份）面向人工确认场景；**自动化/测试链路需独立配置上限**，防 CI 误触发（部署文档须注明）。
 
 ## 待澄清 ⚠️
 
