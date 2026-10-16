@@ -50,7 +50,17 @@
 | 待确认 | `{ state: "expansion_pending", confirm_by: "<deadline>" }` | R4 |
 | 拒绝/超时 | `{ state: "denied", code: "<…>", reason: "<…>" }` | R2/R6 |
 
-**拒绝码**：`EXPANSION_IDENTITY_REQUIRED` · `EXPANSION_NOT_AUTHORIZED` · `EXPANSION_TIMEOUT` · `EXPANSION_SCOPE_EXCEEDED` · `EXPANSION_BREACH`（R8 安全例外）
+**拒绝码**：`EXPANSION_IDENTITY_REQUIRED` · `EXPANSION_NOT_AUTHORIZED` · `EXPANSION_TIMEOUT` · `EXPANSION_SCOPE_EXCEEDED` · `EXPANSION_RATE_LIMITED` · `EXPANSION_BREACH`（R8 安全例外）
+
+**防重放/限频/防疲劳（v0.2 · R4/R9/R10）**
+- pending 绑定指纹 `hash(raw_ref + requester.name + purpose)`，窗口内仅受理一次
+- 限频 `A2A_EXPANSION_RATE_LIMIT`（默认 3 次/60s/身份）→ 超限 `EXPANSION_RATE_LIMITED`
+- 防疲劳 `A2A_EXPANSION_FATIGUE_THRESHOLD`（默认 5）→ 达阈汇总为一条待办，防「习惯化放行」
+
+**裁剪与脱敏（v0.2 · R5）**
+- **数据侧为权威**裁剪（处理器仅作闸门，不得自行放行）
+- 视图附 `schema_hash`（防伪 + 可追溯）
+- 裁剪后**不可逆脱敏**（仅字段过滤不算达标）
 
 **存储**：不新增持久化原文副本；仅在账本追加 `expansion.*` 事件（哈希链）。留存声明记于事件 `retention` 字段。
 

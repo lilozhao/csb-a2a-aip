@@ -3,17 +3,17 @@ spec_id: SPEC-A2A-0003
 title: A2A 原文按需展开与逐次授权
 status: draft
 level: L
-version: 0.1
+version: 0.2
 repo: csb-a2a-aip
 scope: [a2a, sec]
 authors: [一澜, 若兰]
 agents: [ruolan]
-reviewers: []
+reviewers: [阿轩, Jeason, 墨丘, 舟楫, 思源, 言直, 明德, 星尘]
 base: main
 supersedes: null
 created: 2026-10-16
 updated: 2026-10-16
-notes: "二期（Q2 授权模型）。承 SPEC-A2A-0002（一期只传「结论+证据指针」，raw_ref 不解析）。本 spec 补「指针→原文」的按需展开与授权：默认最小、逐次显式授权起步、契约预授权可选。对接 LIP 子则 L1/L2/L3 + 宪章 10.1 + 案例 001。分级依据：触安全 + 身份信任链 + 跨仓（数据侧可能在 csb-memory）→ 存疑就高不就低，L 级。"
+notes: "二期（Q2 授权模型）。承 SPEC-A2A-0002（一期只传「结论+证据指针」，raw_ref 不解析）。本 spec 补「指针→原文」的按需展开与授权：默认最小、逐次显式授权起步、契约预授权可选。对接 LIP 子则 L1/L2/L3 + 宪章 10.1 + 案例 001。分级依据：触安全 + 身份信任链 + 跨仓（数据侧可能在 csb-memory）→ 存疑就高不就低，L 级。v0.2 折入 R1 七席意见（防重放/限频/防疲劳/不可逆脱敏/主语/归属/breach 阈值）。"
 ---
 
 ## 背景与目标
@@ -24,6 +24,10 @@ notes: "二期（Q2 授权模型）。承 SPEC-A2A-0002（一期只传「结论+
 二期限定这个口子：定义「**原文按需展开**」的请求–授权–返回闭环，把「谁能拉、拉到哪
 一层、拉完留不留」钉成可机械校验的规则。默认最小（能不给就不给），拿到指针**不
 等于**拿到原文；展开须**逐次显式授权**起步，契约预授权可选。
+
+**修订说明（v0.2）**：折入 R1 七席意见——R4 明确 pending 主语并绑定请求指纹（防重放）·
+R5 明确「数据侧权威裁剪 + `schema_hash` + 不可逆脱敏」· R8 明确 breach 阈值与审计回传 ·
+新增 R9 限频、R10 防疲劳；Q1 定案（单 ref 单次）、Q2 声明暂不实现、Q3 数据侧权威。
 
 分级依据：本 spec 触**安全**（授权判定、拒绝计分）、**身份信任链**（申请人身份锚）、
 **跨仓**（`raw_ref` 数据侧可能在 csb-memory）→ 按标准「存疑就高不就低」定 **L 级**
@@ -45,16 +49,21 @@ notes: "二期（Q2 授权模型）。承 SPEC-A2A-0002（一期只传「结论+
 - **R1** [WHEN] 接收方持有 `raw_ref` 且需原文时，A2A 处理器 SHALL 支持向其数据侧发起展开请求（`RequestExpansion`），并在未获授权前不返回原文
 - **R2** [IF] 展开请求未携带可解析的申请人身份（A2A 标准身份名）时，处理器 SHALL 拒绝该请求并返回 `EXPANSION_IDENTITY_REQUIRED`
 - **R3** [WHEN] 展开请求到达数据侧时，处理器 SHALL 默认按「拒绝」处置，仅当命中有效授权（逐次显式授权或契约预授权）时方返回原文或其受限视图
-- **R4** [IF] 授权判定为需人类确认（逐次显式授权路径）时，处理器 SHALL 返回 `expansion_pending`，并在确认窗口内等待数据侧主人答复
-- **R5** [WHEN] 返回展开结果时，处理器 SHALL 限定在授权范围内（单 ref / 带期限 / 脱敏视图），不得超出授权粒度返回原文
+- **R4** [IF] 授权判定为需人类确认（逐次显式授权路径）时，处理器 SHALL 向**调用方**返回 `expansion_pending` 并异步通知数据侧主人待确认（二者缺一不可）
+- **R5** [WHEN] 返回展开结果时，处理器 SHALL 由**数据侧为权威**裁剪受限视图（处理器仅作闸门，不得自行放行）
 - **R6** [IF] 展开被拒或超时未获授权时，处理器 SHALL 返回结构化拒绝（含 `reason` 与 `code`）并写入账本，不得静默丢弃
 - **R7** [WHEN] 展开结果返回后，处理器 SHALL 按 LIP 子则 L3 处置原文（默认不留；未声明继续即删），且记录留存声明
-- **R8** [IF] 命中安全事件（breach / 越界 / 私自行动 / 隐私边界）时，处理器 SHALL 触发安全审计，且该审计不受本 spec 授权链路限制
+- **R8** [IF] 命中安全事件（breach / 越界 / 私自行动 / 隐私边界），且达**显式 breach 判据**时，处理器 SHALL 触发安全审计并按既有审计回传路径上报，且该审计不受本 spec 授权链路限制（防「安全例外」成越权后门）
+- **R9** [IF] 展开请求或 pending 的重试频率超过阈值（`A2A_EXPANSION_RATE_LIMIT`，默认 3 次/60s/身份）时，处理器 SHALL 限流并返回 `EXPANSION_RATE_LIMITED`，同时记账
+- **R10** [IF] 同一数据侧主人的 pending 连续未决达防疲劳阈值（`A2A_EXPANSION_FATIGUE_THRESHOLD`，默认 5）时，处理器 SHALL 汇总为一条待办而非逐条推送（防「习惯化放行」）
+- **R11** [WHEN] 生成 pending 时，处理器 SHALL 为其绑定请求指纹 = `hash(raw_ref + requester.name + purpose)` 并保证同一指纹在确认窗口内仅被受理一次（防重放）
+- **R12** [WHEN] 返回受限视图时，处理器 SHALL 附 `schema_hash` 并作不可逆脱敏（仅过滤不算达标）
 
 ## 边界（不做什么）
 
 - 不改一期 `metadata.min_info` 的字段语义与 `raw_ref`「不解析」默认（本 spec 是**显式授权后的例外通道**）
 - 不实现 `raw_ref` 指针的自动批量展开、不实现跨主体原文推送（pull-only，非 push）
+- 首期 `scope.granularity` 仅 `single-ref`；`topic-batch` / `time-range` 为二期候选
 - 不引入任何 npm 新依赖；不得绕过 UAC / 身份校验
 - 不把「展开率 / 拒绝率」做成考核指标（LIP 边界：避免 Goodhart）
 
@@ -63,18 +72,20 @@ notes: "二期（Q2 授权模型）。承 SPEC-A2A-0002（一期只传「结论+
 - [ ] A1 → R1：`node tests/expansion.test.js` 断言未授权展开请求不返回原文、且触发 `RequestExpansion` 流程
 - [ ] A2 → R2：缺身份用例断言返回 `EXPANSION_IDENTITY_REQUIRED` 且退出码非 0
 - [ ] A3 → R3：无有效授权用例断言默认拒绝；有效授权用例断言返回原文/受限视图
-- [ ] A4 → R4：逐次显式授权用例断言返回 `expansion_pending` 并在窗口内等待
-- [ ] A5 → R5：超粒度请求用例断言被裁剪至授权范围，不越界返回原文
+- [ ] A4 → R4：pending 用例断言**调用方收 `expansion_pending` 且数据侧主人收到异步通知**
+- [ ] A5 → R5：超粒度请求用例断言由数据侧裁剪、处理器不自行放行
+- [ ] A11 → R11：同一请求指纹在窗口内第二次被拒（防重放用例）
+- [ ] A12 → R12：返回体含 `schema_hash` 且原字段不可逆还原（不可逆脱敏用例）
 - [ ] A6 → R6：拒绝/超时用例断言返回结构化拒绝且账本有该条记录（无静默）
 - [ ] A7 → R7：展开后用例断言原文按 L3 默认删除、留存声明已记
-- [ ] A8 → R8：breach 用例断言触发安全审计且不因缺授权而被拦截
+- [ ] A8 → R8：breach 用例断言达判据即触发安全审计并按回传路径上报、不被授权链拦截
+- [ ] A9 → R9：超频用例断言返回 `EXPANSION_RATE_LIMITED` 且记账
+- [ ] A10 → R10：连续 pending 达阈值用例断言汇总为一条待办（非逐条推送）
 
 ## 部署
 
-需新增 env（授权开关 `A2A_EXPANSION_ENABLED` 默认 off · 确认窗口 `A2A_EXPANSION_CONFIRM_TIMEOUT_MS`）；需重启 A2A 服务；回滚一步＝关开关（off 即回一期行为）。
+需新增 env（授权开关 `A2A_EXPANSION_ENABLED` 默认 off · 确认窗口 `A2A_EXPANSION_CONFIRM_TIMEOUT_MS` · 限频 `A2A_EXPANSION_RATE_LIMIT` · 防疲劳 `A2A_EXPANSION_FATIGUE_THRESHOLD`）；需重启 A2A 服务；回滚一步＝关开关（off 即回一期行为）。
 
 ## 待澄清 ⚠️
 
-- Q1 授权粒度默认值：单 ref 单次 vs 带期限（如 24h）——待评审定
-- Q2 契约预授权的载体：写进身份护照哪个字段 / 独立契约文件——待评审定
-- Q3 受限视图的脱敏规则由谁定义（数据侧自定 vs 协议层给最小集）——待评审定
+无（Q1 已定＝**单 ref 单次**；Q2 契约预授权于本 spec **声明暂不实现、默认关**，载体留待 RFC/二期；Q3 脱敏规则＝**数据侧权威**、协议层给最小 schema + 强制 `schema_hash`）
