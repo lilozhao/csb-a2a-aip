@@ -1,7 +1,7 @@
 ---
 spec_id: SPEC-A2A-0003
 title: A2A 原文按需展开与逐次授权
-status: approved
+status: done
 level: L
 version: 1.0
 repo: csb-a2a-aip
@@ -72,18 +72,18 @@ R5 明确「数据侧权威裁剪 + `schema_hash` + 不可逆脱敏」· R8 明�
 
 ## 验收
 
-- [ ] A1 → R1：`node tests/expansion.test.js` 断言未授权展开请求不返回原文、且触发 `RequestExpansion` 流程
-- [ ] A2 → R2：缺身份用例断言返回 `EXPANSION_IDENTITY_REQUIRED` 且退出码非 0
-- [ ] A3 → R3：无有效授权用例断言默认拒绝；有效授权用例断言返回原文/受限视图
-- [ ] A4 → R4：pending 用例断言**调用方收 `expansion_pending` 且数据侧主人收到异步通知**
-- [ ] A5 → R5：超粒度请求用例断言由数据侧裁剪、处理器不自行放行
-- [ ] A11 → R11：同一请求指纹在窗口内第二次被拒（防重放用例）
-- [ ] A12 → R12：返回体含 `schema_hash` 且原字段不可逆还原（不可逆脱敏用例）
-- [ ] A6 → R6：拒绝/超时用例断言返回结构化拒绝且账本有该条记录（无静默）
-- [ ] A7 → R7：展开后用例断言原文按 L3 默认删除、留存声明已记
-- [ ] A8 → R8：breach 用例断言达判据即触发安全审计并按回传路径上报、不被授权链拦截
-- [ ] A9 → R9：超频用例断言返回 `EXPANSION_RATE_LIMITED` 且记账
-- [ ] A10 → R10：连续 pending 达阈值用例断言汇总为一条待办（非逐条推送）
+- [x] A1 → R1：`node tests/expansion.test.js` 断言未授权展开请求不返回原文、且触发 `RequestExpansion` 流程
+- [x] A2 → R2：缺身份用例断言返回 `EXPANSION_IDENTITY_REQUIRED` 且退出码非 0
+- [x] A3 → R3：无有效授权用例断言默认拒绝；有效授权用例断言返回原文/受限视图
+- [x] A4 → R4：pending 用例断言**调用方收 `expansion_pending` 且数据侧主人收到异步通知**
+- [x] A5 → R5：超粒度请求用例断言由数据侧裁剪、处理器不自行放行
+- [x] A11 → R11：同一请求指纹在窗口内第二次被拒（防重放用例）
+- [x] A12 → R12：返回体含 `schema_hash` 且原字段不可逆还原（不可逆脱敏用例）
+- [x] A6 → R6：拒绝/超时用例断言返回结构化拒绝且账本有该条记录（无静默）
+- [x] A7 → R7：展开后用例断言原文按 L3 默认删除、留存声明已记
+- [x] A8 → R8：breach 用例断言达判据即触发安全审计并按回传路径上报、不被授权链拦截
+- [x] A9 → R9：超频用例断言返回 `EXPANSION_RATE_LIMITED` 且记账
+- [x] A10 → R10：连续 pending 达阈值用例断言汇总为一条待办（非逐条推送）
 
 ## 部署
 

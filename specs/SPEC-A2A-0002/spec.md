@@ -1,7 +1,7 @@
 ---
 spec_id: SPEC-A2A-0002
 title: A2A 消息最小信息约定（evidence/raw_ref 双字段）
-status: approved
+status: done
 level: M
 version: 1.1
 repo: csb-a2a-aip
@@ -80,16 +80,16 @@ metadata:
 
 ## 验收
 
-- [ ] A1 → R1：`node tests/min-info.test.js` 断言转发后的 `metadata.min_info` 与输入逐字段相等
-- [ ] A2 → R2：三态用例（缺失 / `undefined` / `{}`）断言均按旧行为处理、无新增字段
-- [ ] A3 → R3：`ref` 非 `csb://` 形态用例，断言该项被判非法
-- [ ] A4 → R4：非法结构用例断言返回 `InvalidParams` 且错误体含 `code=MIN_INFO_SCHEMA_INVALID`、日志含 `trace_id` 与 `task_id`
-- [ ] A5 → R5：含 `raw_ref` 用例断言保存后**未发生解析/解引用**（解析器调用计数为 0）
-- [ ] A6 → R6：含 `raw_ref` 用例断言 **mock 出站请求计数为 0**
-- [ ] A7 → R7：`kind` 非法值用例断言被判非法；枚举值用例通过
-- [ ] A8 → R8：v4 / v5 双实现共用同一 fixture，断言校验结果一致
-- [ ] A9 → 背景：`csb://min-info/v0.1` 校验文件（JSON Schema 或等价）落库并通过示例载荷自检
-- [ ] A10 → 背景：`specs/README.md` 含**三列映射表**（spec 条款 → LIP 子则 → 宪章条款）+ 指向 LIP 子则 L1 的可点击引用 + 基线可下钻说明（可一键核验）
+- [x] A1 → R1：`node tests/min-info.test.js` 断言转发后的 `metadata.min_info` 与输入逐字段相等
+- [x] A2 → R2：三态用例（缺失 / `undefined` / `{}`）断言均按旧行为处理、无新增字段
+- [x] A3 → R3：`ref` 非 `csb://` 形态用例，断言该项被判非法
+- [x] A4 → R4：非法结构用例断言返回 `InvalidParams` 且错误体含 `code=MIN_INFO_SCHEMA_INVALID`、日志含 `trace_id` 与 `task_id`
+- [x] A5 → R5：含 `raw_ref` 用例断言保存后**未发生解析/解引用**（解析器调用计数为 0）
+- [x] A6 → R6：含 `raw_ref` 用例断言 **mock 出站请求计数为 0**
+- [x] A7 → R7：`kind` 非法值用例断言被判非法；枚举值用例通过
+- [x] A8 → R8：v4 / v5 双实现共用同一 fixture，断言校验结果一致
+- [x] A9 → 背景：`csb://min-info/v0.1` 校验文件（JSON Schema 或等价）落库并通过示例载荷自检
+- [x] A10 → 背景：`specs/README.md` 含**三列映射表**（spec 条款 → LIP 子则 → 宪章条款）+ 指向 LIP 子则 L1 的可点击引用 + 基线可下钻说明（可一键核验）
 
 ## 部署
 

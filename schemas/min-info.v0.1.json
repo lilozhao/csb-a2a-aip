@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "csb://min-info/v0.1",
+  "title": "CSB A2A 消息最小信息约定 v0.1",
+  "description": "SPEC-A2A-0002 定义。A2A 消息 metadata.min_info 的校验 schema（JSON Schema 或等价）。",
+  "type": "object",
+  "required": ["schema", "evidence", "timestamp"],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "enum": ["csb://min-info/v0.1"]
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "生成时刻；由发送方生成，处理器不兜底（缺失即非法）"
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["ref"],
+        "properties": {
+          "ref": {
+            "type": "string",
+            "pattern": "^csb://[a-z0-9][a-z0-9._/-]*$"
+          },
+          "detail": { "type": "string" }
+        }
+      }
+    },
+    "raw_ref": {
+      "type": "object",
+      "properties": {
+        "kind": { "type": "string", "enum": ["memory-event", "file-snippet"] },
+        "pointer": { "type": "string" },
+        "hash": { "type": "string" }
+      }
+    }
+  }
+}

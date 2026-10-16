@@ -8,6 +8,7 @@
 const http = require('http');
 const https = require('https');
 const { TaskStore, TASK_STATE, ROLE, createMessage, createArtifact, createPart, TERMINAL_STATES } = require('./a2a-task-store.js');
+const minInfo = require('./a2a-min-info.js');
 
 // ============================================
 // 标准错误代码 (A2A §5.4)
@@ -135,6 +136,13 @@ class A2AStandardAPI {
 
   // ================= 核心方法 =================
 
+  /**
+   * [SPEC-A2A-0002] 校验并透传 metadata.min_info（R1/R2/R4/R9）——与 v5 语义一致（R8）。
+   */
+  _processMinInfo(metadata) {
+    return minInfo.processMinInfo(metadata);
+  }
+
   async _sendMessage(params) {
     if (!params?.message) return { error: 'InvalidParams', details: 'Missing message field' };
     if (!params.message.role || !params.message.parts) return { error: 'InvalidParams', details: 'Message must have role and parts' };
@@ -148,9 +156,23 @@ class A2AStandardAPI {
       }
     }
 
+    // [SPEC-A2A-0002] 消息最小信息约定（R1/R2/R4/R9）
+    {
+      const minInfoRes = this._processMinInfo(params.message?.metadata);
+      if (minInfoRes && minInfoRes.ok === false) {
+        const traceId = `mininfo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        console.error(`[A2A][min_info] ${minInfoRes.error.code}: ${minInfoRes.error.detail} | trace_id=${traceId} | task_id=pending`);
+        return { error: 'InvalidParams', details: { code: minInfoRes.error.code, detail: minInfoRes.error.detail, trace_id: traceId } };
+      }
+      if (minInfoRes && minInfoRes.notice) console.error(`[A2A][min_info] notice=${minInfoRes.notice}`);
+    }
+
     // 将 sender 信息存入 metadata，供 LLM 回复使用
+    // [SPEC-A2A-0002 R8] 与 v5 对齐：合并 message.metadata，使 min_info 随任务元数据一并转交
     const taskMetadata = {
       ...(params.configuration?.metadata || {}),
+      ...(params.metadata || {}),
+      ...(params.message?.metadata || {}),
       ...(params.sender ? { sender: params.sender } : {}),
     };
 

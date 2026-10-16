@@ -29,17 +29,17 @@
 
 | 需求 | 实现位置（文件/函数） | 测试用例 |
 |---|---|---|
-| R1 | a2a-expansion.js:handleRequestExpansion | tests/expansion.test.js A1 |
+| R1 | a2a-expansion.js:handleRequestExpansion + a2a-standard-api-v5.js:_requestExpansion | tests/expansion.test.js A1 |
 | R2 | a2a-expansion.js:validateRequester | tests/expansion.test.js A2 |
 | R3 | a2a-expansion.js:decideAuthorization | tests/expansion.test.js A3 |
-| R4 | a2a-expansion.js:awaitConfirmation + fingerprint | tests/expansion.test.js A4 |
+| R4 | a2a-expansion.js:handleRequestExpansion（pending 分支）+ notifyOwner | tests/expansion.test.js A4 |
 | R5 | a2a-expansion.js:projectView（数据侧权威） | tests/expansion.test.js A5 |
-| R12 | a2a-expansion.js:schemaHashAndDesensitize | tests/expansion.test.js A12 |
+| R12 | a2a-expansion.js:schemaHash + desensitize | tests/expansion.test.js A12 |
 | R6 | a2a-expansion.js:denyWithReason | tests/expansion.test.js A6 |
-| R7 | a2a-expansion.js:applyRetention | tests/expansion.test.js A7 |
+| R7 | a2a-expansion.js:handleRequestExpansion（retention 返回） | tests/expansion.test.js A7 |
 | R8 | a2a-expansion.js:securityException | tests/expansion.test.js A8 |
-| R9 | a2a-expansion.js:rateLimit | tests/expansion.test.js A9 |
+| R9 | a2a-expansion.js:_rateCheck | tests/expansion.test.js A9 |
 | R10 | a2a-expansion.js:fatigueAggregate | tests/expansion.test.js A10 |
-| R11 | a2a-expansion.js:fingerprintDedup | tests/expansion.test.js A11 |
+| R11 | a2a-expansion.js:requestFingerprint + _pendingFingerprintOnce | tests/expansion.test.js A11 |
 
 > 说明：实现位置为拟落点（draft 阶段占位）；approved 后由实施方按实际落地修正，L-14 以 done 时的真实指针为准。

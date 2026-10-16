@@ -21,3 +21,14 @@
 | SPEC-A2A-0003 | A2A 原文按需展开与逐次授权（二期 · Q2） | L | **approved v1.0**（2026-10-16 · 三轮 0 反对 + 一澜签字 · 未实施 · ledger #139） | 一澜/若兰 |
 
 （ARCHIVE/ 存放已归档与被取代的 spec；superseded 时序关系查此处索引）
+
+## 映射表（spec 条款 → LIP 子则 → 宪章条款）（SPEC-A2A-0002 A10）
+
+| spec 条款 | LIP 子则 | 宪章条款 |
+|---|---|---|
+| SPEC-A2A-0002 R1/R2（min_info 可选、向后兼容） | [L1 默认最小/按需展开](https://gitee.com/lilozhao/carbon-silicon-bond-protocol/blob/main/protocol/csb-principle-lip-v0.1-draft.md) | 第十条 10.1 上下文卫生 |
+| SPEC-A2A-0002 R5/R6（raw_ref 只存不析、零出站） | L1 默认最小 | 案例 001（上下文污染→身份漂移） |
+| SPEC-A2A-0003 R3/R5（默认拒绝、数据侧权威） | L2 本域处理 | 第十条 10.1 |
+| SPEC-A2A-0003 R7（展开后默认删） | L3 最小留存 | BID-H 沉默不采/限期删数 |
+
+**基线可下钻说明**：`raw_ref` 基线粒度＝**事件 id 级**；如需下钻至 thread/segment 级，须走 **v0.3+ 升版**。

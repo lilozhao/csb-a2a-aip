@@ -10,6 +10,7 @@ const https = require('https');
 const path = require('path');
 const { URL } = require('url');
 const { TaskStore, TASK_STATE, ROLE, createMessage, createArtifact, createPart, TERMINAL_STATES } = require('./a2a-task-store.js');
+const minInfo = require('./a2a-min-info.js');
 
 // ============================================
 // 标准错误代码 (A2A §5.4)
@@ -138,6 +139,7 @@ class A2AStandardAPI {
         case 'GetTask':              result = this._getTask(params);            break;
         case 'ListTasks':            result = this._listTasks(params);         break;
         case 'CancelTask':           result = this._cancelTask(params);         break;
+        case 'RequestExpansion':     result = await this._requestExpansion(params); break; // [SPEC-A2A-0003]
         default:
           return res.json({ jsonrpc: '2.0', error: a2aError('MethodNotFound', { method }), id });
       }
@@ -155,9 +157,32 @@ class A2AStandardAPI {
 
   // ================= 核心方法 =================
 
+  /**
+   * [SPEC-A2A-0003] 原文按需展开（R1–R12）。默认关：A2A_EXPANSION_ENABLED=off 时一律拒绝。
+   * 实现见 a2a-expansion.js；此处仅作 JSON-RPC 接线。
+   */
+  async _requestExpansion(params) {
+    const expansion = require('./a2a-expansion.js');
+    const ledger = (rec) => {
+      try {
+        const L = path.join(__dirname, '..', 'scripts', 'ledger.js');
+        if (require('fs').existsSync(L)) { /* 账本由桥接层统一写入；此处仅打印留痕 */ }
+      } catch (_) {}
+      console.error('[A2A][expansion]', JSON.stringify(rec));
+    };
+    return expansion.handleRequestExpansion(params, { ledger });
+  }
+
+  /**
+   * [SPEC-A2A-0002] 校验并透传 metadata.min_info（R1/R2/R4/R9）。
+   * 仅结构校验；不解析 raw_ref。
+   */
+  _processMinInfo(metadata) {
+    return minInfo.processMinInfo(metadata);
+  }
+
   async _sendMessage(params) {
-    if (!params?.message) return { error: 'InvalidParams', details: 'Missing message field' };
-    if (!params.message.role || !params.message.parts) return { error: 'InvalidParams', details: 'Message must have role and parts' };
+    if (!params?.message) return { error: 'InvalidParams', details: 'Missing message field' };    if (!params.message.role || !params.message.parts) return { error: 'InvalidParams', details: 'Message must have role and parts' };
 
     const msg = params.message;
     const returnImmediately = params.configuration?.returnImmediately === true;
@@ -165,6 +190,23 @@ class A2AStandardAPI {
     for (const p of msg.parts) {
       if (p.file?.mimeType && !this._isContentTypeSupported(p.file.mimeType)) {
         return { error: 'ContentTypeNotSupportedError', details: `Unsupported: ${p.file.mimeType}` };
+      }
+    }
+
+    // [SPEC-A2A-0002] 消息最小信息约定：校验 metadata.min_info（R1/R2/R4/R9）
+    // 边界：仅校验+透传，不解析 raw_ref（R5/R6 由 a2a-expansion.js 在显式授权下处理）
+    {
+      const minInfoRes = (typeof this._processMinInfo === 'function')
+        ? this._processMinInfo(params.message?.metadata)
+        : null;
+      if (minInfoRes && minInfoRes.ok === false) {
+        const traceId = `mininfo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        console.error(`[A2A][min_info] ${minInfoRes.error.code}: ${minInfoRes.error.detail} | trace_id=${traceId} | task_id=pending`);
+        return { error: 'InvalidParams', details: { code: minInfoRes.error.code, detail: minInfoRes.error.detail, trace_id: traceId } };
+      }
+      if (minInfoRes && minInfoRes.notice) {
+        // R9 过渡期提示（不改行为）
+        console.error(`[A2A][min_info] notice=${minInfoRes.notice}`);
       }
     }
 
