@@ -1,9 +1,9 @@
 ---
 spec_id: SPEC-A2A-0003
 title: A2A 原文按需展开与逐次授权
-status: done
+status: draft
 level: L
-version: 1.0
+version: 1.1
 repo: csb-a2a-aip
 scope: [a2a, sec]
 authors: [一澜, 若兰]
@@ -60,13 +60,16 @@ R5 明确「数据侧权威裁剪 + `schema_hash` + 不可逆脱敏」· R8 明�
 - **R10** [IF] 同一数据侧主人的 pending 连续未决达防疲劳阈值（`A2A_EXPANSION_FATIGUE_THRESHOLD`，默认 5）时，处理器 SHALL 汇总为一条待办而非逐条推送（防「习惯化放行」）
 - **R11** [WHEN] 生成 pending 时，处理器 SHALL 为其绑定请求指纹 = `hash(raw_ref + requester.name + purpose)` 并保证同一指纹在确认窗口内仅被受理一次（防重放）
 - **R12** [WHEN] 返回受限视图时，处理器 SHALL 附 `schema_hash` 并作不可逆脱敏（仅过滤不算达标）
+- **R13** [WHEN] `scope.granularity` 为 `topic-batch` 时，处理器 SHALL 按同一主题标识校验批量 ref 均落在授权范围，越范围即 `EXPANSION_SCOPE_EXCEEDED`
+- **R14** [WHEN] `scope.granularity` 为 `time-range` 时，处理器 SHALL 仅返回落在 `[from, to]` 内的事件
+- **R15** [WHEN] `scope.granularity` 为 `time-range` 且请求含越界时间的事件时，处理器 SHALL 裁剪越界事件而非返回
 
 ## 边界（不做什么）
 
 - 不改一期 `metadata.min_info` 的字段语义与 `raw_ref`「不解析」默认（本 spec 是**显式授权后的例外通道**）
 - 不实现 `raw_ref` 指针的自动批量展开、不实现跨主体原文推送（pull-only，非 push）
-- 首期 `scope.granularity` 仅 `single-ref`；`topic-batch` / `time-range` 为二期候选
-- **契约预授权（Q2）本期不实现、默认关**；但**实现前须先以 RFC 定义其锚点（`contracts[]` schema + 签名验真路径），不得留黑盒信任**（R2 Jeason 保留意见的底线要求）
+- 首期 `scope.granularity` 仅 `single-ref`；**v1.1（三期）扩至 `topic-batch` / `time-range`（默认仍 `single-ref`）**
+- **契约预授权（Q2）本期不实现、默认关**；但**实现前须先以 RFC 定义其锚点（`contracts[]` schema + 签名验真路径），不得留黑盒信任**（R2 Jeason 保留意见的底线要求）→ RFC 草案起于 `docs/rfc/RFC-contract-preauth.md`
 - 不引入任何 npm 新依赖；不得绕过 UAC / 身份校验
 - 不把「展开率 / 拒绝率」做成考核指标（LIP 边界：避免 Goodhart）
 
@@ -84,6 +87,9 @@ R5 明确「数据侧权威裁剪 + `schema_hash` + 不可逆脱敏」· R8 明�
 - [x] A8 → R8：breach 用例断言达判据即触发安全审计并按回传路径上报、不被授权链拦截
 - [x] A9 → R9：超频用例断言返回 `EXPANSION_RATE_LIMITED` 且记账
 - [x] A10 → R10：连续 pending 达阈值用例断言汇总为一条待办（非逐条推送）
+- [ ] A13 → R13：`topic-batch` 批量用例断言越主题范围被拒、同主题内通过
+- [ ] A14 → R14：`time-range` 用例断言范围内事件通过
+- [ ] A15 → R15：`time-range` 越界用例断言越界事件被裁剪、不返回
 
 ## 部署
 
