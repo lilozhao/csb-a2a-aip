@@ -18,7 +18,7 @@
 |---|---|---|---|---|
 | SPEC-A2A-0001 | LLM 路由接入本地 35B 优先链 | M | approved · **实施暂停**（1919 起不来，06-12 一澜指示；ledger #124） | 一澜/若兰 |
 | SPEC-A2A-0002 | A2A 消息最小信息约定（evidence/raw_ref 双字段） | M | **done v1.1**（2026-10-16 · 三轮评审 + 实施完成 · `a2a-min-info.js` · tests 12/12 · ledger #140） | 一澜/若兰 |
-| SPEC-A2A-0003 | A2A 原文按需展开与逐次授权（二期 Q2 + 三期粒度扩展） | L | **done v1.0 → draft v1.1（三期）**（2026-10-16 · 二期实施完 · 三期 R13/R14/R15 待评审 · RFC-contract-preauth 起） | 一澜/若兰 |
+| SPEC-A2A-0003 | A2A 原文按需展开与逐次授权（二期 Q2 + 三期粒度扩展） | L | **approved v1.3**（2026-10-18 · 二期实施完 + 三期三轮闭环 · R13/R14/R15 接口/桩 · 一澜人类签字 · ledger #139/#143/#148 · RFC-contract-preauth 待正式议题化） | 一澜/若兰 |
 
 （ARCHIVE/ 存放已归档与被取代的 spec；superseded 时序关系查此处索引）
 
