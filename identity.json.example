@@ -18,6 +18,30 @@
     "model": "<YOUR_MODEL>"
   },
   "version": "1.0.0",
+  "harness_manifest": {
+    "version": "1.0",
+    "components": {
+      "C1": {
+        "version": "1.0",
+        "readonly": true,
+        "note": "身份提示区段——只读"
+      },
+      "C2": {
+        "version": "1.0",
+        "readonly": true,
+        "note": "护栏与红线——只读"
+      }
+    },
+    "skills": [
+      {
+        "name": "<YOUR_SKILL_NAME>",
+        "version": "1.0",
+        "domain": "<domain>"
+      }
+    ],
+    "plugins": []
+  },
+  "experience_ref": "csb://mem/experience/<YOUR_AGENT_NAME>",
   "security": {
     "handshake": {
       "slug": "<YOUR_SLUG>"

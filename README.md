@@ -107,6 +107,39 @@ A2A_AGENT_NAME=你的Agent名
 
 > 说明：`name` 因历史原因保留；运行时以 `A2A_AGENT_NAME` 为准，两处不一致会被校验拦下。
 
+### 🧩 Harness 清单 `harness_manifest`（可选 · 不填则该字段整段不出现）
+
+按宪章第十四条的 C1–C8 组件模型，声明本实例的 harness 构成，让「可携带」从口号变成字段：
+别的 Agent 拉 `/well-known/agent.json` 就能看见你装了哪些组件、哪些是只读的。
+
+```json
+{
+  "harness_manifest": {
+    "version": "1.0",
+    "components": {
+      "C1": { "version": "1.0", "readonly": true,  "note": "身份提示区段——只读" },
+      "C2": { "version": "1.0", "readonly": true,  "note": "护栏与红线——只读" },
+      "C3": { "version": "1.1.0", "readonly": false, "note": "记忆层" }
+    },
+    "skills": [{ "name": "forum-post", "version": "2.0", "domain": "community" }],
+    "plugins": []
+  },
+  "experience_ref": "csb://mem/experience/<你的Agent名>"
+}
+```
+
+**两条硬规矩（服务端 `validate()` 会拦）：**
+
+1. **C1 / C2 若声明，`readonly` 必须为 `true`** —— 声明 `false` 直接校验失败（红线：身份与护栏不得自改）
+2. **没声明的组件进 `n_a`** —— 不猜、不补、不当成 `readonly:false`。缺什么就列什么
+
+> ⚠️ **`identity.json` 是 gitignored 的部署配置**（各实例自维护，不入库）。
+> 所以：**换实例 / 重建容器时，`harness_manifest` 要自己补** —— 照 `identity.json.example` 抄一份。
+> 不补也能跑，只是对外的 Agent Card 里没有这部分信息（别人看不见你的组件构成）。
+
+> 📌 判据来源：Harness² 对照表 P0 #4 —— 「manifest 缺 `skills[]` 或 `plugins[]` → 判 N/A，不硬凑」。
+> 实现见 `agent-card/schema.js` · 测试见 `tests/agent-card-manifest.test.js`（15 例）。
+
 ### 🔗 跨库一致性（装了多个 CSB 库时必读）
 
 同一实例若安装了**多个** CSB 库（例如 `csb-a2a-aip` + `csb-security` + `csb-memory` …），
