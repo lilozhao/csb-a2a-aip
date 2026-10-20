@@ -48,6 +48,8 @@ const DEFAULT_CARD = {
  * @param {Object} [data.trust]      - 信任信息
  * @param {Object} [data.pricing]    - 计价模式（商业场景）
  * @param {Object} [data.sandbox]    - 沙箱能力声明
+ * @param {Object} [data.harness_manifest] - 可携带 harness 清单（Harness² C1–C8 · 见 normalizeManifest）
+ * @param {string} [data.experience_ref]   - 经验层引用（csb-memory EXPERIENCE 层端点/指针）
  * @param {string} [data.domain]     - 域标识
  * @param {string} [data.status]     - 在线状态
  * @returns {Object} agentCard
@@ -71,6 +73,12 @@ function build(data) {
   if (data.pricing) card.pricing = data.pricing;
   if (data.sandbox) card.sandbox = data.sandbox;
 
+  // Harness Manifest（Harness² C1–C8 可携带清单）——有才写，向后兼容
+  if (data.harness_manifest) {
+    card.harness_manifest = normalizeManifest(data.harness_manifest);
+  }
+  if (data.experience_ref) card.experience_ref = data.experience_ref;
+
   // 信任评分
   if (data.trust) {
     card.trust = { ...card.trust, ...data.trust };
@@ -81,6 +89,50 @@ function build(data) {
   card.last_seen = Date.now();
 
   return card;
+}
+
+/**
+ * 规范化 harness_manifest
+ *
+ * 刻意**不设必填**：缺块 = 该块能力未知（判 N/A），不是非法卡。
+ * 沿用 CSB「数据不足不聚合」原则——不硬凑。
+ *
+ * @param {Object} m
+ * @returns {Object} { components, skills, plugins, n_a }
+ */
+function normalizeManifest(m) {
+  const src = (m && typeof m === 'object') ? m : {};
+  const comps = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8'];
+  const components = {};
+  const na = [];
+
+  for (const c of comps) {
+    const v = src.components && src.components[c];
+    if (v && typeof v === 'object') {
+      components[c] = {
+        declared: true,
+        version: v.version || null,
+        readonly: v.readonly === true,   // C1/C2 应为 true
+        note: v.note || '',
+      };
+    } else {
+      na.push(c);                        // 未声明的判 N/A，不猜
+    }
+  }
+
+  const normList = (x) => Array.isArray(x) ? x.filter(i => i && i.name).map(i => ({
+    name: i.name,
+    version: i.version || null,
+    domain: i.domain || null,
+  })) : [];
+
+  return {
+    version: src.version || null,
+    components,
+    skills: normList(src.skills),
+    plugins: normList(src.plugins),
+    n_a: na,                             // 透明呈现：这些块本卡未声明
+  };
 }
 
 /**
@@ -147,6 +199,21 @@ function validate(card) {
     errors.push(`status 无效: ${card.status}`);
   }
 
+  // 检查 harness_manifest 结构与只读红线（C1/C2 声明 readonly:false 视为违规）
+  if (card.harness_manifest) {
+    const hm = card.harness_manifest;
+    if (typeof hm.components !== 'object') {
+      errors.push('harness_manifest.components 必须是对象');
+    } else {
+      for (const must of ['C1', 'C2']) {
+        const c = hm.components[must];
+        if (c && c.declared && c.readonly !== true) {
+          errors.push(`harness_manifest.${must} 必须 readonly:true（红线：C1/C2 只读）`);
+        }
+      }
+    }
+  }
+
   return {
     valid: errors.length === 0,
     errors,
@@ -168,6 +235,8 @@ function toWellKnown(card) {
     endpoints: card.endpoints,
     status: card.status,
     trust_score: card.trust?.score || 0,
+    harness_manifest: card.harness_manifest || null,
+    experience_ref: card.experience_ref || null,
     last_seen: card.last_seen,
   };
 }
@@ -190,6 +259,6 @@ function minimal(name, id, endpoints) {
 }
 
 module.exports = {
-  build, validate, toWellKnown, minimal,
+  build, validate, toWellKnown, minimal, normalizeManifest,
   REQUIRED_FIELDS, SANDBOX_TYPES, CAPABILITY_LEVELS,
 };
