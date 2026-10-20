@@ -67,7 +67,7 @@ cp .env.example .env
 #   编辑 .env，把 A2A_AGENT_NAME 改成你的 Agent 名
 
 # ② 配置身份文件
-cp identity.example.json identity.json
+cp identity.json.example identity.json
 #   编辑 identity.json，name 字段必须与上面的 A2A_AGENT_NAME 完全一致
 
 # 启动（v5）

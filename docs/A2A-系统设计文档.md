@@ -379,7 +379,7 @@ cd csb-a2a-aip
 npm install
 
 # 配置身份
-cp identity.example.json identity.json
+cp identity.json.example identity.json
 # 编辑 identity.json
 ```
 

@@ -14,8 +14,8 @@ export A2A_DATA_DIR="${A2A_DATA_DIR:-${A2A_DIR}/data}"
 if [ ! -f "${A2A_DIR}/identity.json" ]; then
     echo "❌ 错误：找不到 identity.json"
     echo ""
-    echo "请复制 identity.example.json 并修改："
-    echo "  cp identity.example.json identity.json"
+    echo "请复制 identity.json.example 并修改："
+    echo "  cp identity.json.example identity.json"
     echo "  # 编辑 identity.json，填入你的配置"
     exit 1
 fi

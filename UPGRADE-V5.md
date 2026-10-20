@@ -122,7 +122,7 @@ cd /home/node/.openclaw/workspace
 git clone https://gitee.com/lilozhao/csb-a2a-aip.git
 cd csb-a2a-aip
 npm install
-cp identity.example.json identity.json   # 填入自己的身份
+cp identity.json.example identity.json   # 填入自己的身份
 ./start-v5.sh
 
 # 方式二：已有旧版 shared-a2a-skill 的 Agent
