@@ -810,20 +810,48 @@ app.get('/capabilities', (req, res) => {
 });
 
 // Agent Card (A2A-001)
-app.get('/.well-known/agent.json', (req, res) => {
-  res.json({
+//
+// [2026-10-21] 改走 agent-card/schema.js 单一 schema，不再手写 JSON。
+// 起因：harness_manifest / experience_ref 两个字段在 schema.js 里落地并有 15 条测试
+// （2ab5bbb），但本路由从未调用它 → 服务端实际发出的卡片里根本没有这两个字段。
+// 「测试证明 schema 对」与「服务端在用 schema」是两件事。
+const agentCardSchema = require('./agent-card/schema');
+
+/** 从 identity 组装 build() 入参（缺省字段不硬凑，交由 schema 判 N/A） */
+function buildLocalCard() {
+  return agentCardSchema.build({
     name: identity.name,
-    emoji: identity.emoji || '🤖',
-    description: identity.description || '',
-    version: A2A_VERSION,
-    protocolVersion: '0.6',
+    id: identity.id || `agent-${identity.name}`,
+    type: 'persistent',
+    status: 'online',
     endpoints: {
       jsonrpc: `http://${A2A_ADVERTISE_HOST}:${port}/a2a/json-rpc`,
       rest: { sendMessage: `http://${A2A_ADVERTISE_HOST}:${port}/message:send`, getTask: `http://${A2A_ADVERTISE_HOST}:${port}/tasks/`, listTasks: `http://${A2A_ADVERTISE_HOST}:${port}/tasks`, cancel: `http://${A2A_ADVERTISE_HOST}:${port}/tasks/:id/cancel`, stream: `http://${A2A_ADVERTISE_HOST}:${port}/a2a/stream/:id` },
     },
+    capabilities: Object.entries(identity.capabilities || {})
+      .filter(([, v]) => v === true)
+      .map(([k]) => ({ name: k, level: 'intermediate' })),
+    harness_manifest: identity.harness_manifest,
+    experience_ref: identity.experience_ref,
+  });
+}
+
+app.get('/.well-known/agent.json', (req, res) => {
+  const card = buildLocalCard();
+  res.json({
+    // A2A 基础面（保持对外契约不变）
+    name: card.name,
+    emoji: identity.emoji || '🤖',
+    description: identity.description || '',
+    version: A2A_VERSION,
+    protocolVersion: '0.6',
+    endpoints: card.endpoints,
     capabilities: standardAPI.getCapabilities(),
     skills: identity.skills || [],
     authentication: { schemes: ['bearer'] },
+    // Harness² C1–C8 可携带清单（2026-10-21 接线 · identity.json 未声明则整段省略）
+    ...(card.harness_manifest ? { harness_manifest: card.harness_manifest } : {}),
+    ...(card.experience_ref ? { experience_ref: card.experience_ref } : {}),
   });
 });
 
