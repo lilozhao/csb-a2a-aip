@@ -54,6 +54,13 @@ class A2AStandardAPI {
     // 远程命令处理器 (CMD: 前缀)
     this._commandHandler   = options.commandHandler || null;
 
+    // [2026-10-20 补接] A2A 入站可见性 Layer1 收件箱 + Layer2 主会话通知
+    //   根因：v4→v5 重构时这段接线没搬过来——server_v5.js 传了 inbox/chatNotifyHandler，
+    //        但本类既未接收也未使用，导致 v5 实例**任何入站消息都不留痕**
+    //        （tests/a2a-inbox.test.js 4 项长期失败）。
+    this._inbox            = options.inbox || null;
+    this._chatNotifyHandler = options.chatNotifyHandler || null;
+
     // SSE 订阅者: Map<taskId, Set<{res, lastPing}>
     this.streamSubscribers = new Map();
     this._sseHeartbeatInterval = 15000; // 15s 心跳
@@ -391,7 +398,33 @@ class A2AStandardAPI {
 
   // ================= 辅助 =================
 
+  /**
+   * [2026-10-20] 入站留痕 + 主会话通知（Layer1 / Layer2）
+   *
+   * 规则（与 v4 一致）：
+   *   - 所有入站消息都写收件箱（含委托），kind 由 inbox.record 自行判定
+   *   - 只有**非委托**消息触发主会话通知（委托走自己的通道，不骚扰主会话）
+   *   - fire-and-forget：通知不得阻塞 A2A 响应（2026-10-20 阿轩超时教训）
+   *   - 任一环节抛错都不得反噬主链路（收件箱是观测，不是业务）
+   */
+  _recordInbound(taskId, msg, metadata) {
+    if (this._inbox) {
+      try { this._inbox.record({ taskId, msg, metadata }); }
+      catch (e) { console.warn('[A2A] ⚠️ 收件箱写入失败（不影响主链路）:', e.message); }
+    }
+    if (this._chatNotifyHandler && !(msg && msg.delegation)) {
+      try {
+        const p = this._chatNotifyHandler(taskId, msg, metadata);
+        if (p && typeof p.catch === 'function') {
+          p.catch((e) => console.warn('[A2A] ⚠️ 主会话通知失败（不影响主链路）:', e && e.message));
+        }
+      } catch (e) { console.warn('[A2A] ⚠️ 主会话通知异常（不影响主链路）:', e.message); }
+    }
+  }
+
   async _processTask(taskId, msg, metadata) {
+    // 入口即留痕：不论后续走 CMD / 委派 / 自动应答，都先记一笔
+    this._recordInbound(taskId, msg, metadata);
     if (this._externalHandler) return this._externalHandler(taskId, msg);
 
     let text = msg.parts.filter(p => p.text).map(p => p.text).join(' ');
