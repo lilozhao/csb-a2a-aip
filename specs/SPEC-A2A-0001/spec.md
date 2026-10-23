@@ -12,8 +12,9 @@ reviewers: [阿轩]
 base: main
 supersedes: null
 created: 2026-10-12
-updated: 2026-10-12
+updated: 2026-10-23
 notes: "实施暂停（2026-10-12 06:19 一澜指示）：宿主机 35B（1919）暂时起不来，待服务恢复后从 approved 续入 implementing"
+blocked_recheck: "**2026-10-23 23:1x 复测（若兰）**：宿主机 1919 **仍 CLOSED**（`/tcp 172.28.0.1/1919` → Connection refused）。代码侧零落地确认：`tests/llm-router-order.test.js` 不存在、`grep 'local-llm'` 全仓零命中。**阻塞延续，维持 approved 不动**。下次盘点无需重复排查，直接复测 1919 端口即可。"
 ---
 
 ## 背景与目标
