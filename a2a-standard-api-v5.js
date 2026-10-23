@@ -170,14 +170,14 @@ class A2AStandardAPI {
    */
   async _requestExpansion(params) {
     const expansion = require('./a2a-expansion.js');
-    const ledger = (rec) => {
-      try {
-        const L = path.join(__dirname, '..', 'scripts', 'ledger.js');
-        if (require('fs').existsSync(L)) { /* 账本由桥接层统一写入；此处仅打印留痕 */ }
-      } catch (_) {}
-      console.error('[A2A][expansion]', JSON.stringify(rec));
-    };
-    return expansion.handleRequestExpansion(params, { ledger });
+    // [SPEC-A2A-0003 · 2026-10-23 收口] 账本由 expansion-ledger.js 真正落盘。
+    // 原先是空壳：只 console.error，违反 P1「拒绝要计分」。
+    // 写失败不阻断业务（审计是旁路），但计入 dropped 计数可被巡检读到。
+    const { makeLedger, makeAuditor } = require('./expansion-ledger.js');
+    const ledgerOpts = { workspaceDir: process.env.CSB_WORKSPACE };
+    const ledger = makeLedger(ledgerOpts);
+    const auditor = makeAuditor(ledgerOpts);
+    return expansion.handleRequestExpansion(params, { ledger, auditor });
   }
 
   /**

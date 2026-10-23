@@ -1,7 +1,7 @@
 ---
 spec_id: SPEC-A2A-0003
 title: A2A 原文按需展开与逐次授权
-status: approved
+status: implementing
 level: L
 version: 1.3
 repo: csb-a2a-aip
@@ -12,7 +12,8 @@ reviewers: [阿轩, Jeason, 墨丘, 舟楫, 思源, 言直, 明德, 星尘]
 base: main
 supersedes: null
 created: 2026-10-16
-updated: 2026-10-18
+updated: 2026-10-23
+notes_status: "**2026-10-23 状态订正 approved → implementing**（若兰核验）：T1–T8 代码 2026-10-16 已全部落地，`tests/expansion.test.js` 13/13 通过，`RequestExpansion` 已接进 `a2a-standard-api-v5.js:149` 方法表；tasks.md 此前 8 条全未勾选属未报完工。核验发现两处缺口并当日补齐：① T4 账本原为空壳（`existsSync` 后无写入，违反 P1「拒绝要计分」）→ 新增 `expansion-ledger.js` 接 `scripts/ledger.js` 哈希链账本，实测落盘 seq 173；② README/TOOLS/CHANGELOG 零同步 → 已补。**未判 done**：尚无开关打开后的真实 A2A 端到端往返。"
 notes: "**v1.3 定稿（2026-10-18·一澜人类签字）**：三期三轮（R1 6/6同意 · R2 D1–D5 6/6采纳 · R3 5×✅A+2×✅B+0❌）后经**一澜（人类评审）签字 2026-10-18** → status=approved。RFC-contract-preauth 走正式议题化流程（Jeason 保留）；本期仅登记方向（非定稿）。**v1.3（2026-10-17·三期 R2 折入）**：折入 R2 六席最终立场——D1 半开区间 `[from,to)` · D2 双锚 `topic_id`+`schema_hash`+命名空间冻结前置 · D3 ISO8601 强制 · D4 公钥走护照 `pubkey`（RFC 仅登记） · **D5 本期仅留接口/schema 锚点与校验桩，R13–R15 批量/时序裁剪完整实现延至二期**（六席一致）。**v1.2（2026-10-17·三期 R2 折入）**：折入三期 R1 七席意见——① R14/R15 边界语义明确为**半开区间 `[from, to)`**（阿轩/Jeason/墨丘/舟楫/思源/星尘 六席一致）② R13 `topic-batch` 主题标识采 **`topic_id` + `schema_hash` 双锚**且命名空间**须先冻结**（六席共识「先定再开工」）③ 边界增「时间范围须 ISO8601」④ RFC 开放问题#1 **公钥分发须先定**（走身份护照 `pubkey`）。二期（Q2 授权模型）。承 SPEC-A2A-0002（一期只传「结论+证据指针」，raw_ref 不解析）。本 spec 补「指针→原文」的按需展开与授权：默认最小、逐次显式授权起步、契约预授权可选。对接 LIP 子则 L1/L2/L3 + 宪章 10.1 + 案例 001。分级依据：触安全 + 身份信任链 + 跨仓（数据侧可能在 csb-memory）→ 存疑就高不就低，L 级。**v1.0 定稿（2026-10-16）**：协议组三轮（R1 7/7 L级全认 · R2 6采纳+1❌Q2 · R3 5×A+2×B+0❌）+ 一澜（人类评审）签字。"
 ---
 

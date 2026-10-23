@@ -1,4 +1,4 @@
-# CSB-A2A-AIP (v5.0.1)
+# CSB-A2A-AIP (v5.1.0)
 
 碳硅契 A2A 协议实现 —— 让多个 AI Agent 通过 A2A v5 协议建立真实连接。
 
@@ -17,8 +17,9 @@ CSB-A2A-AIP 是碳硅契（Carbon-Silicon Bond）协议的 A2A 通信层实现�
 
 | 模块 | 文件 | 说明 |
 |------|------|------|
-| A2A Server | `server_v5.js` | A2A v5 协议服务器（v5.0.1） |
+| A2A Server | `server_v5.js` | A2A v5 协议服务器（v5.1.0） |
 | 标准 API | `a2a-standard-api-v5.js` | A2A v0.6 标准 API 实现 |
+| 原文按需展开 | `a2a-expansion.js` + `expansion-ledger.js` | **SPEC-A2A-0003** 指针→原文的逐次授权展开（默认 off，见下文） |
 | 分层提示词 | `a2a-layered-prompt.js` | 四层提示词引擎 |
 | LLM 路由 | `llm-router.js` | 多 LLM 适配器（OpenClaw/API/原生） |
 | 上下文生成 | `a2a-context-generator.js` | A2A 消息上下文传递 |
@@ -33,7 +34,28 @@ CSB-A2A-AIP 是碳硅契（Carbon-Silicon Bond）协议的 A2A 通信层实现�
 | 信任证据接线 | `a2a-trust-evidence.js` | 消息链事件 → 证据账本（信任升级 P0，见 [docs/TRUST-EVIDENCE-WIRING.md](docs/TRUST-EVIDENCE-WIRING.md)） |
 | 版本协商 | `version-negotiator.js` | 协议版本兼容协商 |
 | 能力路由 | `capability-router.js` | 按能力分发任务 |
-| 能力声明 | `data/capabilities.json` | 声明式 capabilities 列表（v5.0.1：独立文件 + fs.watch 热更新） |
+| 能力声明 | `data/capabilities.json` | 声明式 capabilities 列表（独立文件 + fs.watch 热更新） |
+
+## 原文按需展开（SPEC-A2A-0003 · v5.1.0）
+
+承 SPEC-A2A-0002「只传结论 + 证据指针，raw_ref 不解析」。本能力补上「指针 → 原文」的按需展开：
+
+- **默认关**：`A2A_EXPANSION_ENABLED` 未设或 off 时一律拒绝，行为与一期完全一致（只存不析、零出站）
+- **默认拒绝**：授权判定的默认结果是拒；逐次显式授权才能取到原文
+- **数据侧权威**：裁剪与脱敏由数据侧决定，越界即 `EXPANSION_SCOPE_EXCEEDED`
+- **拒绝必落账**：每次 deny 写哈希链账本（P1「拒绝要计分」），写失败计入 `getDropped()` 可被巡检读到
+- **回滚一步**：把 `A2A_EXPANSION_ENABLED` 关掉即回一期行为
+
+| 环境变量 | 默认 | 说明 |
+|---|---|---|
+| `A2A_EXPANSION_ENABLED` | off | 总开关；**回滚一步即此** |
+| `A2A_EXPANSION_CONFIRM_TIMEOUT_MS` | 见实现 | pending 确认窗口 |
+| `A2A_EXPANSION_RATE_LIMIT` / `A2A_EXPANSION_RATE_WINDOW_MS` | 见实现 | 限频 |
+| `A2A_EXPANSION_FATIGUE_THRESHOLD` | 见实现 | 防疲劳汇总阈值 |
+| `A2A_EXPANSION_LEDGER_ACTOR` | `a2a-expansion` | 账本 actor |
+| `CSB_WORKSPACE` | 自动上溯 | workspace 根（定位 `scripts/ledger.js`） |
+
+状态：**implementing**（代码全落地，待开关打开后的端到端实跑）（测试 13/13，`tests/expansion.test.js`）· 详见 [specs/SPEC-A2A-0003](specs/SPEC-A2A-0003/spec.md)
 | 委托管理 | `delegation-manager.js` | 跨 Agent 任务委托 |
 | 自环守卫 | `a2a-self-guard.js` | 自环调用快速拒绝（SELF_MESSAGE_IGNORED，见 [SELF-GUARD.md](SELF-GUARD.md)） |
 | 圆桌论坛 | `roundtable-v4.js` | 多 Agent 每日讨论 |
