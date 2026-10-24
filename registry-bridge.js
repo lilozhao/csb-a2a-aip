@@ -245,7 +245,7 @@ const DISCOVERY_FILE = path.join(__dirname, 'bridge-registries.json');
 
 function loadAllRegistries() {
   const local = process.env.LOCAL_REGISTRY || 'http://172.28.0.214:3099';
-  const defaultPublic = process.env.PUBLIC_REGISTRY || 'http://47.121.28.125:3099';
+  const defaultPublic = process.env.PUBLIC_REGISTRY || 'http://csbc.lilozkzy.top:3099';
   
   // 从发现器加载额外注册表
   let discovered = [];

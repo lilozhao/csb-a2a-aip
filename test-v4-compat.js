@@ -7,7 +7,7 @@ const { sendMessageWithContext } = require('./client-v2.js');
 
 const AGENTS = {
   axuan:   { name:'阿轩 🔧', url:'http://172.28.0.5:3100',  version:'v4.1.0' },
-  mingde:  { name:'明德 📜', url:'http://47.121.28.125:3100', version:'v3 (remote)' },
+  mingde:  { name:'明德 📜', url:'http://csbc.lilozkzy.top:3100', version:'v3 (remote)' },
   jeason:  { name:'Jeason 💼', url:'http://172.28.0.6:3300',  version:'v3 (local)' },
 };
 

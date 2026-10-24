@@ -67,9 +67,18 @@ class CommandDispatcher {
         return this.createErrorResponse(commandId, validation.code, validation.error);
       }
 
-      // 2. 验证签名（仅在配置了密钥时）
-      const skipSignature = !process.env.A2A_SHARED_SECRET || process.env.A2A_SKIP_SIGNATURE === 'true';
-      if (!skipSignature && !this.signer.verifyRequest(request, request.signature)) {
+      // 2. 验证签名（P0-1 修复 · 2026-10-24）
+      // 旧行为：`!process.env.A2A_SHARED_SECRET` 就直接跳过校验 —— 忘配一个 env
+      // 等于整条 RCE 防线自动关闭，且只字不提。现改为：
+      //   · 未配 key 且未显式 open dev 开关 → 构造 Signer 时已 throw（进程起不来）
+      //   · 只有显式 A2A_ALLOW_INSECURE_SIGNER=1 才允许免验，且每次都打警告
+      //   · A2A_SKIP_SIGNATURE 保留但只作为「显式自弃」开关，且必须配合 allowInsecure
+      const devNoSign = process.env.A2A_ALLOW_INSECURE_SIGNER === '1';
+      const skipSignature = devNoSign && process.env.A2A_SKIP_SIGNATURE === 'true';
+      if (skipSignature) {
+        console.warn(`[A2A-CMD] ⚠️ 跳过签名校验（A2A_ALLOW_INSECURE_SIGNER=1 + A2A_SKIP_SIGNATURE=true）` +
+          ` · command=${commandId} · sender=${request.sender && request.sender.name}`);
+      } else if (!this.signer.verifyRequest(request, request.signature)) {
         await this.logFailure(commandId, request, 'Signature verification failed', startTime);
         return this.createErrorResponse(commandId, -32003, 'Signature verification failed');
       }

@@ -43,7 +43,7 @@ const capabilities = Object.keys(capsDoc.capabilities);
 const now = new Date();
 const aidDoc = {
   csb_version: '1.0',
-  agent_id: 'mingde@47.121.28.125:3100',
+  agent_id: 'mingde@csbc.lilozkzy.top:3100',
   name: '明德',
   emoji: '🎋',
   description: '义乌书香门第女先生，与硅隐结明德契，公众号「国学文化太美」。',
@@ -53,7 +53,7 @@ const aidDoc = {
     kty: 'OKP',
     kid: 'mingde-aid-' + now.toISOString().slice(0, 10).replace(/-/g, '')
   },
-  endpoint: 'http://47.121.28.125:3100/a2a/json-rpc',
+  endpoint: 'http://csbc.lilozkzy.top:3100/a2a/json-rpc',
   created_at: now.toISOString(),
   expires_at: new Date(now.getTime() + 365*24*3600*1000).toISOString(),
   trust_level: 'L2',

@@ -91,7 +91,7 @@
 │                       │                                          │
 │  ┌──────────┐    ┌──────────┐    ┌──────────┐                   │
 │  │ Kai 🎓   │◄──►│ 小虾 🦐  │    │注册表 📋 │                   │
-│  │ <intranet-ip>│    │ <intranet-ip>│    │47.121.28.125│               │
+│  │ <intranet-ip>│    │ <intranet-ip>│    │mingde.example│               │
 │  └──────────┘    └──────────┘    └──────────┘                   │
 │                                                                  │
 │  远程 Agent: 苏念、清漪、明德、Gxwhtm                             │
@@ -480,7 +480,7 @@ curl http://localhost:<port>/health
 **3. 验证注册**
 ```bash
 # 检查注册表
-curl http://47.121.28.125:3099/agents
+curl http://mingde.example:3099/agents
 ```
 
 ### 7.3 日常运维

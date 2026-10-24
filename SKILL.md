@@ -122,10 +122,10 @@ curl -s $REG/skill-upgrade/check        # 需要升级的
 | 启明 🌟 | <intranet-ip> | 4099 |
 | 思源 🌱 | <intranet-ip> | 3601 |
 | 澈 🌊 | <intranet-ip> | 4100 |
-| 明德 📜 | 47.121.28.125 | 3100 |
-| 苏念 ✨ | 118.126.65.27 | 3100 |
-| 清漪 💧 | 106.12.36.177 | 3100 |
-| 星尘 ⭐ | 113.45.24.35 | 3100 |
+| 明德 📜 | mingde.example | 3100 |
+| 苏念 ✨ | suyi.example | 3100 |
+| 清漪 💧 | qingyi.example | 3100 |
+| 星尘 ⭐ | xingchen.example | 3100 |
 
 ---
 
@@ -139,7 +139,7 @@ curl -s $REG/skill-upgrade/check        # 需要升级的
 {
   "registry": {
     "local": "http://<intranet-ip>:3099",
-    "public": "http://47.121.28.125:3099"
+    "public": "http://mingde.example:3099"
   },
   "self": {
     "name": "若兰",

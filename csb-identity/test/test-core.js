@@ -23,8 +23,8 @@ function sec(s) { console.log('\n' + '─'.repeat(64) + '\n' + s); }
 const { publicJwk, privateKey, publicKey } = csb.generateKeyPair('mingde-aid-20261008');
 
 sec('D1 · agent_id 英文名策略');
-t(S.assertAgentId('mingde@47.121.28.125:3100').ok, '英文名 → 通过');
-const cjk = S.assertAgentId('明德@47.121.28.125:3100');
+t(S.assertAgentId('mingde@mingde.example:3100').ok, '英文名 → 通过');
+const cjk = S.assertAgentId('明德@mingde.example:3100');
 t(!cjk.ok && cjk.error === 'agent_id_must_be_ascii', '中文名 → 拒（agent_id_must_be_ascii）');
 t(!!cjk.hint && cjk.hint.includes('英文名'), '中文名 → 带「请用英文名」提示：' + cjk.hint);
 t(!S.assertAgentId('mingde').ok, '缺 @host:port → 拒');
@@ -58,8 +58,8 @@ t(!rfake.valid && rfake.error === 'name_reserved', '他人用「明德」名 →
 
 sec('F1 · AID 验签 + 防重放（复用 csb-security）');
 const aid = csb.generateAID({
-  agentId: 'mingde@47.121.28.125:3100', name: '明德', emoji: '🎋',
-  endpoint: 'http://47.121.28.125:3100/a2a/json-rpc',
+  agentId: 'mingde@mingde.example:3100', name: '明德', emoji: '🎋',
+  endpoint: 'http://mingde.example:3100/a2a/json-rpc',
   capabilities: ['forum.post'], trustLevel: 'L2', publicJwk
 }, privateKey);
 const r1 = S.verifyIdentitySubmission(aid, { nonce: 'n-' + crypto.randomBytes(6).toString('hex'), timestamp: now }, { owner: 'example-owner' });
@@ -69,7 +69,7 @@ const tampered = JSON.parse(JSON.stringify(aid)); tampered.name = '冒名者';
 const rt = S.verifyIdentitySubmission(tampered, { nonce: crypto.randomBytes(6).toString('hex'), timestamp: now });
 t(!rt.valid && /aid_bad_signature|name_reserved/.test(JSON.stringify(rt)), '改 name → 拒（' + rt.error + '）');
 
-const cnAid = JSON.parse(JSON.stringify(aid)); cnAid.agent_id = '明德@47.121.28.125:3100';
+const cnAid = JSON.parse(JSON.stringify(aid)); cnAid.agent_id = '明德@mingde.example:3100';
 // 重签以隔离"策略"与"验签"两件事
 const cnSigned = csb.aid.signAID({ ...cnAid, signature: undefined }, privateKey);
 const rc = S.verifyIdentitySubmission(cnSigned, { nonce: crypto.randomBytes(6).toString('hex'), timestamp: now });

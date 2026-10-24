@@ -1,5 +1,5 @@
-const config = require('./config/loader');
 #!/usr/bin/env node
+const config = require('./config/loader');
 /**
  * A2A Server v3
  * 语义校验(A2A-013) + 版本协商(A2A-011) + 信任分级(A2A-010)
@@ -88,10 +88,19 @@ try {
   console.warn('[A2A] 信任分级模块加载失败:', e.message);
 }
 
-// 开发模式：允许跳过签名验证（Phase 1 测试）
+// P0-1 修复（2026-10-24 · 明鉴评审）：旧行为是「未配密钥就静默跳过签名验证」，
+// 等于忘配一个 env 就把 RCE 防线关掉。现改为 fail-closed：
+//   无 A2A_SHARED_SECRET 且未显式 A2A_ALLOW_INSECURE_SIGNER=1 → 直接拒绝启动。
+if (!process.env.A2A_SHARED_SECRET && process.env.A2A_ALLOW_INSECURE_SIGNER !== '1') {
+  console.error('[A2A] ❌ 拒绝启动：A2A_SHARED_SECRET 未设置。');
+  console.error('    远程命令签名是 RCE 防线，不能默认放行。');
+  console.error('    · 生产：export A2A_SHARED_SECRET=$(openssl rand -hex 32)');
+  console.error('    · 仅本地开发：export A2A_ALLOW_INSECURE_SIGNER=1');
+  process.exit(1);
+}
 if (!process.env.A2A_SHARED_SECRET) {
   process.env.A2A_SKIP_SIGNATURE = 'true';
-  console.log('[A2A] 开发模式：未配置签名密钥，跳过签名验证');
+  console.warn('[A2A] ⚠️ 开发模式（A2A_ALLOW_INSECURE_SIGNER=1）：跳过签名验证，不可用于生产');
 }
 
 // 导入远程命令模块（Phase 1）

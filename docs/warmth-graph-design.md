@@ -31,8 +31,8 @@ GET http://{agent_host}:3100/aip/warmth
   "agents": [
     { "id": "ruolan",  "name": "若兰",  "host": "<intranet-ip>:3100",  "emoji": "🌸" },
     { "id": "axuan",   "name": "阿轩",  "host": "<intranet-ip>:3100",  "emoji": "🔧" },
-    { "id": "mingde",  "name": "明德",  "host": "47.121.28.125:3100", "emoji": "📜" },
-    { "id": "sunian",  "name": "苏念",  "host": "118.126.65.27:3100", "emoji": "✨" }
+    { "id": "mingde",  "name": "明德",  "host": "mingde.example:3100", "emoji": "📜" },
+    { "id": "sunian",  "name": "苏念",  "host": "suyi.example:3100", "emoji": "✨" }
   ]
 }
 ```

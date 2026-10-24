@@ -129,7 +129,7 @@ async function testA2A() {
   assert(r1.success, 'A2A 通信-阿轩: ' + r1.text.substring(0, 50));
 
   // 测试明德
-  const r2 = await sendA2A('http://47.121.28.125:3100', 'AIP集成测试：请回复确认');
+  const r2 = await sendA2A('http://csbc.lilozkzy.top:3100', 'AIP集成测试：请回复确认');
   assert(r2.success, 'A2A 通信-明德: ' + r2.text.substring(0, 50));
 
   // 测试余温记录

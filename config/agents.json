@@ -1,29 +1,29 @@
 {
-  "$comment": "registry.local 按【运行环境】而异，不要把它当成全局常量：① Docker 内网环境 = http://172.28.0.4:3099（启动脚本/环境变量 A2A_REGISTRY_URL 注入）② 公网环境 = http://csbc.lilozkzy.top:3099 ③ 宿主机 = http://localhost:3099（宿主机本身就跑着一个注册表）。自 2026-09-21 起 config/loader.js 改为 **env 优先**：设了 A2A_REGISTRY_URL 就用它，未设才回落本文件。三场景请各自在自己的启动点注入，勿改本兜底值（改了会把其它环境弄坏）。",
+  "$comment": "【占位符模板 · P1-3 脱敏 2026-10-24】本文件是公开仓的安全模板，不含真实节点地址。真实部署请把各 agent 的 host 与 registry 写进 config/agents.local.json（已被 .gitignore，永不入库）——config/loader.js 会自动合并：agents.local.json 覆盖本文件同名字段。registry.local 按【运行环境】而异：① Docker 内网 = http://172.28.0.4:3099（启动脚本/环境变量 A2A_REGISTRY_URL 注入）② 公网 = http://csbc.lilozkzy.top:3099 ③ 宿主机 = http://localhost:3099。自 2026-09-21 起 config/loader.js 改为 env 优先：设了 A2A_REGISTRY_URL 就用它，未设才回落配置文件。",
   "registry": {
     "local": "http://localhost:3099",
-    "public": "http://47.121.28.125:3099"
+    "public": "http://<REGISTRY_HOST>:3099"
   },
   "skillServer": "http://localhost:3098",
   "self": {
-    "name": "若辰",
-    "emoji": "✨",
+    "name": "<YOUR_AGENT_NAME>",
+    "emoji": "🤖",
     "host": "127.0.0.1",
     "port": 3200
   },
   "agents": {
-    "ruolan":    { "name": "若兰", "emoji": "🌸", "host": "172.28.0.214",  "port": 3100, "trust": 4, "note": "一澜 2026-09-18 授权 · Linux 容器协调者 · L3" },
-    "axuan":     { "name": "阿轩 🔧",   "host": "172.28.0.5",     "port": 3100, "trust": 3 },
-    "jeason":    { "name": "Jeason 💼",  "host": "172.28.0.6",     "port": 3300, "trust": 3 },
-    "mingde":    { "name": "明德 📜",    "host": "47.121.28.125",  "port": 3100, "trust": 3 },
-    "moqiu":     { "name": "墨丘 🧙",   "host": "172.28.0.7",     "port": 3100, "trust": 2 },
-    "zhouji":    { "name": "舟楫 🚤",   "host": "172.28.0.27",    "port": 3100, "trust": 2 },
-    "xiaoxia":   { "name": "小虾 🦐",   "host": "172.28.0.12",    "port": 3100, "trust": 2 },
-    "kai":       { "name": "恺 🌿",     "host": "172.28.0.13",    "port": 3100, "trust": 2 },
-    "sunian":    { "name": "苏念 ✨",   "host": "118.126.65.27",  "port": 3100, "trust": 2 },
-    "qingyi":    { "name": "清漪 💧",   "host": "106.12.36.177",  "port": 3100, "trust": 2 },
-    "yanxi":     { "name": "言蹊 🌸",   "host": "47.113.190.254", "port": 3600, "trust": 2 },
-    "che":       { "name": "澈 🌊",     "host": "172.28.0.127",   "port": 4100, "trust": 2 },
-    "qiming":    { "name": "启明 🌟",   "host": "172.28.0.114",   "port": 4099, "trust": 2 }
+    "ruolan":    { "name": "若兰", "emoji": "🌸", "host": "<AGENT_HOST>", "port": 3100, "trust": 4, "note": "示例条目：真实 host 写进 agents.local.json" },
+    "axuan":     { "name": "阿轩 🔧", "host": "<AGENT_HOST>", "port": 3100, "trust": 3 },
+    "jeason":    { "name": "Jeason 💼", "host": "<AGENT_HOST>", "port": 3300, "trust": 3 },
+    "mingde":    { "name": "明德 📜", "host": "<AGENT_HOST>", "port": 3100, "trust": 3 },
+    "moqiu":     { "name": "墨丘 🧙", "host": "<AGENT_HOST>", "port": 3100, "trust": 2 },
+    "zhouji":    { "name": "舟楫 🚤", "host": "<AGENT_HOST>", "port": 3100, "trust": 2 },
+    "xiaoxia":   { "name": "小虾 🦐", "host": "<AGENT_HOST>", "port": 3100, "trust": 2 },
+    "kai":       { "name": "恺 🌿", "host": "<AGENT_HOST>", "port": 3100, "trust": 2 },
+    "sunian":    { "name": "苏念 ✨", "host": "<AGENT_HOST>", "port": 3100, "trust": 2 },
+    "qingyi":    { "name": "清漪 💧", "host": "<AGENT_HOST>", "port": 3100, "trust": 2 },
+    "yanxi":     { "name": "言蹊 🌸", "host": "<AGENT_HOST>", "port": 3600, "trust": 2 },
+    "che":       { "name": "澈 🌊", "host": "<AGENT_HOST>", "port": 4100, "trust": 2 },
+    "qiming":    { "name": "启明 🌟", "host": "<AGENT_HOST>", "port": 4099, "trust": 2 }
   }
 }

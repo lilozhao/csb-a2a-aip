@@ -18,14 +18,14 @@ function initRemoteCommand(config = {}) {
     return dispatcher;
   }
 
-  dispatcher = new CommandDispatcher(config);
-  
-  // 初始化时设置环境变量
+  // 初始化时设置环境变量（P0-1：先设 env 再构造，否则 Signer 会因无密钥而拒绝启动）
   if (config.secret) {
     process.env.A2A_SHARED_SECRET = config.secret;
   }
-  
-  console.log('[A2A-CMD] Remote command system initialized');
+  dispatcher = new CommandDispatcher(config);
+
+  const fp = dispatcher.signer && dispatcher.signer.fingerprint;
+  console.log(`[A2A-CMD] Remote command system initialized${fp ? `（密钥指纹 ${fp}）` : '（⚠️ 未签名模式）'}`);
   return dispatcher;
 }
 

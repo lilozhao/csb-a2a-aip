@@ -27,10 +27,14 @@ npm install
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
-| `A2A_SHARED_SECRET` | A2A 通信共享密钥（用于签名验证） | - |
+| `A2A_SHARED_SECRET` | A2A 通信共享密钥（用于签名验证）。**必填（fail-closed）**：未设置时签名器拒绝构造、server 拒绝启动；至少 16 字符，建议 `openssl rand -hex 32` | 无（缺失即报错） |
 | `WORKSPACE_PATH` | 工作空间路径 | `/home/node/.openclaw/workspace` |
 | `A2A_WHITELIST` | JSON 格式白名单配置 | 默认允许若兰、阿轩、Jeason |
-| `A2A_SKIP_SIGNATURE` | 开发模式：跳过签名验证 | `false` |
+| `A2A_ALLOW_INSECURE_SIGNER` | 仅本地开发：显式放行（签名器用**进程内随机密钥**，无法与外部互通；两个实例密钥互不相同） | `0` |
+| `A2A_SKIP_SIGNATURE` | 开发模式：跳过签名验证。**须与 `A2A_ALLOW_INSECURE_SIGNER=1` 同时开启才生效**（2026-10-24 P0-1：不再因"未配密钥"而自动跳过） | `false` |
+
+> **P0-1 变更（2026-10-24 · 明鉴评审）**：旧版"未配 `A2A_SHARED_SECRET` 就 warn 一句继续跑 / 自动跳过验签"已废止。
+> 远程命令签名是 RCE 防线，忘配 env 等于防线静默关闭。现在无密钥直接拒启。
 
 ### 白名单配置示例
 

@@ -125,8 +125,29 @@ async function injectIsolated(envelope, taskId, opts = {}) {
   const cmd = (envelope && (envelope.command || envelope.target || envelope.task)) || '';
   const expectedMarker = (envelope && envelope.expectedMarker) || null; // e.g. "p3-l3-marker.txt"
   const expectedNonce = (envelope && (envelope.nonce || envelope.expectedNonce)) || null;
-  const workingDir = (envelope && envelope.workingDir) || process.cwd();
-  const timeoutMs = (envelope && envelope.timeoutMs) || 30000;
+  // P2-5（2026-10-24 明鉴评审）：workingDir/timeoutMs 来自 envelope 可控 ——
+  //   旧版 cwd 可指向任意目录、timeout 可设超长（资源占用）。现加两道硬闸：
+  //   ① cwd 必须 ∈ SAFE_CWD_ROOTS（/tmp 或工作区）；不合法 → 拒执行（不是默默改默认）
+  //   ② timeoutMs 钉住上限 120s（取 min）；非正数/非法→回默认 30s
+  const SAFE_CWD_ROOTS = ['/tmp', '/home/node/.openclaw/workspace'];
+  const INJECT_TIMEOUT_MAX_MS = 120000;
+  const INJECT_TIMEOUT_DEFAULT_MS = 30000;
+  const rawWorkingDir = (envelope && envelope.workingDir) || process.cwd();
+  const wdReal = (() => { try { return require('fs').realpathSync(rawWorkingDir); } catch { return path.resolve(rawWorkingDir); } })();
+  const wdOk = SAFE_CWD_ROOTS.some((root) => wdReal === root || wdReal.startsWith(root + '/'));
+  const rawTimeout = Number((envelope && envelope.timeoutMs) || 0);
+  const timeoutMs = Math.min(
+    Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : INJECT_TIMEOUT_DEFAULT_MS,
+    INJECT_TIMEOUT_MAX_MS
+  );
+  const workingDir = wdOk ? wdReal : process.cwd();
+  if (!wdOk) {
+    console.log(`[INJECT-EXEC] taskId=${taskId} REJECTED workingDir 不在安全目录白名单：${rawWorkingDir}`);
+    return { ok: false, error: 'isolated 注入拒绝：workingDir 越出安全目录（/tmp 或 workspace）', refused: true, durationMs: Date.now() - t0 };
+  }
+  if (rawTimeout > INJECT_TIMEOUT_MAX_MS) {
+    console.log(`[INJECT-EXEC] taskId=${taskId} timeoutMs ${rawTimeout} → 钉住上限 ${INJECT_TIMEOUT_MAX_MS}`);
+  }
 
   // 白名单：含 marker / nonce 字样 + 路径限制
   // [P0-WL / 2026-09-14] 若兰批注指出：L3 测试命令是 `echo "<nonce>" > /tmp/<白名单文件名>`

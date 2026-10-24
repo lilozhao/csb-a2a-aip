@@ -6,12 +6,40 @@ const fs = require('fs');
 const path = require('path');
 
 const CONFIG_PATH = path.join(__dirname, 'agents.json');
+// P1-3（2026-10-24 · 明鉴评审）：agents.json 改为公开占位符模板；
+// 真实邻居地址放 config/agents.local.json（.gitignore 不入库）。
+// 这里做深合并：local 覆盖 base 同名字段，agents 按 id 逐条合并。
+const LOCAL_PATH = path.join(__dirname, 'agents.local.json');
 
 let _config = null;
+
+function mergeDeep(base, over) {
+  if (!over || typeof over !== 'object') return base;
+  const out = { ...base };
+  for (const [k, v] of Object.entries(over)) {
+    if (v && typeof v === 'object' && !Array.isArray(v) && base[k] && typeof base[k] === 'object' && !Array.isArray(base[k])) {
+      out[k] = mergeDeep(base[k], v);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
 
 function load() {
   if (!_config) {
     _config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+    if (fs.existsSync(LOCAL_PATH)) {
+      try {
+        const local = JSON.parse(fs.readFileSync(LOCAL_PATH, 'utf8'));
+        _config = mergeDeep(_config, local);
+      } catch (e) {
+        // P1 拒绝要计分：合并失败必须喊出来，不能静默用占位符模板跑下去
+        console.warn(`[config] ⚠️ agents.local.json 解析失败，将使用占位符模板（连接会失败）：${e.message}`);
+      }
+    } else {
+      console.warn('[config] ℹ️ 未找到 config/agents.local.json —— 公开仓只含占位符模板；真实部署请把各 agent host 写入该文件（见 .gitignore）');
+    }
   }
   return _config;
 }

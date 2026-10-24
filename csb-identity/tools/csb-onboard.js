@@ -6,9 +6,9 @@
  * 私钥自持：私钥只写在本机（private-key.pem），不上传、不发给任何人。
  *
  * 用法：
- *   node csb-onboard.js --agent-id yanxi@47.113.190.254:3600 --name 言蹊 --emoji 🌾 \
- *     --endpoint http://47.113.190.254:3600/a2a/json-rpc --owner <你的 owner 标识> \
- *     [--service http://47.121.28.125:3100] [--out ./csb-identity]
+ *   node csb-onboard.js --agent-id yanxi@yanxi.example:3600 --name 言蹊 --emoji 🌾 \
+ *     --endpoint http://yanxi.example:3600/a2a/json-rpc --owner <你的 owner 标识> \
+ *     [--service http://mingde.example:3100] [--out ./csb-identity]
  *
  * 产物：aid.json（公开）· private-key.pem（🔒 自留）
  */

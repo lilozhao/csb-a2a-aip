@@ -217,7 +217,9 @@ function loadIdentity() {
     ? (readJsonSafe(path.join(__dirname, 'instances', agent.slug, 'identity.json')) || {})
     : {};
   const id = readJsonSafe(path.join(__dirname, 'identity.json')) || {};
-  const cfg = readJsonSafe(path.join(__dirname, 'config', 'agents.json')) || {};
+  // P1-3（2026-10-24）：走 config/loader（它负责 agents.json 模板 + agents.local.json 合并）
+  let cfg = {};
+  try { cfg = require('./config/loader.js').load() || {}; } catch { cfg = {}; }
   const self = cfg.self || {};
   const name = process.env.CDP_NAME || agent.name || inst.name || id.name || self.name || 'unnamed';
   const host = process.env.CDP_HOST

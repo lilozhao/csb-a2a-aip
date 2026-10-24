@@ -123,7 +123,7 @@ function assertAgentId(agentId) {
   if (CJK.test(agentId)) {
     return {
       ok: false, error: 'agent_id_must_be_ascii',
-      hint: '请用英文名，例如 mingde@47.121.28.125:3100（中文名只作显示名 name）',
+      hint: '请用英文名，例如 mingde@mingde.example:3100（中文名只作显示名 name）',
       suggestion: agentId.replace(CJK, '').replace(/[^\x20-\x7E]/g, '') || null
     };
   }
