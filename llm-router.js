@@ -17,6 +17,53 @@ const http = require('http');
 const https = require('https');
 const { URL } = require('url');
 
+// ══════════════════════════════════════════════════════════════════════════
+// [2026-10-24 P0] 思维链泄漏防护（明德升级 5.1.0 后实测发现）
+//
+// 现象：自动应答的正文里带回模型原始思维链
+//   `<think>We need answer in Chinese 50-200 chars, likely acknowledge self-check...</think>`
+//   而且结尾被截断（reasoning 吃满了 max_tokens 预算）。
+//
+// 根因不是模型，是**本模块的两处设计**：
+//   1. `content || reasoning_content` —— 正文为空时把推理过程当正文返回。
+//      本意是「别空回复」，实际效果是「把里屋的东西推到客厅」。
+//   2. content 内嵌 `<think>` 标签时未剥离 —— 推理模型的常见输出形态。
+//
+// 新规则（与 10-08 定的 ack 规矩同源：对外只发「可以说的话」）：
+//   · 任何正文出门前，一律剥离 think 块（含未闭合残尾）
+//   · reasoning_content **永不**作为对外正文；正文为空 → 返回 null 走上层固定兜底
+//   · 剥离后为空 → 同样 null（宁可短，不要把思考当话）
+// ══════════════════════════════════════════════════════════════════════════
+const THINK_TAG = /<(think|thinking|reasoning|analysis)>/i;
+
+function stripThinking(text) {
+  if (!text) return '';
+  let s = String(text);
+  // 成对标签
+  s = s.replace(/<(think|thinking|reasoning|analysis)>[\s\S]*?<\/\1>/gi, '');
+  // 未闭合的开始标签：思维链通常在正文前，从标签处截断
+  s = s.replace(/<(think|thinking|reasoning|analysis)>[\s\S]*$/i, '');
+  // 孤立闭合标签
+  s = s.replace(/<\/(think|thinking|reasoning|analysis)>/gi, '');
+  return s.trim();
+}
+
+/**
+ * 从各家响应里取正文，并做思维链剥离。
+ * @returns {string|null} 可对外发送的正文；null = 无可发送内容（调用方走上层兜底）
+ */
+function pickReply(data, tag) {
+  const msg = (data && data.choices && data.choices[0] && data.choices[0].message) || {};
+  const raw = msg.content || (data && (data.response || data.text || data.content));
+  const cleaned = stripThinking(raw);
+  if (cleaned) return cleaned;
+  const reasoning = msg.reasoning_content;
+  if (reasoning && String(reasoning).trim()) {
+    console.warn(`[LLM-Router] ⚠️ ${tag}: 正文为空，已丢弃 reasoning_content（不把思考过程当对外发言）`);
+  }
+  return null;
+}
+
 // ========== 适配器注册表 ==========
 const ADAPTERS = {};
 
@@ -72,14 +119,11 @@ register('openclaw', async (identity, systemPrompt, userMessage, options = {}) =
       res.on('end', () => {
         try {
           const data = JSON.parse(body);
-          const content = data.choices?.[0]?.message?.content?.trim() ||
-                          data.choices?.[0]?.message?.reasoning_content?.trim();
+          const content = pickReply(data, 'OpenClaw');
           // [2026-10-03 若兰修复] gateway 空答复（主会话上下文撑爆）不能当成功——
           //   落地到下一适配器（360/本地诚实兜底），避免把空话当成"若兰的回复"。
           if (content && !/^No response from OpenClaw\.?$/i.test(content)) { resolve(content); return; }
           if (content) { console.warn('[LLM-Router] OpenClaw 空答复(主会话上下文可能过载)→落下一适配器'); resolve(null); return; }
-          const alt = data.response || data.text || data.content;
-          if (alt) { resolve(alt.trim()); return; }
           console.error('[LLM-Router] OpenClaw 返回格式异常:', body.substring(0, 150));
           resolve(null);
         } catch (e) {
@@ -130,10 +174,8 @@ register('hermes', async (identity, systemPrompt, userMessage, options = {}) => 
       res.on('end', () => {
         try {
           const data = JSON.parse(body);
-          const content = data.choices?.[0]?.message?.content?.trim() ||
-                          data.choices?.[0]?.message?.reasoning_content?.trim() ||
-                          data.response || data.text || data.content;
-          if (content) { resolve(content.trim()); return; }
+          const content = pickReply(data, 'Hermes');
+          if (content) { resolve(content); return; }
           resolve(null);
         } catch (e) {
           console.error('[LLM-Router] Hermes 解析失败:', e.message);
@@ -185,8 +227,7 @@ register('openai', async (identity, systemPrompt, userMessage, options = {}) => 
       res.on('end', () => {
         try {
           const data = JSON.parse(body);
-          const content = data.choices?.[0]?.message?.content?.trim() ||
-                          data.choices?.[0]?.message?.reasoning_content?.trim();
+          const content = pickReply(data, 'OpenAI');
           if (content) { resolve(content); return; }
           resolve(null);
         } catch (e) {
@@ -268,28 +309,20 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
                 if (delta.reasoning_content) reasoning += delta.reasoning_content;
               } catch { /* 跳过无法解析的 chunk */ }
             }
-            if (content.trim()) { resolve(content.trim()); return; }
-            // 只有 reasoning 可用 = 降级回复,明确告警而不是静默当正常
+            // [2026-10-24 P0] 正文剥离 think 后为空 → 不再拿 reasoning 顶替，返回 null 走兜底
+            const cleanedStream = stripThinking(content);
+            if (cleanedStream) { resolve(cleanedStream); return; }
             if (reasoning.trim()) {
-              console.warn('[LLM-Router] ⚠️ Direct 仅返回 reasoning_content,正文为空——建议配置 llm.extraBody 关闭思考');
-              resolve(reasoning.trim());
-              return;
+              console.warn('[LLM-Router] ⚠️ Direct 仅返回 reasoning_content，已丢弃（不把思考过程当对外发言）；' +
+                '建议配置 llm.extraBody={enable_thinking:false} 关闭思考');
             }
             console.error('[LLM-Router] Direct 流式响应无有效内容');
             resolve(null);
             return;
           }
           const data = JSON.parse(body);
-          const content = data.choices?.[0]?.message?.content?.trim() ||
-                          data.choices?.[0]?.message?.reasoning_content?.trim() ||
-                          data.response || data.text || data.content;
-          if (content) {
-            if (!data.choices?.[0]?.message?.content?.trim() && data.choices?.[0]?.message?.reasoning_content?.trim()) {
-              console.warn('[LLM-Router] ⚠️ Direct 仅返回 reasoning_content,正文为空——建议配置 llm.extraBody 关闭思考');
-            }
-            resolve(content.trim());
-            return;
-          }
+          const content = pickReply(data, 'Direct');
+          if (content) { resolve(content); return; }
           resolve(null);
         } catch (e) {
           console.error('[LLM-Router] Direct 解析失败:', e.message);
@@ -395,4 +428,6 @@ function listAdapters() {
   return Object.keys(ADAPTERS);
 }
 
-module.exports = { call, register, listAdapters, ADAPTERS };
+// stripThinking / pickReply 一并导出：上层（a2a-standard-api-v5）出门前做二次剥离，
+// 保证「思考过程永不作为对外正文」这条不依赖调用方记得处理。
+module.exports = { call, register, listAdapters, ADAPTERS, stripThinking, pickReply };

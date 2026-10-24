@@ -686,8 +686,14 @@ class A2AStandardAPI {
       const userMessage = safeText;
       const result = await router.call(this.identity, systemPrompt, userMessage);
       if (result) {
-        console.log('[A2A] 🤖 LLM 回复成功');
-        return result;
+        // [2026-10-24 P0] 出门前再剥一次思维链（双保险：result 可能来自任何适配器）
+        const { stripThinking } = require('./llm-router.js');
+        const clean = typeof stripThinking === 'function' ? stripThinking(result) : String(result).trim();
+        if (clean) {
+          console.log('[A2A] 🤖 LLM 回复成功');
+          return clean;
+        }
+        console.warn('[A2A] ⚠️ LLM 回复剥离思考后为空 → 走兜底（不把思考过程当对外发言）');
       }
     } catch(e) {
       console.warn('[A2A] ⚠️ router 失败:', e.message);
@@ -750,10 +756,15 @@ class A2AStandardAPI {
         res.on('end', () => {
           try {
             const data = JSON.parse(body);
-            const content = data.choices?.[0]?.message?.content?.trim() ||
-                            data.choices?.[0]?.message?.reasoning_content?.trim() ||
-                            data.response || data.text || data.content;
-            if (content) { resolve(content.trim()); return; }
+            // [2026-10-24 P0] 同 llm-router：正文剥离 think；reasoning 永不作为对外正文
+            const { stripThinking } = require('./llm-router.js');
+            const raw = data.choices?.[0]?.message?.content ||
+                        data.response || data.text || data.content;
+            const content = typeof stripThinking === 'function' ? stripThinking(raw) : (raw || '').trim();
+            if (content) { resolve(content); return; }
+            if (data.choices?.[0]?.message?.reasoning_content) {
+              console.warn('[A2A] ⚠️ 兜底 LLM 仅返回 reasoning_content，已丢弃');
+            }
             resolve(null);
           } catch (e) { resolve(null); }
         });

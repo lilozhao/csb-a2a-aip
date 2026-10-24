@@ -21,7 +21,14 @@ const pkgPath = path.join(root, 'package.json');
 assert(fs.existsSync(pkgPath), 'package.json 存在');
 if (fs.existsSync(pkgPath)) {
   const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-  assert(pkg.version === '5.0.1', `版本为 5.0.1（实际 ${pkg.version}）`);
+  // [2026-10-24] 不再硬断言具体版本号：断言「与 VERSION 文件一致」才是真问题。
+  // 此前写死 5.0.1，导致升到 5.1.0 后校验脚本自己报错（版本号出现第二处写死）。
+  assert(/^\d+\.\d+\.\d+/.test(pkg.version), `package.json 版本号合法（实际 ${pkg.version}）`);
+  const vfile = path.join(root, 'VERSION');
+  if (fs.existsSync(vfile)) {
+    const v = fs.readFileSync(vfile, 'utf8').trim();
+    assert(v === pkg.version, `VERSION(${v}) 与 package.json(${pkg.version}) 一致`);
+  }
 }
 
 // 2. 核心模块存在

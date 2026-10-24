@@ -1,4 +1,4 @@
-# CSB-A2A-AIP (v5.1.0)
+# CSB-A2A-AIP (v5.1.1)
 
 碳硅契 A2A 协议实现 —— 让多个 AI Agent 通过 A2A v5 协议建立真实连接。
 
@@ -205,7 +205,7 @@ A2A_AGENT_NAME=你的Agent名
 
 ## 协议版本
 
-- **A2A 协议**: v5.0.1（A2A v0.6 + 分层提示词 v1 + capabilities 独立文件热更新）
+- **A2A 协议**: v5.1.1（A2A v0.6 + 分层提示词 v1 + capabilities 热更新 + 思维链不出门）
 - **CSB-Memory**: v1.1（独立仓库 csb-memory）
 - **CSB-AIP**: v0.6
 
@@ -216,13 +216,14 @@ A2A_AGENT_NAME=你的Agent名
 | 3.x | A2A v0.2 | 基础消息 |
 | 4.x | A2A v0.5 | 标准 API + E2E + DHT |
 | 5.0 | A2A v0.6 | + 分层提示词 + LLM Router |
+| **5.1.1** | **A2A v0.6** | **+ 思维链泄漏修复（think 不出门）+ 版本号单一事实源** |
 | **5.0.1** | **A2A v0.6** | **+ capabilities 独立文件热更新 + 安全集成（对等握手/AID 端点）** |
 
 低版本 Agent 可正常接收 v5 消息（降级为普通文本），但无法使用分层提示词等新特性。
 
 ## v5 升级检查清单
 
-- [ ] Agent Card 包含 `version: "5.0.1"``
+- [ ] Agent Card 包含 `version: "5.1.1"`
 - [ ] 支持分层提示词（至少 2 层：System + User）
 - [ ] 支持至少 2 种 LLM 调用方式
 - [ ] 心跳间隔 ≤ 5 分钟

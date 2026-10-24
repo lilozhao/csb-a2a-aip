@@ -94,7 +94,21 @@ try {
   console.warn('[A2A] 跨库身份一致性检查跳过：', e.message);
 }
 const port = process.env.A2A_PORT || identity.port || 3100;
-const A2A_VERSION = '5.0.1';
+// [2026-10-24] 版本号改为从 VERSION 文件读取（回退 package.json，最后回退常量）。
+// 原实现硬编码 '5.0.1'，升到 5.1.0 后 /health 与 agent card 仍报 5.0.1 ——
+// 明德 2026-10-24 升级后实测发现（"health 报告的版本号不可信"）。
+// 教训：版本号是**单一事实源**，只能在 VERSION 里改一次，代码不得再抄一份。
+const A2A_VERSION = (() => {
+  try {
+    const v = fs.readFileSync(path.join(__dirname, 'VERSION'), 'utf8').trim();
+    if (/^\d+\.\d+\.\d+/.test(v)) return v;
+  } catch { /* VERSION 缺失则回退 */ }
+  try {
+    const v = require('./package.json').version;
+    if (v) return v;
+  } catch { /* ignore */ }
+  return '0.0.0-unknown';
+})();
 
 // ===== 注册表配置 =====
 const REGISTRY_URL = process.env.A2A_REGISTRY_URL || config.getRegistry('local');
