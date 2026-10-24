@@ -1,5 +1,54 @@
 # CHANGELOG · csb-a2a-aip
 
+## v5.2.4（2026-10-24）— 握手信任从未生效：存和取用的不是同一个键
+
+### 现象
+握手跑通了（五步全过、会话也注册了），但生产环境里**这条信任路径一次都没命中过**。
+查日志：`[TrustBridge] 握手信任已注册` 一条都没有。
+
+### 两层根因
+
+**1️⃣ 键的命名空间不同（直接原因）**
+```js
+registerHandshakeSession(session)  // 键 = session.caller_id  → "mingde@csbc.lilozkzy.top:3100"
+resolveTrustLevel(senderName)      // 查 = senderName         → "明德"
+```
+两个字符串永远对不上。而消息处理层（`_resolveSenderInfo`）传的正是名字。
+
+**2️⃣ name 是攻击者可控字段（更根本，不能靠「把键改一致」解决）**
+按名字匹配意味着：伪造者只要把 `sender.name` 写成「明德」，就能拿到 L1 信任。
+这与本模块自己写的设计本意直接冲突——「伪造者无法完成签名握手，因此无法获得握手信任等级」。
+**按名字给信任 = 握手白做。**
+
+### 修复
+- 注册时建**多重别名**：`caller_id` / `host:port` / config 反查到的中文名 / 本地名
+- 解析时**按 host 锚定**（`sender.url` / `sender.id` / 完整 caller_id）
+- **仅凭 name 默认不授予信任**，只打一条 warn 说明「差一点误信」
+  （调试可用 `new TrustBridge({ allowNameOnly: true })`）
+- 域名 ↔ IP 等价别名：一次 DNS 反查把解析到的 IP 也登记
+  （实况：config 里明德是 `47.121.28.125:3100`，握手 caller_id 可能是 `csbc.lilozkzy.top:3100`）
+- 同名不同主机会**告警**（不静默覆盖）
+- 顺带修 `ttl || 300` 假值兜底 → `ttl ?? 300`（`ttl=0` 曾被悄悄变成 300s）
+  以及过期判定 `>` → `>=`（ttl=0 应立即失效）
+
+### 判据（可机械核对）
+- 注册日志带别名：`| 别名: host=... name=...`
+- `resolveTrustLevel(name, {sender:{url}})` 命中时 `matchedBy: 'sender.url'`
+- 仅凭名字 → 返回 null + `🛡️ 拒绝按名字授予信任`
+- 新增 `tests/trust-bridge-key.test.js` **16 条**（含 3 条安全断言）
+- 反向验证：把 `allowNameOnly` 强制为 true（退回旧行为）→ 3 条安全断言立刻变红
+
+### 残余风险（诚实边界）
+`sender.url` / `sender.id` 仍是**自述字段**，不是密码学证明。
+同一 IP 上的不同实例、DNS 重绑定仍可能误配。
+真正防伪需要消息级签名（AAT）——本模块的 AAT 通道为此准备，但目前在 `agents.json` 里
+配置 `aidPublicKey` 的 Agent 极少，实际未启用。
+
+### 兼容性
+- 单例默认 `allowNameOnly=false`：此前「按名字拿到信任」的情况**本来就不存在**（键对不上），
+  故无行为回退；只是把隐患显式化
+- 返回值新增 `matchedBy` 字段，旧调用方忽略即可
+
 ## v5.2.3（2026-10-24）— allowedScopes 不再变空：`[] || x` 这个坑（明德实测反馈）
 
 ### 背景
