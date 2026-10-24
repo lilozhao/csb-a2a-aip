@@ -160,13 +160,19 @@ test('status() 暴露 enabled/reason/entries/chainValid/degraded', () => {
 });
 
 console.log('\n[6] 路径回归：AAT 验签不能被静默绕过');
-test('a2a-trust-bridge 里的 csb-security 相对路径必须真实可达', () => {
+// [2026-10-25 对齐现实] v5.3.0 起 AAT 是自研模块（a2a-aat.js + aat-keys.js），
+//   不再 require csb-security。原判据（找 csb-security require）已失效 →
+//   改为断言「验签实现文件可达 + 真被调用」，精神不变：路径断了必须红。
+test('AAT 验签实现文件必须真实可达', () => {
   const src = fs.readFileSync(path.join(REPO, 'a2a-trust-bridge.js'), 'utf-8');
-  const m = src.match(/require\('([^']*csb-security[^']*)'\)/);
-  assert.ok(m, '未找到 csb-security require');
+  const m = src.match(/require\('(\.\/a2a-aat\.js)'\)/);
+  assert.ok(m, 'a2a-trust-bridge 未找到 a2a-aat require');
   const resolved = path.resolve(REPO, m[1]);
   assert.ok(fs.existsSync(resolved),
     `路径不可达（AAT 验签会静默回退）: ${m[1]} → ${resolved}`);
+  // 光 require 到还不够：必须真的在 sender 分支里调用验签
+  assert.ok(/aat\.verifyInbound\(sender\b/.test(src),
+    '源码里没有 aat.verifyInbound(sender…) 调用 → 验签可能被短路');
 });
 test('AAT 模块可加载且导出 verifyAATWithAID', () => {
   const aat = require(path.join(REPO, '../csb-security/lib/identity/aat.js'));
@@ -175,11 +181,16 @@ test('AAT 模块可加载且导出 verifyAATWithAID', () => {
 test('TrustBridge 的 AAT 路径分支真能跑到（不再是 try/catch 黑洞）', () => {
   const { TrustBridge } = require(path.join(REPO, 'a2a-trust-bridge.js'));
   const tb = new TrustBridge();
-  // 无效 token：若路径可达，会走真实校验逻辑返回 null；路径不可达则抛错被吞 → 也返回 null。
-  // 区分点：路径可达时不再抛 MODULE_NOT_FOUND，用它做断言。
-  const aatPath = path.resolve(REPO, '../csb-security/lib/identity/aat.js');
-  assert.ok(fs.existsSync(aatPath), '模块文件不存在');
-  assert.doesNotThrow(() => tb._verifyAAT('not-a-token', { sender: { name: '阿轩' } }));
+  const aat = require(path.join(REPO, 'a2a-aat.js'));
+  assert.strictEqual(typeof aat.verifyInbound, 'function', 'a2a-aat 未导出 verifyInbound');
+  // 坏 token 走真实校验路径：应返回 null（不授予信任），且不得抛错被吞
+  const r = (() => {
+    try { return tb.resolveTrustLevel('阿轩', { sender: { name: '阿轩', aat: 'not-a-token' } }); }
+    catch (e) { return { threw: e.message }; }
+  })();
+  assert.ok(!r || r === null || r.threw === undefined,
+    `坏 AAT 不该抛错（应回到 null）: ${r && r.threw}`);
+  assert.ok(!r, '坏 AAT 不得授予任何信任等级');
 });
 
 console.log('\n[7] bridge-core 注入：委托结果写账（且 fail-safe）');

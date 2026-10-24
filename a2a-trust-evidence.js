@@ -348,16 +348,28 @@ class TrustEvidence {
   ledgerHealth() {
     if (!this._inited) this.init();
     const snap = TrustEvidence.ledgerSnapshot(this.ledgerPath || LEDGER_FILE);
+    // [2026-10-25] 断流检测：原判据只看「文件在 + 至少一条 + 无写错」，
+    //   ⇒ 账本停写 17 天（10-08 → 10-25）仍然报 auditReady:true / degraded:false。
+    //   假绿灯比红灯危险：没人会去查一盏绿的灯。现在把「最后一条距今多久」也纳入判据。
+    const staleAfterMs = (() => {
+      const v = parseInt(process.env.A2A_TRUST_STALE_MS || '', 10);
+      return Number.isFinite(v) && v > 0 ? v : 24 * 3600 * 1000;   // 默认 24h
+    })();
+    const lastEntryAgeMs = snap.lastEntryAt ? Math.max(0, Date.now() - snap.lastEntryAt) : null;
+    const stale = snap.exists && snap.entries > 0 && (lastEntryAgeMs === null || lastEntryAgeMs > staleAfterMs);
     return {
       ...snap,
+      lastEntryAgeMs,
+      staleAfterMs,
+      stale,
       enabled: this.enabled,
-      reason: this.reason,
+      reason: stale ? `${this.reason || 'ok'}+stale` : this.reason,
       signed: this.signed,
       verified: this.verified,
       keyFingerprint: this.keyFingerprint,
       hookStats: { ...this.stats },
-      auditReady: !!this.enabled && snap.exists && snap.entries > 0 && this.stats.errors === 0,
-      degraded: !this.enabled || !snap.exists || this.stats.errors > 0,
+      auditReady: !!this.enabled && snap.exists && snap.entries > 0 && this.stats.errors === 0 && !stale,
+      degraded: !this.enabled || !snap.exists || this.stats.errors > 0 || stale,
     };
   }
 
