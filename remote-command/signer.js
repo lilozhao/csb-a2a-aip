@@ -92,6 +92,11 @@ class Signer {
    * @returns {boolean} 验证结果
    */
   verifyRequest(request, signature) {
+    // 未签名 → 直接判假（不抛错、不打「验证异常」误导日志）
+    if (typeof signature !== 'string' || signature.length === 0) {
+      console.warn('[A2A-CMD] 拒绝：请求未携带签名（P0-1 fail-closed）');
+      return false;
+    }
     const expected = this.signRequest(request);
     
     try {
