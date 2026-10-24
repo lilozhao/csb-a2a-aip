@@ -316,7 +316,18 @@ async function sendMessage(agentUrl, params) {
  * 发送消息（带上下文）
  */
 async function sendMessageWithContext(agentUrl, messageText, context = {}) {
-  const sender = getLocalSender();
+  // 2026-10-24：挂 AAT（与 client.js 同策略：签发失败不影响发送）
+  let sender = getLocalSender();
+  try {
+    const aat = require('./a2a-aat.js');
+    const audience = aat.audienceForUrl(agentUrl);
+    if (audience) {
+      sender = aat.attach(sender, audience, { capabilities: (context.capabilities || []) });
+      if (sender._aatError) console.warn(`[Client] ⚠️ AAT 未签发: ${sender._aatError}（消息照常发送）`);
+    }
+  } catch (e) {
+    console.warn(`[Client] ⚠️ AAT 模块不可用: ${e.message}（消息照常发送）`);
+  }
   
   const params = {
     message: {

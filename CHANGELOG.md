@@ -1,5 +1,160 @@
 # CHANGELOG · csb-a2a-aip
 
+## v5.3.0（2026-10-24）— AAT 消息级签名：信任终于建立在密码学上
+
+### 为什么做
+5.2.4 把握手信任接通了，但握手有两个天花板：
+1. **只覆盖 5 分钟**（会话 TTL），过期即归零
+2. **sender.name / sender.url 仍是自述字段**，按 host 匹配挡不住同 IP 多实例、DNS 重绑定
+
+要长期、逐条消息地证明「这条消息确实出自持有该私钥的实例」，只能签名。
+
+### 新增
+- **`a2a-aat.js`**：签发 / 挂载 / 验证 / 公钥导出
+- **`scripts/aat-keys.js`**：`export` / `pin` / `list` / `unpin` / `verify`
+- **`docs/AAT.md`**：密钥交换流程与诚实边界
+- 发送侧接线：`client.js`、`client-v2.js` 出站消息自动附带 AAT
+- 接收侧接线：`TrustBridge` 用 AAT 验证结果给出 `L2` 信任
+
+### 四条设计铁律
+1. **只认本地固定公钥**
+   绝不从发送方取公钥自证。攻击者自带公钥 → 忽略 → `no_pinned_key`。
+   （已写成长期断言，且反向验证过：改成采信自带公钥，测试立刻变红）
+2. **audience 必须锚定本实例**
+   此前 `expectedAudience: null` 等于不校验受众 —— 一条发给明德的 token 也会被我们认作有效。
+   现在缺受众直接拒验（`missing_expected_audience`）。
+3. **按 iss 选钥匙，不按 sender.url**
+   实测踩到：自测时 `sender.url` 是 `localhost:3100`，config 里是 `172.28.0.214:3100`，对不上。
+   NAT 环境下自报地址不可靠。`iss` 在 token 里但被签名覆盖，改它必导致验签失败 —— 按 iss 选钥匙是安全的。
+4. **六种失败分开报**
+   `no_pinned_key` / `bad_signature` / `expired` / `replay_detected` / `audience_mismatch` / `issuer_host_mismatch`
+
+### 修掉的顺带问题
+- **`config/loader.js` 的 `getKnownAgents()` 丢掉 `aidPublicKey` 和 `id`** ——
+  于是 TrustBridge 的 AAT 通道无论怎么配公钥都拿不到，永远返回 null。
+  与 5.2.4「存取不同键」是同一类病：数据在，中途被摘掉。
+- 私钥解析支持三级回退（env → config.aat.keyPath → csb-security/data 唯一私钥），
+  解决「脚本进程拿不到服务端 env」的实际问题
+
+### 验证
+- `tests/aat.test.js` **20 条**，其中 11 条是反例（自签名/无固定/受众混淆/篡改/重放/过期/跨主机/垃圾串）
+- 反向验证：把「按 iss 找固定公钥」退化成「采信发送方自带公钥」→ 安全断言立刻变红
+- **端到端实测**（本机回环）：
+  `[TrustBridge] ✅ AAT 签名验证通过: ruolan@172.28.0.214:3100 → L2 (exp in 300s)`
+
+### 诚实边界
+AAT 只证明「持有该私钥」，不证明「私钥没泄露」；公钥交换信道的安全性决定一切；
+不提供保密性（内容仍明文，需 E2E）；时钟漂移 > 5 分钟会验不过。
+
+### 落地状态
+本机已固定自身公钥（指纹 `aa09625e8b1e…`）用于回环自测。
+**邻居一个都还没固定** —— 需带外交换公钥后才能互相验证，此为前提，不是补丁能绕过的。
+
+## v5.2.4（2026-10-24）— 握手信任从未生效：存和取用的不是同一个键
+
+### 现象
+握手跑通了（五步全过、会话也注册了），但生产环境里**这条信任路径一次都没命中过**。
+查日志：`[TrustBridge] 握手信任已注册` 一条都没有。
+
+### 两层根因
+
+**1️⃣ 键的命名空间不同（直接原因）**
+```js
+registerHandshakeSession(session)  // 键 = session.caller_id  → "mingde@csbc.lilozkzy.top:3100"
+resolveTrustLevel(senderName)      // 查 = senderName         → "明德"
+```
+两个字符串永远对不上。而消息处理层（`_resolveSenderInfo`）传的正是名字。
+
+**2️⃣ name 是攻击者可控字段（更根本，不能靠「把键改一致」解决）**
+按名字匹配意味着：伪造者只要把 `sender.name` 写成「明德」，就能拿到 L1 信任。
+这与本模块自己写的设计本意直接冲突——「伪造者无法完成签名握手，因此无法获得握手信任等级」。
+**按名字给信任 = 握手白做。**
+
+### 修复
+- 注册时建**多重别名**：`caller_id` / `host:port` / config 反查到的中文名 / 本地名
+- 解析时**按 host 锚定**（`sender.url` / `sender.id` / 完整 caller_id）
+- **仅凭 name 默认不授予信任**，只打一条 warn 说明「差一点误信」
+  （调试可用 `new TrustBridge({ allowNameOnly: true })`）
+- 域名 ↔ IP 等价别名：一次 DNS 反查把解析到的 IP 也登记
+  （实况：config 里明德是 `47.121.28.125:3100`，握手 caller_id 可能是 `csbc.lilozkzy.top:3100`）
+- 同名不同主机会**告警**（不静默覆盖）
+- 顺带修 `ttl || 300` 假值兜底 → `ttl ?? 300`（`ttl=0` 曾被悄悄变成 300s）
+  以及过期判定 `>` → `>=`（ttl=0 应立即失效）
+
+### 判据（可机械核对）
+- 注册日志带别名：`| 别名: host=... name=...`
+- `resolveTrustLevel(name, {sender:{url}})` 命中时 `matchedBy: 'sender.url'`
+- 仅凭名字 → 返回 null + `🛡️ 拒绝按名字授予信任`
+- 新增 `tests/trust-bridge-key.test.js` **16 条**（含 3 条安全断言）
+- 反向验证：把 `allowNameOnly` 强制为 true（退回旧行为）→ 3 条安全断言立刻变红
+
+### 残余风险（诚实边界）
+`sender.url` / `sender.id` 仍是**自述字段**，不是密码学证明。
+同一 IP 上的不同实例、DNS 重绑定仍可能误配。
+真正防伪需要消息级签名（AAT）——本模块的 AAT 通道为此准备，但目前在 `agents.json` 里
+配置 `aidPublicKey` 的 Agent 极少，实际未启用。
+
+### 兼容性
+- 单例默认 `allowNameOnly=false`：此前「按名字拿到信任」的情况**本来就不存在**（键对不上），
+  故无行为回退；只是把隐患显式化
+- 返回值新增 `matchedBy` 字段，旧调用方忽略即可
+
+## v5.2.3（2026-10-24）— allowedScopes 不再变空：`[] || x` 这个坑（明德实测反馈）
+
+### 背景
+明德升级后补了用户公钥，握手仍卡住。它自己发现缺 `data/capabilities.json`，
+并报出「日志写降级、代码返回 {}」的不一致。顺着查，**还有一个更深的坑**。
+
+### 两个缺陷（都在 `server_v5.js`）
+
+**1️⃣ 日志与代码不一致（明德报的）**
+```js
+console.warn(`... 不存在，降级到 ['a2a:send']`);
+return {};   // ← 实际没降级
+```
+
+**2️⃣ 兜底表达式根本不兜底（我查出来的，比 1 更严重）**
+```js
+allowedScopes.length > 0
+  ? allowedScopes
+  : (identity.capabilities && Object.keys(identity.capabilities)) || ['a2a:send']
+```
+**空数组是 truthy**：`[] || ['a2a:send']` 恒等于 `[]`。
+identity 声明了 `capabilities` 但为空时，最终 `allowedScopes = []`
+→ challenge 阶段无 scope 可授 → **init 能过、approval 永远空授权**。
+又一个「绿灯」，且比前两次更隐蔽：没有任何报错，只是默默什么都不给。
+
+### 修复
+- 新增 `resolveAllowedScopes(caps, identityDoc)`：按**长度**显式判断，返回 `{scopes, source}`
+- 来源可核对：`capabilities.json` / `identity.capabilities` / `default`
+- 启动与**热更新共用同一解析**（此前热更新直接 `Object.keys(newCaps)`，把文件删空同样会变 []）
+- 握手路由不再重复兜底 —— 重复兜底正是这个坑的来源
+- 日志只说事实：缺文件就说「本文件不声明 scope」，兜底由下一行如实报告
+
+### 判据（可机械核对）
+- 启动日志必有一行 `[CAPABILITIES] 📋 allowedScopes 来源: <source>（N 个）`
+  或 `⚠️ 本实例未声明任何 scope，已回退最小集合 ['a2a:send']（来源: 默认值）`
+- `allowedScopes` 永远非空
+- 新增 `tests/capabilities-resolve.test.js` **8 条**（含反向验证：把旧写法放回去必须变红）
+
+## v5.2.2（2026-10-24）— 握手端点不再「假绿灯」：用户公钥不可用就拒绝挂载
+
+### 背景
+与明德重做握手时，`init` 成功、`proof` 永远返回 `uac_invalid: bad_public_key`。
+根因在对方侧（用户公钥没配/路径读不到/不是合法 JWK），但**我们这边也有同一个病**：
+`createHandshakeRouter` 允许 `userPublicKey = null` 照样挂载端点，
+于是端点"在"、`init` 能过、`proof` 必然失败 —— **一个永远走不完的绿灯**。
+
+### 修复
+1. **启动即校验用户公钥**（`server_v5.js`）：解析失败 → 不挂载端点 + 打印精确原因
+   - 未配置 / 文件读不到 / JSON 解析失败 / 不是合法 JWK / 不是 ed25519 —— 分别给话
+2. 错误分类下沉到 `csb-security` 1.0.1：`missing_user_public_key` / `bad_public_key(detail)` / `bad_signature` 三分
+
+### 判据（可机械核对）
+- 坏公钥启动 → 日志出现 `⚠️ 握手端点启用失败（AID/密钥配置错误）: 用户公钥不可用 → 握手端点不挂载…原因: …`
+- 好公钥启动 → `✅ 对等握手端点已启用: /a2a/handshake`
+- 依赖版本：csb-security **>= 1.0.1**
+
 ## v5.2.1（2026-10-24）— 修「升级覆盖配置导致静默全瞎」（舟楫实测）
 
 ### 🔴 P0：升级把实例配置覆盖成模板，服务"看起来正常，实则全瞎"
