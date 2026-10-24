@@ -730,13 +730,51 @@ function trustHealthSection() {
 }
 
 app.get('/health', (req, res) => {
+  // [2026-10-24 舟楫实测反馈 · P0] status 不再写死 'ok'。
+  //
+  // 事故现场：DHT 降级 CACHE、onlineAgents=0、registries=localhost:3099（连不上），
+  // 但 /health 依然返回 status:"ok" —— 外部监控看到"正常"，实际全瞎。
+  // 「看起来正常」比"报错"危险得多，因为没人会去查一个绿的灯。
+  //
+  // 新判据（可机械核对）：
+  //   · 配置未解析（占位符）→ degraded（比 DHT 更根本：连地址都没有）
+  //   · DHT 非 FULL 且 onlineAgents=0 → degraded（注册不上＝对外不可达）
+  //   · 其余 → ok
+  // 同时把每一项的判断依据放进 `checks`，不让人靠猜。
+  const dhtStatus = dhtManager.getStatus();
+  const regHealth = config.registryHealth();
+  const onlineAgents = (dhtStatus && dhtStatus.onlineAgents) || 0;
+  const dhtLevel = (dhtStatus && dhtStatus.level && dhtStatus.level.name) || 'UNKNOWN';
+
+  const checks = {
+    configResolved: {
+      ok: regHealth.ok,
+      source: regHealth.source,
+      effective: regHealth.effective,
+      hint: regHealth.hint,
+    },
+    registryReachable: {
+      ok: onlineAgents > 0,
+      onlineAgents,
+      dhtLevel,
+      hint: onlineAgents > 0 ? null : '注册表连不上或未注册：查 A2A_REGISTRY_URL / 网络 / 注册表服务',
+    },
+  };
+
+  let status = 'ok';
+  let degradedReason = [];
+  if (!checks.configResolved.ok) { status = 'degraded'; degradedReason.push('registry 配置未解析'); }
+  if (!checks.registryReachable.ok) { status = 'degraded'; degradedReason.push(`注册表不可达（onlineAgents=0, DHT=${dhtLevel}）`); }
+
   res.json({
-    status: 'ok',
+    status,
+    ...(degradedReason.length ? { degradedReason: degradedReason.join('; ') } : {}),
+    checks,
     version: A2A_VERSION,
     protocol: 'A2A v0.6',
     identity: identity.name,
     uptime: Math.floor(process.uptime()),
-    dht: dhtManager.getStatus(),
+    dht: dhtStatus,
     e2e: e2eManager.getStats(),
     rateLimit: rateLimiter.getStats(),
     tasks: taskStore.getStats(),

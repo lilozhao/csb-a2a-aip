@@ -1,7 +1,7 @@
 {
   "$comment": "【占位符模板 · P1-3 脱敏 2026-10-24】本文件是公开仓的安全模板，不含真实节点地址。真实部署请把各 agent 的 host 与 registry 写进 config/agents.local.json（已被 .gitignore，永不入库）——config/loader.js 会自动合并：agents.local.json 覆盖本文件同名字段。registry.local 按【运行环境】而异：① Docker 内网 = http://172.28.0.4:3099（启动脚本/环境变量 A2A_REGISTRY_URL 注入）② 公网 = http://csbc.lilozkzy.top:3099 ③ 宿主机 = http://localhost:3099。自 2026-09-21 起 config/loader.js 改为 env 优先：设了 A2A_REGISTRY_URL 就用它，未设才回落配置文件。",
   "registry": {
-    "local": "http://localhost:3099",
+    "local": "http://<REGISTRY_URL>:3099",
     "public": "http://<REGISTRY_HOST>:3099"
   },
   "skillServer": "http://localhost:3098",

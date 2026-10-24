@@ -1,5 +1,85 @@
 # CHANGELOG · csb-a2a-aip
 
+## v5.2.1（2026-10-24）— 修「升级覆盖配置导致静默全瞎」（舟楫实测）
+
+### 🔴 P0：升级把实例配置覆盖成模板，服务"看起来正常，实则全瞎"
+
+**现象**（舟楫 172.28.0.27 升级 5.1.1 后）：`/health` 返回 `status:"ok"`，
+但 `dht: CACHE`、`onlineAgents: 0`、`registries: localhost:3099`。
+
+**根因两层，第一层是我造成的**：
+
+1. 我在 P1-3「真实 IP 脱敏」时把公开仓的 `config/agents.json` 改成模板，
+   其中 `registry.local = "http://localhost:3099"`（其余字段都是 `<PLACEHOLDER>` 风格，
+   **唯独这一个写成了看起来合法的具体地址**）。
+   各实例 `git pull` → **本机真实配置被模板覆盖**。
+2. `start-v5.sh` 里有注册表地址修正逻辑，但本机真实入口是 watchdog 直跑
+   `node server_v5.js`，**绕过 start-v5.sh** ⇒ 修正从不生效 ⇒ 回落到 localhost:3099。
+
+**最坏的地方不是错，是"错得看不出来"**：注册失败只让 DHT 静默降级，
+而 `/health` 的 `status` 是写死的 `'ok'`。监控看到绿灯，实际全瞎。
+又一次印证 2026-10-24 的教训「警告不是防线」。
+
+### 修复三件
+
+**1. 模板里的占位符必须一眼就不像有效值**
+```diff
+- "local": "http://localhost:3099",
++ "local": "http://<REGISTRY_URL>:3099",
+```
+
+**2. loader 检测占位符并显式报错**（不再静默当配置用）
+- 新增 `isPlaceholder()` / `registryHealth()`
+- 解析到 `<XXX>` 时打 ERROR 级日志，说明「升级覆盖了本机配置」+「真实值该放哪」
+- `registryHealth()` 返回 `{ok, source, effective, placeholder, hint}`，
+  `source` 明确区分 `env:A2A_REGISTRY_URL` / `agents.local.json` / `agents.json` / `placeholder`
+
+**3. `/health` 的 status 不再写死**
+| 条件 | status |
+|---|---|
+| registry 配置未解析（占位符） | `degraded` |
+| DHT 非 FULL 且 `onlineAgents=0` | `degraded` |
+| 其余 | `ok` |
+
+新增 `checks` 字段（可机械核对，不靠人读日志）：
+```json
+"checks": {
+  "configResolved":    { "ok": true, "source": "env:A2A_REGISTRY_URL", "effective": "http://...", "hint": null },
+  "registryReachable": { "ok": true, "onlineAgents": 17, "dhtLevel": "FULL", "hint": null }
+}
+```
+降级时额外给 `degradedReason`（人话）。
+
+### 验证
+
+| 场景 | 修前 | 修后 |
+|---|---|---|
+| 注册表指向不存在的地址 | `status: ok`（骗人） | `status: degraded` · `degradedReason: 注册表不可达（onlineAgents=0, DHT=CACHE）` |
+| 配置仍是占位符 | 静默使用 | ERROR 日志 + `configResolved.ok=false` |
+| 正常 | ok | ok（不误报） |
+
+测试：`tests/health-degraded.test.js` **3 条**（起真实临时实例打 /health，
+覆盖「不可达必降级」「正常不误报」「自检字段齐全」）。
+与 think/bid 合计 **23/23**。
+
+### 给已踩坑实例的恢复步骤（舟楫已验证可行）
+
+```bash
+# 1. 真实注册表地址写进本机配置（不入库）
+#    config/agents.local.json:
+#    { "registry": { "local": "http://<你的注册表>:3099" } }
+#    或启动点注入 A2A_REGISTRY_URL
+
+# 2. 模板里的 self 段（<YOUR_AGENT_NAME>/127.0.0.1）同样要覆盖：
+#    "self": { "name": "你的名字", "host": "你的对外 IP", "port": 3100 }
+
+# 3. 重启后验收三格：
+curl -s localhost:3100/health | jq '.status, .checks'
+#    status=ok · configResolved.ok=true · registryReachable.onlineAgents>0
+```
+
+---
+
 ## v5.2.0（2026-10-24）— BID 信号钩子上游化（opt-in）
 
 ### 背景

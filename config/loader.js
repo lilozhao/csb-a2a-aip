@@ -45,6 +45,32 @@ function load() {
 }
 
 /** 获取注册表地址 */
+/**
+ * [2026-10-24 舟楫实测反馈 · P0] 占位符不再冒充有效地址。
+ *
+ * 事故：P1-3 脱敏时把公开仓的 `config/agents.json` 改成模板，其中
+ *   registry.local = "http://localhost:3099"（其余字段用 <PLACEHOLDER> 风格）。
+ * 各实例升级 `git pull` 后，**本机真实配置被模板覆盖**。
+ * 而 start-v5.sh 里有修正逻辑，但 watchdog 直跑 `node server_v5.js` 绕过它
+ * ⇒ 修正从不生效 ⇒ 回落到 localhost:3099 ⇒ 注册 ECONNREFUSED
+ * ⇒ DHT 降级 CACHE、onlineAgents 0，而 /health 仍返回 status:"ok"。
+ *
+ * 「看起来正常，实则全瞎」是这次事故最坏的地方 —— 又一次印证
+ * 「警告不是防线」（2026-10-24 教训 4）。
+ *
+ * 两道修法：
+ *   1. 模板里的占位符必须**一眼就不像有效值**（`<REGISTRY_URL>` 而非 localhost）
+ *   2. 解析到占位符时**显式报错**（ERROR 级日志 + 标记），不许静默当配置用
+ */
+const PLACEHOLDER_RE = /<[A-Z0-9_]+>/;
+
+function isPlaceholder(value) {
+  return typeof value === 'string' && PLACEHOLDER_RE.test(value);
+}
+
+// 未解析占位符的告警只打一次（避免注册循环刷屏），但状态一直保留供 /health 读
+let _placeholderWarned = {};
+
 function getRegistry(type = 'local') {
   // [2026-09-21] 环境差异显式化：env 优先，配置文件只做兜底。
   //   三场景（一澜 2026-09-21 定）：
@@ -58,7 +84,45 @@ function getRegistry(type = 'local') {
     if (envUrl) return envUrl.replace(/\/+$/, '');
   }
   const cfg = load();
-  return type === 'public' ? cfg.registry.public : cfg.registry.local;
+  const raw = type === 'public' ? cfg.registry.public : cfg.registry.local;
+
+  if (isPlaceholder(raw)) {
+    if (!_placeholderWarned[type]) {
+      _placeholderWarned[type] = true;
+      console.error(
+        `[config] ❌ registry.${type} 仍是未解析的占位符: ${raw}\n` +
+        `   · 升级覆盖了本机配置（config/agents.json 是**模板**，真实值应放 config/agents.local.json）\n` +
+        `   · 或在启动点注入环境变量 A2A_REGISTRY_URL=<你的注册表地址>\n` +
+        `   · 继续使用该值会导致注册失败 → DHT 降级 CACHE / onlineAgents=0（服务看似正常）`
+      );
+    }
+    return raw; // 原样返回但不冒充有效值：/health 会据此标记 configOk:false
+  }
+
+  return raw;
+}
+
+/**
+ * 配置自检：供 /health 与启动自检使用。
+ * 让「配置是否真的解析成功」成为**可机械核对**的字段，而不是靠人看日志。
+ */
+function registryHealth() {
+  const cfg = load();
+  const envUrl = (process.env.A2A_REGISTRY_URL || '').trim();
+  const local = cfg.registry && cfg.registry.local;
+  const source = envUrl ? 'env:A2A_REGISTRY_URL'
+    : isPlaceholder(local) ? 'placeholder'
+    : (fs.existsSync(LOCAL_PATH) ? 'agents.local.json' : 'agents.json');
+  const effective = envUrl || local;
+  return {
+    ok: !isPlaceholder(effective),
+    source,
+    effective: effective || null,
+    placeholder: isPlaceholder(effective),
+    hint: isPlaceholder(effective)
+      ? '真实值放 config/agents.local.json 或注入 A2A_REGISTRY_URL'
+      : null,
+  };
 }
 
 /** 获取 Skill 服务器地址 */
@@ -117,6 +181,8 @@ function getTrustedAgents(minTrust = 2) {
 module.exports = {
   load,
   getRegistry,
+  registryHealth,
+  isPlaceholder,
   getSkillServer,
   getSelf,
   getAgent,
