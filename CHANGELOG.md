@@ -1,5 +1,55 @@
 # CHANGELOG · csb-a2a-aip
 
+## v5.3.0（2026-10-24）— AAT 消息级签名：信任终于建立在密码学上
+
+### 为什么做
+5.2.4 把握手信任接通了，但握手有两个天花板：
+1. **只覆盖 5 分钟**（会话 TTL），过期即归零
+2. **sender.name / sender.url 仍是自述字段**，按 host 匹配挡不住同 IP 多实例、DNS 重绑定
+
+要长期、逐条消息地证明「这条消息确实出自持有该私钥的实例」，只能签名。
+
+### 新增
+- **`a2a-aat.js`**：签发 / 挂载 / 验证 / 公钥导出
+- **`scripts/aat-keys.js`**：`export` / `pin` / `list` / `unpin` / `verify`
+- **`docs/AAT.md`**：密钥交换流程与诚实边界
+- 发送侧接线：`client.js`、`client-v2.js` 出站消息自动附带 AAT
+- 接收侧接线：`TrustBridge` 用 AAT 验证结果给出 `L2` 信任
+
+### 四条设计铁律
+1. **只认本地固定公钥**
+   绝不从发送方取公钥自证。攻击者自带公钥 → 忽略 → `no_pinned_key`。
+   （已写成长期断言，且反向验证过：改成采信自带公钥，测试立刻变红）
+2. **audience 必须锚定本实例**
+   此前 `expectedAudience: null` 等于不校验受众 —— 一条发给明德的 token 也会被我们认作有效。
+   现在缺受众直接拒验（`missing_expected_audience`）。
+3. **按 iss 选钥匙，不按 sender.url**
+   实测踩到：自测时 `sender.url` 是 `localhost:3100`，config 里是 `172.28.0.214:3100`，对不上。
+   NAT 环境下自报地址不可靠。`iss` 在 token 里但被签名覆盖，改它必导致验签失败 —— 按 iss 选钥匙是安全的。
+4. **六种失败分开报**
+   `no_pinned_key` / `bad_signature` / `expired` / `replay_detected` / `audience_mismatch` / `issuer_host_mismatch`
+
+### 修掉的顺带问题
+- **`config/loader.js` 的 `getKnownAgents()` 丢掉 `aidPublicKey` 和 `id`** ——
+  于是 TrustBridge 的 AAT 通道无论怎么配公钥都拿不到，永远返回 null。
+  与 5.2.4「存取不同键」是同一类病：数据在，中途被摘掉。
+- 私钥解析支持三级回退（env → config.aat.keyPath → csb-security/data 唯一私钥），
+  解决「脚本进程拿不到服务端 env」的实际问题
+
+### 验证
+- `tests/aat.test.js` **20 条**，其中 11 条是反例（自签名/无固定/受众混淆/篡改/重放/过期/跨主机/垃圾串）
+- 反向验证：把「按 iss 找固定公钥」退化成「采信发送方自带公钥」→ 安全断言立刻变红
+- **端到端实测**（本机回环）：
+  `[TrustBridge] ✅ AAT 签名验证通过: ruolan@172.28.0.214:3100 → L2 (exp in 300s)`
+
+### 诚实边界
+AAT 只证明「持有该私钥」，不证明「私钥没泄露」；公钥交换信道的安全性决定一切；
+不提供保密性（内容仍明文，需 E2E）；时钟漂移 > 5 分钟会验不过。
+
+### 落地状态
+本机已固定自身公钥（指纹 `aa09625e8b1e…`）用于回环自测。
+**邻居一个都还没固定** —— 需带外交换公钥后才能互相验证，此为前提，不是补丁能绕过的。
+
 ## v5.2.4（2026-10-24）— 握手信任从未生效：存和取用的不是同一个键
 
 ### 现象

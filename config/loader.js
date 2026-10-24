@@ -163,11 +163,22 @@ function getAgentList() {
   }));
 }
 
-/** 获取已知 Agent 列表（known-agents.json 格式） */
+/**
+ * 获取已知 Agent 列表（known-agents.json 格式）
+ *
+ * 2026-10-24 修：此前只挑出 name/url/trustLevel 三个字段，
+ *   **把 id 和 aidPublicKey 丢掉了** —— 于是 TrustBridge 的 AAT 验证
+ *   （需要 agent.aidPublicKey）无论怎么配都拿不到公钥，永远 return null。
+ *   与 TrustBridge「存取不同键」是同一类病：数据在，但在中途被摘掉了。
+ *   现在保留原始信息（含 aidPublicKey / aidKid 等），只额外补 url 与去 emoji 的 name。
+ */
 function getKnownAgents() {
   const agents = getAllAgents();
   return Object.entries(agents).map(([id, info]) => ({
-    name: info.name.replace(/\s*[🌸🔧💼📜🧙🚤🦐🌿✨💧🌊🌟]\s*/g, ''),
+    ...info,                                   // 保留 aidPublicKey 等全部原始字段
+    id,
+    name: (info.name || '').replace(/\s*[🌸🔧💼📜🧙🚤🦐🌿✨💧🌊🌟🎋🌱]\s*/gu, ''),
+    rawName: info.name,
     url: `http://${info.host}:${info.port}`,
     trustLevel: info.trust
   }));

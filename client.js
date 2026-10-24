@@ -77,8 +77,24 @@ async function sendMessage(agentUrl, messageText, context = {}) {
     const url = new URL('/a2a/json-rpc', agentUrl);
     const client = url.protocol === 'https:' ? https : http;
 
-    const sender = getLocalSender();
-    
+    // 2026-10-24：挂 AAT（消息级签名，可证明「这条消息确实出自持有该私钥的实例」）
+    //   受众按目标 URL 推断；签发失败不影响发送，只记账（AAT 是增强项，不是可用性前提）
+    let sender = getLocalSender();
+    try {
+      const aat = require('./a2a-aat.js');
+      const audience = aat.audienceForUrl(agentUrl);
+      if (audience) {
+        sender = aat.attach(sender, audience, { capabilities: (context.capabilities || []) });
+        if (sender._aatError) {
+          console.warn(`[Client] ⚠️ AAT 未签发: ${sender._aatError}（消息照常发送）`);
+        }
+      } else {
+        console.warn('[Client] ⚠️ 无法推断收件方 audience，未附带 AAT');
+      }
+    } catch (e) {
+      console.warn(`[Client] ⚠️ AAT 模块不可用: ${e.message}（消息照常发送）`);
+    }
+
     // Phase 4: 构建带上下文的消息 (A2A-004 + A2A-007)
     const params = {
       message: {

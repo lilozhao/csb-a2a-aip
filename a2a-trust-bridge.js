@@ -248,11 +248,36 @@ class TrustBridge {
       }
     }
 
-    // ── 3. AAT 签名（需发送方 AID 公钥）──
-    const aatToken = metadata?.sender?.aat || metadata?.aat || metadata?.attestation || metadata?.sender?.attestation;
+    // ── 3. AAT 消息级签名（唯一能真正防伪的通道）──
+    //    2026-10-24 重写：此前传给 verifyAAT 的 expectedAudience 是 null，
+    //    等于「不校验受众」——一条本来发给明德的 token 也能被我们认作有效。
+    //    现在必须锚定到本实例 agent_id，且公钥只认本地固定值（见 a2a-aat.js）。
+    const aatToken = sender.aat || metadata?.aat || metadata?.attestation || sender.attestation;
     if (aatToken && typeof aatToken === 'string') {
-      const aatResult = this._verifyAAT(aatToken, metadata);
-      if (aatResult) return aatResult;
+      try {
+        const aat = require('./a2a-aat.js');
+        const self = aat.getSelf();
+        if (!self.ok) {
+          console.warn(`[TrustBridge] ⚠️ 收到 AAT 但本实例无法确定自身 agent_id: ${self.reason}`);
+        } else {
+          const r = aat.verifyInbound(sender, { expectedAudience: self.agentId });
+          if (r.ok) {
+            console.log(`[TrustBridge] ✅ AAT 签名验证通过: ${r.issuer} → L${r.trustLevel} (exp in ${r.expiresAt - Math.floor(Date.now() / 1000)}s)`);
+            return {
+              trustLevel: r.trustLevel,
+              source: 'aat',
+              matchedBy: 'aat',
+              issuer: r.issuer,
+              capabilities: r.capabilities,
+            };
+          }
+          // 六种失败分开报，不再混成一句
+          console.warn(`[TrustBridge] ⚠️ AAT 验证未通过: ${sender.name || '?'} — ${r.error}: ${r.reason}`);
+          this.lastAatError = { name: sender.name, error: r.error, reason: r.reason, at: Date.now() };
+        }
+      } catch (e) {
+        console.warn(`[TrustBridge] ⚠️ AAT 验证异常: ${e.message}`);
+      }
     }
 
     return null;
@@ -289,34 +314,6 @@ class TrustBridge {
     };
   }
 
-  /**
-   * 验证消息携带的 AAT（Attestation Token）
-   * 需要发送方的 AID 公钥——从 config/agents.json 的 knownAgents 中查找
-   * （Agent 若配置了 aid 公钥字段则可用；未配置时跳过验证）
-   */
-  _verifyAAT(token, metadata) {
-    try {
-      const { verifyAATWithAID } = require('../csb-security/lib/identity/aat.js');
-      const configLoader = require('./config/loader.js');
-      const knownAgents = configLoader.getKnownAgents();
-      const senderName = metadata?.sender?.name || '';
-      const cleanName = stripEmoji(senderName);
-      const agent = knownAgents.find((a) => a.name === senderName || a.name === cleanName);
-      // 需要发送方 AID 公钥（agents.json 中配置 aidPublicKey 字段）
-      const aid = agent?.aidPublicKey ? { public_key: agent.aidPublicKey } : null;
-      if (!aid) return null; // 无公钥源，跳过 AAT 验证
-      const result = verifyAATWithAID(token, aid, { expectedAudience: null });
-      if (result?.valid) {
-        const trustLevel = agent?.trustLevel || 1;
-        console.log(`[TrustBridge] ✅ AAT 签名验证通过: ${senderName} → L${trustLevel}`);
-        return { trustLevel, source: 'aat', matchedBy: 'aat' };
-      }
-      console.warn(`[TrustBridge] ⚠️ AAT 验证失败: ${senderName} — ${result?.error || 'invalid'}`);
-    } catch (e) {
-      // csb-security 不可用或格式问题：跳过 AAT 验证（回退 name+URL）
-    }
-    return null;
-  }
 
   /**
    * 列出当前握手信任会话（调试/管理用）
