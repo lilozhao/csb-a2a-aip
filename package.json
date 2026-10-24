@@ -1,6 +1,6 @@
 {
   "name": "csb-a2a-aip",
-  "version": "5.2.2",
+  "version": "5.2.3",
   "description": "A2A v5 共享 Skill — 分层提示词 + 多LLM适配 + E2E加密 + DHT发现",
   "main": "server.js",
   "scripts": {

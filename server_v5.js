@@ -570,7 +570,10 @@ function loadCapabilities() {
       console.log(`[CAPABILITIES] ✅ 从 ${CAPABILITIES_PATH} 加载 ${Object.keys(caps).length} 个 scope`);
       return caps;
     } else {
-      console.warn(`[CAPABILITIES] ⚠️ ${CAPABILITIES_PATH} 不存在，降级到 ['a2a:send']`);
+      // 2026-10-24 修（明德实测反馈）：原日志写「降级到 ['a2a:send']」，代码却 return {}。
+      //   日志与代码不一致是最坏的一种 —— 人不信代码也不信日志，只能靠现场猜。
+      //   真实兜底在 resolveAllowedScopes()，这里只说事实。
+      console.warn(`[CAPABILITIES] ⚠️ ${CAPABILITIES_PATH} 不存在 —— 本文件不声明 scope（将由 identity.capabilities / 默认值兜底）`);
       return {};
     }
   } catch (e) {
@@ -579,8 +582,37 @@ function loadCapabilities() {
   }
 }
 
+/**
+ * 解析本实例允许授予的 scope 列表（唯一入口：启动与热更新共用）
+ *
+ * 2026-10-24 修（明德实测反馈）：原表达式
+ *   allowedScopes.length > 0 ? allowedScopes
+ *                          : (identity.capabilities && Object.keys(identity.capabilities)) || ['a2a:send']
+ * 有个致命细节：**空数组是 truthy**，`[] || ['a2a:send']` 恒等于 `[]`。
+ * 于是「identity 声明了 capabilities 但为空」时最终 allowedScopes=[]，
+ * challenge 阶段无 scope 可授 —— init 能过、approval 永远空授权。
+ * 现在按长度显式判断，并把来源打出来（可机械核对）。
+ */
+function resolveAllowedScopes(caps, identityDoc) {
+  const fromCaps = Object.keys(caps || {});
+  if (fromCaps.length > 0) return { scopes: fromCaps, source: 'capabilities.json' };
+
+  const fromIdentity = (identityDoc && identityDoc.capabilities)
+    ? Object.keys(identityDoc.capabilities)
+    : [];
+  if (fromIdentity.length > 0) return { scopes: fromIdentity, source: 'identity.capabilities' };
+
+  return { scopes: ['a2a:send'], source: 'default' };
+}
+
 let capabilities = loadCapabilities();
-let allowedScopes = Object.keys(capabilities);
+let scopeResolution = resolveAllowedScopes(capabilities, identity);
+let allowedScopes = scopeResolution.scopes;
+if (scopeResolution.source === 'default') {
+  console.warn(`[CAPABILITIES] ⚠️ 本实例未声明任何 scope，已回退最小集合 ['a2a:send']（来源: 默认值）。如需授予更多，写 ${CAPABILITIES_PATH}`);
+} else {
+  console.log(`[CAPABILITIES] 📋 allowedScopes 来源: ${scopeResolution.source}（${allowedScopes.length} 个）`);
+}
 
 // 热更新：capabilities.json 改动后 1 秒防抖重读
 if (fs.existsSync(CAPABILITIES_PATH)) {
@@ -592,7 +624,9 @@ if (fs.existsSync(CAPABILITIES_PATH)) {
         const newCaps = loadCapabilities();
         const oldLen = allowedScopes.length;
         capabilities = newCaps;
-        allowedScopes = Object.keys(newCaps);
+        // 2026-10-24：热更新也走同一解析，避免把文件删空后 allowedScopes 变成 []
+        scopeResolution = resolveAllowedScopes(newCaps, identity);
+        allowedScopes = scopeResolution.scopes;
         console.log(`[CAPABILITIES] 🔄 热更新: ${oldLen} → ${allowedScopes.length} 个 scope`);
         // ⚠️ 注意：handshake-full.js 的 HandshakeManager 闭包捕获 calleeAllowedScopes
         //    改文件后需要重建 manager 才能让新 scope 生效
@@ -648,9 +682,9 @@ if (securityAdapter.source === 'csb-security' && handshakeAIDPath && handshakeKe
       calleeAID,
       calleePrivateKey: calleeKey,
       // 🔧 v5.0.1: 优先用 capabilities.json，回退 identity.capabilities，最后 ['a2a:send']
-      calleeAllowedScopes: allowedScopes.length > 0
-        ? allowedScopes
-        : (identity.capabilities && Object.keys(identity.capabilities)) || ['a2a:send'],
+      // 2026-10-24：allowedScopes 已由 resolveAllowedScopes 保证非空且带来源，
+      //   此处不再重复兜底（重复兜底正是「[] || x」这个坑的来源）。
+      calleeAllowedScopes: allowedScopes,
       userPublicKey: userPublicKeyInfo.key,
       trustManager: loadedV3.trustManager || null,
       // [TrustBridge] 握手完成 → 注册信任会话（消息层信任校验优先使用）

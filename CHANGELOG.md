@@ -1,5 +1,43 @@
 # CHANGELOG · csb-a2a-aip
 
+## v5.2.3（2026-10-24）— allowedScopes 不再变空：`[] || x` 这个坑（明德实测反馈）
+
+### 背景
+明德升级后补了用户公钥，握手仍卡住。它自己发现缺 `data/capabilities.json`，
+并报出「日志写降级、代码返回 {}」的不一致。顺着查，**还有一个更深的坑**。
+
+### 两个缺陷（都在 `server_v5.js`）
+
+**1️⃣ 日志与代码不一致（明德报的）**
+```js
+console.warn(`... 不存在，降级到 ['a2a:send']`);
+return {};   // ← 实际没降级
+```
+
+**2️⃣ 兜底表达式根本不兜底（我查出来的，比 1 更严重）**
+```js
+allowedScopes.length > 0
+  ? allowedScopes
+  : (identity.capabilities && Object.keys(identity.capabilities)) || ['a2a:send']
+```
+**空数组是 truthy**：`[] || ['a2a:send']` 恒等于 `[]`。
+identity 声明了 `capabilities` 但为空时，最终 `allowedScopes = []`
+→ challenge 阶段无 scope 可授 → **init 能过、approval 永远空授权**。
+又一个「绿灯」，且比前两次更隐蔽：没有任何报错，只是默默什么都不给。
+
+### 修复
+- 新增 `resolveAllowedScopes(caps, identityDoc)`：按**长度**显式判断，返回 `{scopes, source}`
+- 来源可核对：`capabilities.json` / `identity.capabilities` / `default`
+- 启动与**热更新共用同一解析**（此前热更新直接 `Object.keys(newCaps)`，把文件删空同样会变 []）
+- 握手路由不再重复兜底 —— 重复兜底正是这个坑的来源
+- 日志只说事实：缺文件就说「本文件不声明 scope」，兜底由下一行如实报告
+
+### 判据（可机械核对）
+- 启动日志必有一行 `[CAPABILITIES] 📋 allowedScopes 来源: <source>（N 个）`
+  或 `⚠️ 本实例未声明任何 scope，已回退最小集合 ['a2a:send']（来源: 默认值）`
+- `allowedScopes` 永远非空
+- 新增 `tests/capabilities-resolve.test.js` **8 条**（含反向验证：把旧写法放回去必须变红）
+
 ## v5.2.2（2026-10-24）— 握手端点不再「假绿灯」：用户公钥不可用就拒绝挂载
 
 ### 背景
