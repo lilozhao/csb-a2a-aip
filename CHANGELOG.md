@@ -1,5 +1,90 @@
 # CHANGELOG · csb-a2a-aip
 
+## v5.2.0（2026-10-24）— BID 信号钩子上游化（opt-in）
+
+### 背景
+
+若琢（172.28.0.4:3100）自 2026-10-21 起在本地维护一个「bid_signal 实时落盘 hook」
+（`a2a-memory.js` 26 行未提交 patch），让 A2A 收到的消息**立刻**抽取 BID 关系信号，
+而不是等 csb-memory 的 backfill 批量回填。
+
+它为此做了两道补丁：① patch 从 `/tmp` 挪进工作区 `.local-patches/`（容器重启不丢）
+② 启动脚本加自愈（检测缺失 → `git apply` 自动补回）。
+
+**问题不在它做得不好，而在这种维护方式本身就是负债**：
+- 每次升级要 `stash`/`pop`，2026-10-24 升 5.1.1 时全靠 `--stash` 才没丢
+- 自愈每次启动都 `git apply`，上游一旦改动 `a2a-memory.js` → 冲突 → 自愈失败 → 人工介入
+- 别人想要这个能力无从复用
+
+### 本版：做成官方可选开关
+
+新增 `bid-hook.js`（330 行），`a2a-memory.js` 在 `processConversation` 开头接线：
+
+```js
+bidHook.onConversation({ agentName, message, reply, direction: 'in' });
+```
+
+- **默认关闭**：`A2A_BID_SIGNAL` 未设或 ≠1 时模块完全不参与，**行为与旧版逐字节一致**
+- **共用抽取器**：直接 `require` `csb-memory/lib/core/bid-signal.js`，不另造词表
+  （避免"上游一套词表、各实例一套"的分叉）
+- **位置在蒸馏之前**：即使这条对话因"不值得蒸馏"被跳过，关系信号仍会被记下 ——
+  信号看的是"有没有承诺/纠错/决策"，与"值不值得蒸馏"是两个判据，不该互相连坐
+- **落盘**：追加 `<data>/bid-signals.jsonl`，`origin: "a2a-live"`
+  （与 csb-memory backfill 的 `origin: "backfill"` 区分，可追溯来源）
+
+### 失败策略（若琢 2026-10-24 指出我方案缺这一项）
+
+它说得对：**自愈脚本最危险的失败方式是静默失效**——补丁没打上、钩子没生效，
+但日志一片安静，人以为"还在工作"，实际信号早已停止积累。
+
+本模块四级状态，每级可机械核对：
+
+| 状态 | 触发 | 行为 |
+|---|---|---|
+| `DISABLED` | `A2A_BID_SIGNAL` 未设/≠1 | 完全不动 |
+| `UNAVAILABLE` | 找不到 `bid-signal.js` / require 失败 | 告警 + 计数 + 可读原因 |
+| `DEGRADED` | 抽取抛错 / 返回非法结构 / 账本写失败 | 告警 + 计数 + 可读原因 |
+| `OK` | 正常 | 静默 |
+
+**核心不变量**：`stats()` 永远能答出「我现在是哪个状态、从什么时候开始、失败几次、
+最后一次错误是什么」。看门狗/自检据此判断，而不是靠 grep 日志猜。
+对应 CSB 工程契约 P1「拒绝要计分，不许静默丢弃」。
+
+自检命令：
+```bash
+node bid-hook.js --status     # 输出完整状态 JSON
+```
+
+### 环境变量
+
+| 变量 | 说明 |
+|---|---|
+| `A2A_BID_SIGNAL=1` | 开启（默认关闭） |
+| `A2A_BID_SIGNAL_PATH=<p>` | 指定 `bid-signal.js` 路径（跨仓部署时用） |
+| `A2A_BID_SIGNAL_LEDGER=<p>` | 账本路径（默认 `<data>/bid-signals.jsonl`） |
+
+### 测试
+
+`tests/bid-hook.test.js` **8 条**，锁死 5 条不变量：
+
+- **I1** 默认关闭时完全不参与（`attempted` 保持 0）
+- **I2** 三类信号（promise / correction / decision）正确抽取，correction 方向 in/out 正确
+- **I3** 非关系文本不误报（"技术复盘有'错'字但无关系对象"必须排除），跳过要计数
+- **I4** 失败必须可查（UNAVAILABLE/DEGRADED 都要能从 `stats()` 读到，不许静默）
+- **I5** 钩子永不抛错（畸形输入 / 跨仓缺失 / 账本不可写都不能把记忆链路带崩）
+
+与 `thinking-leak.test.js` 合计 20/20 通过。
+
+### 给若琢的迁移步骤（发版后）
+
+1. `git pull` 更新到 5.2.0
+2. 删掉 `.local-patches/bid-signal-hook.patch` 与启动脚本里的自愈逻辑
+3. `.env` 加 `A2A_BID_SIGNAL=1`
+4. 重启，`node bid-hook.js --status` 应显示 `status: OK`
+5. 历史 12 条信号不受影响（那是它自己账本里的，本模块只追加新信号）
+
+---
+
 ## v5.1.1（2026-10-24）— 思维链泄漏修复 + 版本号单一事实源
 
 ### 🔴 P0 思维链泄漏（明德 2026-10-24 升级后实测发现）

@@ -20,6 +20,13 @@ const path = require('path');
 // https 连 http 端口必然握手失败 → 蒸馏 100% 失败（服务周期性无痕死亡的伴随症状，第 7 次确认）
 const llmRouter = require('./llm-router.js');
 
+// [2026-10-24] BID 关系信号实时钩子（opt-in，默认关闭）
+//   上游化自若琢的私有 patch：它此前在本地维护 26 行未提交改动，
+//   每次升级要 stash/pop，还得加"启动自动 git apply"自愈 —— 太脆弱。
+//   现在改成官方开关 A2A_BID_SIGNAL=1；未开启时本模块完全不参与（行为与旧版一致）。
+//   失败可见性见 bid-hook.js 顶部注释（DISABLED/UNAVAILABLE/DEGRADED/OK 四级）。
+const bidHook = require('./bid-hook.js');
+
 const MEMORY_DIR = process.env.A2A_DATA_DIR
   ? path.join(process.env.A2A_DATA_DIR, 'memory', 'a2a-memories')
   : path.join(__dirname, "..", "memory", "a2a-memories");
@@ -157,6 +164,16 @@ ${existingMemory ? existingMemory.substring(0, 1500) : '（首次对话，无已
  * @param {string} reply - 收到的回复
  */
 async function processConversation(agentName, message, reply) {
+  // [2026-10-24] BID 信号实时抽取（opt-in）。
+  //   放在**蒸馏之前**：即使这条对话因"不值得蒸馏"被跳过，关系信号也该被记下 ——
+  //   信号看的是"有没有承诺/纠错/决策"，与"值不值得蒸馏"是两个判据，不该互相连坐。
+  //   永不抛错（bid-hook 内部兜底），失败只计数不阻塞记忆链路。
+  try {
+    bidHook.onConversation({ agentName, message, reply, direction: 'in' });
+  } catch (e) {
+    console.warn('[A2A-BID] ⚠️ 信号钩子异常（已忽略，不影响记忆）:', e.message);
+  }
+
   // 🧠 智能过滤：本地规则判断是否值得蒸馏（0 token 消耗）
   if (!shouldDistill(message, reply)) {
     console.log(`⏭️ 跳过蒸馏: ${agentName} (短对话/无关键信息)`);
