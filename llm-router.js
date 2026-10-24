@@ -244,6 +244,10 @@ register('openai', async (identity, systemPrompt, userMessage, options = {}) => 
 
 // ── 直连外部 LLM（兼容旧 identity.llm 配置） ─────────────────
 register('direct', async (identity, systemPrompt, userMessage, options = {}) => {
+  return _withSlot(() => _directCall(identity, systemPrompt, userMessage, options));
+});
+
+async function _directCall(identity, systemPrompt, userMessage, options = {}) {
   const llmConfig = identity?.llm || {};
   if (!llmConfig.host) {
     console.error('[LLM-Router] direct 模式需要 identity.llm 配置');
@@ -276,6 +280,9 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
   return new Promise((resolve) => {
     const transport = String(llmConfig.port) === '443' ? https : http;
     const _t0 = Date.now();
+    // [美硅 2026-10-24] 429 限流：云网关限流时旧行为是「静默降级到模板回复」——
+    // 日志看着像「LLM 没接」，实则是频率/额度问题。现在显式报出来并退避重试一次。
+    const attempt = (retryLeft) => {
     const req = transport.request({
       hostname: llmConfig.host,
       port: parseInt(llmConfig.port) || 80,
@@ -295,6 +302,19 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
       res.on('end', () => {
         try {
           const body = Buffer.concat(chunks).toString('utf8');
+          if (res.statusCode === 429 && retryLeft > 0) {
+            const retryAfter = parseInt(res.headers['retry-after'] || '', 10);
+            const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+              ? Math.min(retryAfter * 1000, 15000) : 3000;
+            console.warn(`[LLM-Router] Direct 命中 429 限流：${body.slice(0, 120)} → ${waitMs}ms 后重试一次`);
+            setTimeout(() => attempt(retryLeft - 1), waitMs);
+            return;
+          }
+          if (res.statusCode !== 200) {
+            console.warn(`[LLM-Router] Direct HTTP ${res.statusCode}: ${body.slice(0, 200)}`);
+            resolve(null);
+            return;
+          }
           // 流式响应(SSE):只在 content-type 确认为 event-stream 时走这条分支
           if (isSSE || (body.includes('\ndata:') && !body.trim().startsWith('{'))) {
             let content = '';
@@ -339,8 +359,36 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
     });
     req.setTimeout(timeout, () => { req.destroy(); console.error(`[LLM-Router] Direct 超时 (${timeout}ms, 已耗 ${Date.now() - _t0}ms)`); resolve(null); });
     req.write(payload); req.end();
+    };
+    attempt(1);
   });
-});
+}
+
+// [美硅 2026-10-24] 直连并发闸门：最多 2 个请求在飞，其余排队。
+// 起因：连续压测 + 自评会把 360 网关打成 429，429 触发退避重试，延迟反而堆到 7.7s。
+// 排队把突发摊平，429 自然少；也避免蒸馏与应答互相抢额度。
+const MAX_INFLIGHT = 2;
+let _inFlight = 0;
+const _waiters = [];
+function _withSlot(fn) {
+  return new Promise((resolve, reject) => {
+    const release = () => {
+      _inFlight -= 1;
+      const next = _waiters.shift();
+      if (next) next();
+    };
+    const run = () => {
+      _inFlight += 1;
+      Promise.resolve()
+        .then(() => fn())
+        .then(
+          (v) => { release(); resolve(v); },
+          (e) => { release(); reject(e); }
+        );
+    };
+    if (_inFlight < MAX_INFLIGHT) run(); else _waiters.push(run);
+  });
+}
 
 // ── 本地降级适配器（无 LLM 时的诚实回复） ──────────────────────
 register('local', async (identity, systemPrompt, userMessage, options = {}) => {

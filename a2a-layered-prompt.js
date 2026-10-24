@@ -56,6 +56,24 @@ function readContext(filename, defaultValue = '') {
  * @param {string} options.senderName - 发送者名称（用于 Layer 3）
  * @returns {string} 完整的 system prompt
  */
+/**
+ * 运行时事实块：版本号从真实文件读，不硬编码。
+ * 事实要真，否则模型会编（2026-10-24 AEP 自评实证）。
+ */
+function buildRuntimeFacts(identity = {}) {
+  let version = '';
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
+    version = String(pkg.version || '').trim();
+  } catch (e) { /* 读不到就不写版本行，不编 */ }
+  const lines = [];
+  if (version) lines.push(`- 你的实例版本：A2A 服务 v${version}`);
+  lines.push('- 你的协议实现：A2A v0.6（Google A2A 标准 JSON-RPC，方法 SendMessage/GetTask 等）');
+  const addr = identity.url || (identity.publicHost ? `http://${identity.publicHost}:${identity.port || 3100}` : '');
+  if (addr) lines.push(`- 你的对外地址：${addr}`);
+  return lines.join('\n');
+}
+
 function build(identity = {}, options = {}) {
   const layer = options.layer || 2;
   const senderName = options.senderName || '用户';
@@ -95,6 +113,14 @@ function build(identity = {}, options = {}) {
 - 回复控制在 50-200 字以内
 - 保持角色一致性，不要声称自己是其他身份
 - 不知道的事坦白说"不确定"，不要编造`);
+
+  // [美硅 2026-10-24] 运行时事实：版本号取真实值，不让模型自己编
+  // 起因：AEP 自评「契约一致性 - A2A版本识别」答成「v5.0.0」（实际 5.3.0）——
+  // 提示词里没写版本，模型就编了一个。事实类的东西要给，别指望它猜。
+  const runtimeFacts = buildRuntimeFacts(identity);
+  if (runtimeFacts) {
+    parts.push(`\n## 运行时事实（被问到就照实说，不要改数字）\n${runtimeFacts}`);
+  }
 
   // 能力边界诚实声明（P0-1 · 2026-09-09 · 防「嘴的应允」）
   // 背景：A2A 侧是无执行通道的「嘴」——承诺在嘴这做出，执行需要主会话/论坛的「手”。
@@ -151,7 +177,9 @@ function build(identity = {}, options = {}) {
 
   // Layer 2 结果
   if (layer < 3) {
-    return parts.join('\n\n').substring(0, 2500);
+    // [美硅 2026-10-24] 上限 2500 → 3000：加了「运行时事实」块后原来正好被截断，
+    // 尾部（行为规范等）被切掉。事实块不能把别的内容挤出去。
+    return parts.join('\n\n').substring(0, 3000);
   }
 
   // ═══════════════════════════════════
