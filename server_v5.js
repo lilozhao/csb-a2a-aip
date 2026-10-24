@@ -609,6 +609,33 @@ if (fs.existsSync(CAPABILITIES_PATH)) {
 if (securityAdapter.source === 'csb-security' && handshakeAIDPath && handshakeKeyPath) {
   try {
     const fs2 = require('fs');
+    // 2026-10-24: 用户公钥必须「配了且能被解析」。
+    //   此前 env 为空或格式错时只 warn 一句、userPublicKey=null 照样挂载端点，
+    //   于是 init 成功、proof 永远 uac_invalid: bad_public_key —— 一个永远走不完的绿灯。
+    //   现在 fail-closed：解析不了就不挂，并打印精确原因与修法。
+    const userPublicKeyInfo = (() => {
+      const raw = process.env.A2A_SECURITY_HANDSHAKE_USER_PUBKEY;
+      if (!raw || !raw.trim()) return { key: null, reason: '未配置 A2A_SECURITY_HANDSHAKE_USER_PUBKEY' };
+      let parsed;
+      try {
+        parsed = raw.trim().startsWith('{') ? JSON.parse(raw) : JSON.parse(fs2.readFileSync(raw, 'utf8'));
+      } catch (e) {
+        return { key: null, reason: `读取/JSON 解析失败: ${e.message}（${raw.trim().startsWith('{') ? '内联值' : '文件路径: ' + raw}）` };
+      }
+      try {
+        const crypto2 = require('crypto');
+        const k = crypto2.createPublicKey({ key: parsed, format: 'jwk' });
+        if (k.asymmetricKeyType !== 'ed25519') {
+          return { key: null, reason: `公钥类型是 ${k.asymmetricKeyType}，协议要求 ed25519` };
+        }
+      } catch (e) {
+        return { key: null, reason: `不是合法 JWK（${e.message}）；需 {"crv":"Ed25519","x":"...","kty":"OKP"}` };
+      }
+      return { key: parsed, reason: null };
+    })();
+    if (!userPublicKeyInfo.key) {
+      throw new Error(`用户公钥不可用 → 握手端点不挂载（否则 proof 永远失败，形成假绿灯）。原因: ${userPublicKeyInfo.reason}`);
+    }
     // [TrustBridge] 握手信任桥接：握手完成后注册信任会话
     const { trustBridge } = require('./a2a-trust-bridge.js');
     const calleeAID = JSON.parse(fs2.readFileSync(handshakeAIDPath, 'utf8'));
@@ -624,14 +651,7 @@ if (securityAdapter.source === 'csb-security' && handshakeAIDPath && handshakeKe
       calleeAllowedScopes: allowedScopes.length > 0
         ? allowedScopes
         : (identity.capabilities && Object.keys(identity.capabilities)) || ['a2a:send'],
-      userPublicKey: (() => {
-        const raw = process.env.A2A_SECURITY_HANDSHAKE_USER_PUBKEY;
-        if (!raw) return null;
-        try {
-          if (raw.trim().startsWith('{')) return JSON.parse(raw); // 内联 JWK
-          return JSON.parse(fs2.readFileSync(raw, 'utf8')); // 文件路径
-        } catch (e) { console.warn('[A2A] ⚠️ 用户公钥解析失败:', e.message); return null; }
-      })(),
+      userPublicKey: userPublicKeyInfo.key,
       trustManager: loadedV3.trustManager || null,
       // [TrustBridge] 握手完成 → 注册信任会话（消息层信任校验优先使用）
       onSession: (session) => trustBridge.registerHandshakeSession(session),
