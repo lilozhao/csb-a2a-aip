@@ -120,3 +120,4 @@ csb-identity/data/
 
 # P1-3（2026-10-24 明鉴评审）：真实邻居地址外置，公开仓只留占位符模板
 config/agents.local.json
+keys/

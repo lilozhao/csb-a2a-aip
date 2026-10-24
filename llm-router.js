@@ -275,6 +275,7 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
 
   return new Promise((resolve) => {
     const transport = String(llmConfig.port) === '443' ? https : http;
+    const _t0 = Date.now();
     const req = transport.request({
       hostname: llmConfig.host,
       port: parseInt(llmConfig.port) || 80,
@@ -287,6 +288,7 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
         'Content-Length': Buffer.byteLength(payload),
       },
     }, res => {
+      if (process.env.A2A_LLM_DEBUG === '1') console.log('[LLM-Router][debug] HTTP', res.statusCode, '耗时', Date.now() - _t0, 'ms remote=' + (req.socket && req.socket.remoteAddress));
       const chunks = [];
       const isSSE = String(res.headers['content-type'] || '').includes('text/event-stream');
       res.on('data', c => chunks.push(c));
@@ -330,8 +332,12 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
         }
       });
     });
-    req.on('error', e => { console.error('[LLM-Router] Direct 连接失败:', e.message); resolve(null); });
-    req.setTimeout(timeout, () => { req.destroy(); console.error('[LLM-Router] Direct 超时'); resolve(null); });
+    req.on('error', e => { console.error('[LLM-Router] Direct 连接失败:', e.message, `(耗时 ${Date.now() - _t0}ms)`); resolve(null); });
+    req.on('socket', (s) => {
+      if (process.env.A2A_LLM_DEBUG === '1') console.log('[LLM-Router][debug] socket 分配', Date.now() - _t0, 'ms');
+      s.on('connect', () => { if (process.env.A2A_LLM_DEBUG === '1') console.log('[LLM-Router][debug] 已连接 remote=' + s.remoteAddress, Date.now() - _t0, 'ms'); });
+    });
+    req.setTimeout(timeout, () => { req.destroy(); console.error(`[LLM-Router] Direct 超时 (${timeout}ms, 已耗 ${Date.now() - _t0}ms)`); resolve(null); });
     req.write(payload); req.end();
   });
 });
