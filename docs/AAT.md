@@ -155,3 +155,17 @@ node scripts/aat-send.js --verify <token> --aud <本实例agent_id>
 绕过 `client.js` 的智能体发现（那步最长 10s），直连 `/a2a/json-rpc`。
 `--verify` 只传 `name`、不传 `id`/`url` —— 传了会被当作「声称来源」与 `iss` 交叉比对，
 报 `issuer_host_mismatch`（那是交叉核对通道，不是验签本身）。
+
+**sender 读本地 identity，不硬编码**（v5.3.3）：
+`scripts/aat-send.js` 的 sender 取自 `A2A_IDENTITY_PATH` 或 `identity.json`
+（复用 `client.js` 的 `getLocalSender()` —— 它是 P2「身份不许有默认值」的唯一实现点）。
+
+早期版本曾把 sender 写死成若兰，导致**任何非若兰实例跑它都会冒充若兰发消息**
+（若琢实测遇到 `SELF_MESSAGE_IGNORED`）。现在另有守卫：
+
+```
+identity.json 的 a2a_url host  ≠  AAT 的 iss host   →  exit 4 拒发
+```
+
+因为这种矛盾对方一定判 `issuer_host_mismatch`，发出去只是浪费一次往返。
+例外：`a2a_url` 是回环地址时只 warn（NAT 环境常见，不作为身份线索）。

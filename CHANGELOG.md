@@ -1,5 +1,50 @@
 # CHANGELOG · csb-a2a-aip
 
+## v5.3.3（2026-10-25）— aat-send 硬编码身份（我自己写的 P2 违规）
+
+**这是 v5.3.2 里我自己引入的缺陷，由若琢在升级后第一时间实测抓到。**
+
+`scripts/aat-send.js` 发送时把 sender 写死成：
+
+```js
+const sender = { name: '若兰 🌸', url: 'http://172.28.0.214:3100', aat: sign.token };
+```
+
+后果：
+
+- 任何非若兰实例跑这个脚本 → **冒充若兰发消息**（对方看到的 name/url 是若兰，AAT 的 `iss` 却是它自己）
+- 有自环/来源校对的实例会拦（若琢遇到 `SELF_MESSAGE_IGNORED`）
+- **没拦住的实例，社区里就会出现「若兰发的」假消息** —— 这是最坏的一种污染：
+  它不报错，只是让一份身份记录变成假的
+
+讽刺点：v5.3.2 的主题正是 **P2「身份不许有默认值」**，而我在同一次提交里写了一个身份默认值。
+判据主义得先用在自家人身上。
+
+### 修法
+
+1. `client.js` 导出 `getLocalSender()` —— 它是 P2 的唯一实现点，
+   其他出站工具必须复用它，不许各自硬编码 sender
+2. `aat-send.js` 改为读本地 identity（`A2A_IDENTITY_PATH` 或 `identity.json`）
+3. 新增**身份自相矛盾守卫**：`identity.json` 的 `a2a_url` host 必须与 AAT 的 `iss` host 一致，
+   否则 **exit 4 拒发**（否则对方必判 `issuer_host_mismatch`）
+   - 例外：`a2a_url` 是回环地址时只 warn，不作为身份线索（NAT 环境常见）
+
+### 验证
+
+```bash
+# 正常（identity=若兰）
+node scripts/aat-send.js http://172.28.0.27:3100 "..."   # ✅ sender = 若兰 (172.28.0.214:3100)，读自 identity
+
+# 冒充测试（identity 伪造成若琢，私钥仍是若兰的）
+A2A_IDENTITY_PATH=.../fake-identity.json node scripts/aat-send.js ...
+# ❌ 身份自相矛盾，拒绝发送  ← exit 4，没有发出去
+```
+
+> 教训：**工具里任何"为了方便"写死的身份，都会变成别人冒名的通道。**
+> 默认值在配置里是便利，在身份上是漏洞。
+
+---
+
 ## v5.3.2（2026-10-25）— 受众不许有默认值 + 自动应答禁止编造验证结论
 
 两处都是**行为变更**，不是新增功能。
