@@ -20,21 +20,49 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
+const fs = require('node:fs');
+const os = require('node:os');
 const http = require('node:http');
 const { spawn } = require('node:child_process');
 
 const ROOT = path.join(__dirname, '..');
 
+/**
+ * [2026-10-26 · 若琢指出] 本测试曾读**仓库根 identity.json**，造成「实例耦合」：
+ *   resolveIdentity() 会校验 A2A_AGENT_NAME 与身份文件 name 是否一致，不一致直接拒绝启动。
+ *   于是这条测试只在「身份名恰好是若兰」的机器上能过 ——
+ *   在别人机器上不是「测试失败」，而是**进程起不来**，看起来像环境问题。
+ *   这与我们正在推的「可各自解释」正好相反。
+ *
+ * 修法：测试自建一份临时 fixture 身份，不碰任何真身份文件。
+ *   判据：把仓库根 identity.json 换成任意别的名字，这条测试仍须全绿。
+ */
+const TEST_IDENTITY_NAME = '测试实例';
+
+function makeFixtureIdentity() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'a2a-identity-'));
+  const file = path.join(dir, 'identity.json');
+  fs.writeFileSync(file, JSON.stringify({
+    name: TEST_IDENTITY_NAME,
+    emoji: '🧪',
+    description: '临时 fixture 身份（health-degraded 测试专用，不代表任何真实 Agent）',
+    port: 0,
+    a2a_url: 'http://127.0.0.1:0',
+  }), 'utf8');
+  return { file, dir };
+}
+
 /** 起一个临时 server_v5 实例，等 /health 可用后返回 { port, proc, stop } */
 function startInstance({ port, env }) {
   return new Promise((resolve, reject) => {
+    const fixture = makeFixtureIdentity();
     const proc = spawn(process.execPath, ['server_v5.js'], {
       cwd: ROOT,
       env: {
         ...process.env,
         A2A_PORT: String(port),
-        A2A_AGENT_NAME: '若兰',
-        A2A_IDENTITY_PATH: path.join(ROOT, 'identity.json'),
+        A2A_AGENT_NAME: TEST_IDENTITY_NAME,
+        A2A_IDENTITY_PATH: fixture.file,
         A2A_BID_SIGNAL: '0',
         A2A_SHARED_SECRET: 'a'.repeat(64),
         // [2026-10-26] 测试实例绝不写注册表。
@@ -46,6 +74,7 @@ function startInstance({ port, env }) {
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    proc.on('exit', () => { try { fs.rmSync(fixture.dir, { recursive: true, force: true }); } catch {} });
 
     let stderr = '';
     proc.stderr.on('data', d => { stderr += d.toString(); });
