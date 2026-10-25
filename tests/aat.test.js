@@ -309,6 +309,50 @@ test('audienceForUrl：config 命中的 host → <id>@<host>', () => {
   assert.strictEqual(AAT.audienceForUrl(a.url), `${a.id}@${host}`);
 });
 
+// ─────────────────────────────────────────────
+// 同 host 多条目：顺序不该决定能不能验过
+//   2026-10-25 阿契实测：config 里同一台机器有三条（模板短名 / 中文名 / 完整 id），
+//   findPinnedKey 按 host 取第一个命中 —— 命中无公钥那条就必然 no_pinned_key。
+//   他的修法是让所有同 host 条目都带同一把钥；代码层更该做的是别让顺序当判据。
+// ─────────────────────────────────────────────
+test('findPinnedKeyByIssuer：无公钥条目排在前，仍应选中后面那条有公钥的', () => {
+  const picked = AAT.__test._pickPinnedEntry([
+    { id: 'ruolan', name: '若兰', url: 'http://10.0.0.9:3100' },                 // 无公钥，排第一
+    { id: 'ruolan-full', name: '若兰', url: 'http://10.0.0.9:3100', aidPublicKey: MINE.publicJwk },
+  ]);
+  assert.strictEqual(picked.ok, true, picked.reason);
+  assert.strictEqual(picked.key.x, MINE.publicJwk.x, '应选中带公钥那条');
+});
+
+test('_pickPinnedEntry：多条都无公钥 → no_pinned_key，且报出条目数', () => {
+  const picked = AAT.__test._pickPinnedEntry([
+    { id: 'a', name: '甲', url: 'http://10.0.0.9:3100' },
+    { id: 'b', name: '乙', url: 'http://10.0.0.9:3100' },
+  ]);
+  assert.strictEqual(picked.ok, false);
+  assert.strictEqual(picked.error, 'no_pinned_key');
+  assert.ok(/2 条/.test(picked.reason), `应报出条目数，实际: ${picked.reason}`);
+});
+
+test('_pickPinnedEntry：多条公钥相同 → 采用（无歧义）', () => {
+  const picked = AAT.__test._pickPinnedEntry([
+    { id: 'a', name: '甲', url: 'http://10.0.0.9:3100', aidPublicKey: MINE.publicJwk },
+    { id: 'b', name: '乙', url: 'http://10.0.0.9:3100', aidPublicKey: MINE.publicJwk },
+  ]);
+  assert.strictEqual(picked.ok, true, picked.reason);
+  assert.strictEqual(picked.key.x, MINE.publicJwk.x);
+});
+
+test('🛡️ _pickPinnedEntry：多条公钥不同 → key_conflict 拒绝（不许猜）', () => {
+  const picked = AAT.__test._pickPinnedEntry([
+    { id: 'a', name: '甲', url: 'http://10.0.0.9:3100', aidPublicKey: MINE.publicJwk },
+    { id: 'b', name: '乙', url: 'http://10.0.0.9:3100', aidPublicKey: PEER.publicJwk },
+  ]);
+  assert.strictEqual(picked.ok, false, '公钥冲突时必须拒绝');
+  assert.strictEqual(picked.error, 'key_conflict');
+  assert.ok(/身份歧义/.test(picked.reason), `应说明身份歧义，实际: ${picked.reason}`);
+});
+
 // 清理
 try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* 忽略 */ }
 

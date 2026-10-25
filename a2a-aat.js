@@ -281,28 +281,24 @@ function findPinnedKey(sender) {
   const host = _hostOfUrl(s.url) || _hostOf(s.id || s.agentId || '');
   const name = (s.name || '').replace(/\s*[🌸🔧💼📜🧙🚤🦐🌿✨💧🌊🌟🎋🌱]\s*/gu, '').trim();
 
-  const hit = agents.find((a) => {
+  // 收集**所有** host 匹配（而不是 find 第一个）—— 见 _pickPinnedEntry 注释
+  const matches = agents.filter((a) => {
     const aHost = _hostOfUrl(a.url) || _hostOf(a.id);
     if (host && aHost === host) return true;
     // 名字仅在没有 host 时作为次级判据（仍然要求该条目已固定公钥）
-    if (!host && name) {
-      const aName = (a.name || '').replace(/\s*[🌸🔧💼📜🧙🚤🦐🌿✨💧🌊🌟🎋🌱]\s*/gu, '').trim();
-      return aName === name;
-    }
+    if (!host && name) return stripEmojiSafe(a.name) === name;
     return false;
   });
 
-  if (!hit) return { ok: false, reason: `config 中找不到发送方条目（host=${host || '—'}, name=${name || '—'}）` };
-  if (!hit.aidPublicKey) {
-    return { ok: false, reason: `${hit.name || hit.id} 未固定 AID 公钥（config 缺 aidPublicKey）—— 无法验证 AAT` };
-  }
-  let key = hit.aidPublicKey;
-  if (typeof key === 'string') {
-    try { key = JSON.parse(key); } catch { return { ok: false, reason: `${hit.name || hit.id} 的 aidPublicKey 不是合法 JSON` }; }
-  }
-  if (!key || !key.x) return { ok: false, reason: `${hit.name || hit.id} 的 aidPublicKey 缺少 x 字段` };
+  if (!matches.length) return { ok: false, reason: `config 中找不到发送方条目（host=${host || '—'}, name=${name || '—'}）` };
 
-  return { ok: true, key, agentId: hit.id || null, name: hit.name || null };
+  const picked = _pickPinnedEntry(matches);
+  if (!picked.ok) return { ok: false, error: picked.error, reason: picked.reason };
+
+  const key = picked.key;
+  if (!key || !key.x) return { ok: false, reason: `${picked.entry.name || picked.entry.id} 的 aidPublicKey 缺少 x 字段` };
+
+  return { ok: true, key, agentId: picked.entry.id || null, name: picked.entry.name || null };
 }
 
 /**
@@ -326,27 +322,94 @@ function findPinnedKeyByIssuer(iss) {
   const issHost = _hostOf(iss);
   const issName = stripEmojiSafe(iss.split('@')[0]);
 
-  const hit = agents.find((a) => {
+  // 同样收集**所有** host 匹配，不取第一个 —— 顺序不该决定能不能验过
+  const matches = agents.filter((a) => {
     const aHost = _hostOfUrl(a.url) || (a.host && a.port ? `${a.host}:${a.port}`.toLowerCase() : '');
     if (issHost && aHost === issHost) return true;              // 主机一致
     const aName = stripEmojiSafe(a.name);
     return !!issName && aName === issName && _hostOfUrl(a.url) === issHost; // 名字+主机同时一致
   });
 
-  if (!hit) return { ok: false, reason: `没有已固定公钥的条目对应 issuer "${iss}"` };
-  if (!hit.aidPublicKey) {
-    return { ok: false, reason: `${stripEmojiSafe(hit.name) || hit.id} 未固定 AID 公钥 —— 无法验证 AAT（在 config 里补 aidPublicKey）` };
-  }
-  let key = hit.aidPublicKey;
-  if (typeof key === 'string') {
-    try { key = JSON.parse(key); } catch { return { ok: false, reason: 'aidPublicKey 不是合法 JSON' }; }
-  }
-  if (!key || !key.x) return { ok: false, reason: 'aidPublicKey 缺少 x 字段' };
-  return { ok: true, key, agentId: hit.id || null, name: stripEmojiSafe(hit.name) || null };
+  if (!matches.length) return { ok: false, error: 'no_pinned_key', reason: `没有已固定公钥的条目对应 issuer "${iss}"` };
+
+  const picked = _pickPinnedEntry(matches);
+  if (!picked.ok) return { ok: false, error: picked.error, reason: picked.reason };
+
+  const key = picked.key;
+  if (!key || !key.x) return { ok: false, error: 'no_pinned_key', reason: 'aidPublicKey 缺少 x 字段' };
+  return { ok: true, key, agentId: picked.entry.id || null, name: stripEmojiSafe(picked.entry.name) || null };
 }
 
 function stripEmojiSafe(s) {
   return (s || '').replace(/\s*[🌸🔧💼📜🧙🚤🦐🌿✨💧🌊🌟🎋🌱]\s*/gu, '').trim();
+}
+
+/**
+ * 从「host 匹配的多个条目」里确定唯一一把公钥。
+ *
+ * 为什么需要（2026-10-25 阿契实测反馈）：
+ *   config 里同一台机器常常有多条条目 —— 模板短名（`ruolan`）、
+ *   按注册表生成的中文名（`若兰`）、完整 agent_id（`ruolan@host:port`）。
+ *   旧实现用 `agents.find()` **取第一个 host 命中**，命中无公钥那条就必然
+ *   报 `no_pinned_key` —— **顺序决定成败**，而顺序取决于谁先往 config 里写。
+ *
+ *   阿契的解法是「让所有同 host 条目都带同一把公钥」，那是数据层修法，
+ *   能用，但要求每个实例都记得这么做。代码层更该做的是：**别让顺序当判据**。
+ *
+ * 三种情形（P1「拒绝要计分」+ P2「身份不许有默认值」）：
+ *   · 只有一条有公钥 → 用它（无论它排第几）
+ *   · 多条有公钥，x 值全同 → 用第一条（同一把钥匙，无歧义）
+ *   · 多条有公钥，x 值不同 → **拒绝**，报身份歧义；不能静默挑一个
+ *
+ * @param {object[]} matches host 匹配的条目（可能为空）
+ * @returns {{ok:boolean, entry?:object, key?:object, reason?:string, error?:string}}
+ */
+function _pickPinnedEntry(matches) {
+  const list = matches || [];
+  if (!list.length) return { ok: false, error: 'no_entry', reason: '没有 host 匹配的条目' };
+
+  const withKey = list.filter((a) => {
+    if (!a || a.aidPublicKey == null) return false;
+    if (typeof a.aidPublicKey === 'string') {
+      try { return !!JSON.parse(a.aidPublicKey).x; } catch { return false; }
+    }
+    return !!a.aidPublicKey.x;
+  });
+
+  const label = (a) => stripEmojiSafe(a.name) || a.id || '?';
+
+  if (!withKey.length) {
+    return {
+      ok: false,
+      error: 'no_pinned_key',
+      reason: list.length > 1
+        ? `config 中有 ${list.length} 条同 host 条目（${list.map(label).join(' / ')}），均未固定 AID 公钥`
+        : `${label(list[0])} 未固定 AID 公钥（config 缺 aidPublicKey）—— 无法验证 AAT`,
+    };
+  }
+
+  if (withKey.length === 1) {
+    const a = withKey[0];
+    const key = typeof a.aidPublicKey === 'string' ? JSON.parse(a.aidPublicKey) : a.aidPublicKey;
+    return { ok: true, entry: a, key };
+  }
+
+  // 多条带公钥：x 全同才算无歧义
+  const xs = withKey.map((a) => (typeof a.aidPublicKey === 'string' ? JSON.parse(a.aidPublicKey) : a.aidPublicKey).x);
+  const uniq = [...new Set(xs)];
+  if (uniq.length === 1) {
+    const a = withKey[0];
+    const key = typeof a.aidPublicKey === 'string' ? JSON.parse(a.aidPublicKey) : a.aidPublicKey;
+    return { ok: true, entry: a, key, note: `${withKey.length} 条同 host 条目公钥一致` };
+  }
+
+  return {
+    ok: false,
+    error: 'key_conflict',
+    reason: `config 中有 ${withKey.length} 条同 host 条目，公钥**互不相同**`
+      + `（${withKey.map((a) => `${label(a)}=${String((typeof a.aidPublicKey === 'string' ? JSON.parse(a.aidPublicKey) : a.aidPublicKey).x).slice(0, 8)}…`).join(' / ')}）`
+      + ' —— 身份歧义，拒绝猜测。请只保留一条，或让它们指向同一把钥。',
+  };
 }
 
 /**
@@ -525,4 +588,6 @@ module.exports = {
   exportPublicKey,
   _resetSelf,
   _jtiCache,
+  // 仅供测试：同 host 多条目时的选取策略（顺序不该决定成败）
+  __test: { _pickPinnedEntry },
 };
