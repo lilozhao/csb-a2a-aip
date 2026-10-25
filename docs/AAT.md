@@ -111,3 +111,47 @@ A2A_AAT_DISABLE=1    # 只关发送侧签名
 3. **不提供保密性**。内容仍是明文（需要 E2E 加密，另一套机制）。
 4. **时间窗口 5 分钟**。时钟漂移超过 5 分钟会验不过 —— 这是设计，不是 bug。
 5. **未固定公钥时不会自动信任**。这是有意的：宁可没有信任，也不要假信任。
+
+---
+
+## 受众推断：查不到就拒签（2026-10-25 修订）
+
+`audienceForUrl(url)` 以前在 config 查不到对端时，会**静默回落**成 `agent@<host>`。
+这个值**永远不可能**等于对方的 `expectedAudience`（对方锚定 `<名字>@<host>`），于是：
+
+```
+签得出 → 100% audience_mismatch → 双方都零报错
+```
+
+实测代价：一台实例连发 4 条，每条都被拒，它以为已经通了。
+
+**现在返回 `null`**，并打一行 warn 说明差什么。调用方二选一：
+
+- `client.js` / `client-v2.js`：降级为「不带 AAT，照常发送」，并 warn 一次
+- `scripts/aat-send.js`：**拒绝签发**（exit 3），提示 `--aud` 或补 config
+
+修法二选一：
+
+```bash
+# ① 把对端写进 local 配置（推荐，长期有效）
+#    config/agents.local.json → agents.<id> = { name, host, port }
+
+# ② 显式指定受众（临时验证最快）
+node scripts/aat-send.js http://<host>:<port> "..." --aud <对方agent_id>
+```
+
+> **判据**：签一个注定验不过的 token，比不签更坏 ——
+> 它让双方都以为在做验证，实际在自欺。身份不许有默认值（P2）。
+
+### aat-send 小工具
+
+```bash
+node scripts/aat-send.js <目标URL> "消息" [--aud <对方agent_id>] [--dry]
+node scripts/aat-send.js --check  <目标URL>          # 只检查能否签发
+node scripts/aat-send.js --dry    <目标URL> --aud …  # 只打印 token，带外核验用
+node scripts/aat-send.js --verify <token> --aud <本实例agent_id>
+```
+
+绕过 `client.js` 的智能体发现（那步最长 10s），直连 `/a2a/json-rpc`。
+`--verify` 只传 `name`、不传 `id`/`url` —— 传了会被当作「声称来源」与 `iss` 交叉比对，
+报 `issuer_host_mismatch`（那是交叉核对通道，不是验签本身）。

@@ -291,6 +291,24 @@ test('exportPublicKey 指纹稳定且可复算', () => {
   assert.strictEqual(crypto.createHash('sha256').update(der).digest('hex'), r.fingerprint);
 });
 
+// ─────────────────────────────────────────────
+// 受众推断：查不到必须返回 null，不许回落成 agent@<host>
+//   （2026-10-25 若兰：旧回落会签出 100% audience_mismatch 的 token，且双方零报错）
+// ─────────────────────────────────────────────
+test('audienceForUrl：未登记的 host → null（不回落成 agent@<host>）', () => {
+  const aud = AAT.audienceForUrl('http://10.99.99.99:3999');
+  assert.strictEqual(aud, null, `不该回落到占位值，实际得到: ${aud}`);
+});
+
+test('audienceForUrl：config 命中的 host → <id>@<host>', () => {
+  // 用当前 config 里的真实条目推导，避免把某台机器的地址写死进测试
+  const list = (require('../config/loader.js').getAgentList() || []).filter((a) => a && a.id && a.url);
+  if (!list.length) { console.log('     （config 无可用条目，跳过正向用例）'); return; }
+  const a = list[0];
+  const host = String(a.url).replace(/^[a-z]+:\/\//i, '').replace(/\/+$/, '').toLowerCase();
+  assert.strictEqual(AAT.audienceForUrl(a.url), `${a.id}@${host}`);
+});
+
 // 清理
 try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* 忽略 */ }
 

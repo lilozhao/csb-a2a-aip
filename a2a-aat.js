@@ -452,7 +452,20 @@ function _explain(err) {
 
 /**
  * 由目标 URL 推断收件方 agent_id（`<id>@<host>:<port>`）
- * 优先用 config 里的 id；查不到就只用 host:port（不做名字猜测）
+ *
+ * 优先用 config 里的 id。**查不到就返回 null，不再回落成 `agent@<host>`。**
+ *
+ * 为什么改（2026-10-25 若兰）：
+ *   旧实现查不到时返回 `agent@<host>`。这个占位值**永远不可能**等于对方的
+ *   expectedAudience（对方锚定的是 `<名字>@<host>`），于是：
+ *     签得出 → 100% audience_mismatch → 双方都零报错。
+ *   实测代价：一台实例连发 4 条，每条都被拒，它以为已经通了。
+ *   签一个注定验不过的 token，比不签更坏——它让双方都以为在验证，实际在自欺。
+ *
+ * 现在：返回 null，打一行 warn 说明差什么，由调用方决定降级（不带 AAT 照发）
+ *   或拒绝（见 scripts/aat-send.js）。**身份不许有默认值**（P2）。
+ *
+ * @returns {string|null} `<id>@<host>` 或 null
  */
 function audienceForUrl(agentUrl) {
   const host = _hostOfUrl(agentUrl);
@@ -461,9 +474,17 @@ function audienceForUrl(agentUrl) {
     const list = require('./config/loader.js').getAgentList() || [];
     const hit = list.find((a) => _hostOfUrl(a.url) === host);
     if (hit && hit.id) return `${hit.id}@${host}`;
-  } catch { /* 回落 */ }
-  // config 里没有：只能给 host，agent_id 的本地名未知
-  return `agent@${host}`;
+
+    console.warn(
+      `[AAT] ⚠️ 无法确定收件方 agent_id：config 里没有 ${host} 这个条目。\n`
+      + `      拒绝签一个注定 audience_mismatch 的 token（旧的 agent@${host} 占位值已废弃）。\n`
+      + `      修法二选一：① 把对端 name/host/port 写进 config/agents.local.json `
+      + `② 显式指定 --aud <对方agent_id>`
+    );
+  } catch (e) {
+    console.warn(`[AAT] ⚠️ 推断受众失败（config 不可用）: ${e.message}`);
+  }
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────
