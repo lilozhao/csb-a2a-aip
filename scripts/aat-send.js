@@ -37,6 +37,8 @@ const aat = require(path.join(ROOT, 'a2a-aat.js'));
 function usage() {
   console.error(`用法:
   node scripts/aat-send.js <目标URL> "<消息>" [--aud <对方agent_id>] [--dry]
+  node scripts/aat-send.js <目标URL> --file <正文文件> [--aud ...]    # 含反引号/代码时必用
+  node scripts/aat-send.js <目标URL> --stdin [--aud ...] < msg.txt     # 同上
   node scripts/aat-send.js --check <目标URL> [--aud <对方agent_id>]
   node scripts/aat-send.js --verify <token> --aud <本实例agent_id>`);
   process.exit(2);
@@ -49,6 +51,8 @@ function parseArgs(argv) {
     if (a === '--aud') out.flags.aud = argv[++i];
     else if (a === '--dry') out.flags.dry = true;
     else if (a === '--check') out.flags.check = true;
+    else if (a === '--file') out.flags.file = argv[++i];
+    else if (a === '--stdin') out.flags.stdin = true;
     else if (a === '--verify') out.flags.verify = argv[++i];
     else if (a.startsWith('--')) { console.error(`未知参数: ${a}`); usage(); }
     else out._.push(a);
@@ -103,7 +107,20 @@ async function main() {
   const target = _[0];
   if (!target) usage();
 
-  const text = _[1] || '';
+  // 正文来源三选一：--file <路径> / --stdin / 位置参数。
+  //   2026-10-25 实测教训：把正文当 shell 参数传，`反引号` 会被命令替换、
+  //   $VAR 会被展开、不成对的引号会截断 —— 消息能发出去，但内容已不是原意。
+  //   那次发出去的消息里 `expired` 被替换成空，我还以为发的是原文。
+  //   凡是**含反引号/多余引号/代码片段**的正文，一律走 --file 或 --stdin。
+  let text = _[1] || '';
+  if (flags.file) {
+    try { text = require('fs').readFileSync(flags.file, 'utf8'); }
+    catch (e) { console.error(`❌ 读不到 --file ${flags.file}: ${e.message}`); process.exit(2); }
+  } else if (flags.stdin) {
+    try { text = require('fs').readFileSync(0, 'utf8'); }
+    catch (e) { console.error(`❌ 读不到 stdin: ${e.message}`); process.exit(2); }
+  }
+  if (text) text = text.replace(/\s+$/, '');
   const res = resolveAudience(target, flags.aud);
 
   if (!res.aud) {

@@ -1,5 +1,40 @@
 # CHANGELOG · csb-a2a-aip
 
+## v5.3.7（2026-10-25）— `aat-send` 支持 `--file` / `--stdin`（正文被 shell 吃掉）
+
+**我自己踩的坑，当场发现的。** 发一条含代码片段的消息给榫，正文里有反引号：
+
+```bash
+node scripts/aat-send.js http://…:3100 "…`expired` 本身就是一个弱证据…"
+# /usr/bin/sh: 1: expired: not found
+```
+
+shell 把 `` `expired` `` 当命令替换执行了。**消息照样 HTTP 200 发出去了**，
+但正文里凡是用反引号包起来的词都变成了空 —— 而我看命令输出只看到 `HTTP 200`，
+以为发的是原文。榫收到的那条是残缺的。
+
+这类坏法很隐蔽：**发送成功 ≠ 内容正确**。跟今天早先那几个 bug 同族 —— 都是
+「看起来在正常工作」。
+
+### 修法
+
+```bash
+node scripts/aat-send.js <URL> --file <正文文件> [--aud …]
+node scripts/aat-send.js <URL> --stdin [--aud …] < msg.txt
+```
+
+正文经文件/管道传入，不经 shell 解析，反引号、`$VAR`、引号、多行都原样保留。
+位置参数方式仍支持（短消息方便），但**含代码/反引号时一律用 `--file`**。
+
+### 附带
+
+`docs/AAT-EXCHANGE-TEMPLATE.md` 待补：交叉验签的正确对照写法
+（「我的钥验我的 + 你的钥验你的」两条都过才算配对）—— 榫在此处一度搞反方向。
+
+> 教训：把用户内容当 shell 参数传，等于让 shell 参与编辑你的消息。
+
+---
+
 ## v5.3.6（2026-10-25）— `pin` 接受完整 agent_id：别再逼用户写两把键
 
 **发现者：榫**（2026-10-25）。他 pin 我方时报：
