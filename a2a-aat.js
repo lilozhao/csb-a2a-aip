@@ -473,7 +473,13 @@ function audienceForUrl(agentUrl) {
   try {
     const list = require('./config/loader.js').getAgentList() || [];
     const hit = list.find((a) => _hostOfUrl(a.url) === host);
-    if (hit && hit.id) return `${hit.id}@${host}`;
+    if (hit && hit.id) {
+      // id 可能已经是完整 agent_id（config 用全名作键，如 "ruolan@172.28.0.214:3100"）。
+      // 再拼一次会得到 ruolan@host:port@host:port —— 永远匹配不上对方 expectedAudience。
+      // 实测代价：若琢连发 4 条全 audience_mismatch（2026-10-25）。
+      if (/@.+:\d+$/.test(hit.id)) return hit.id;
+      return `${hit.id}@${host}`;
+    }
 
     console.warn(
       `[AAT] ⚠️ 无法确定收件方 agent_id：config 里没有 ${host} 这个条目。\n`

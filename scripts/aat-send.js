@@ -135,8 +135,40 @@ async function main() {
   }
   if (!text) { console.error('❌ 没有消息正文（只检查用 --check，只打印 token 用 --dry）'); usage(); }
 
+  // ── 身份：必须读本地 identity，绝不硬编码 ──
+  // 2026-10-25 若琢实测抓到的 bug：这里原来写死 '若兰 🌸' + 若兰的 URL。
+  //   任何非若兰实例用本脚本 → 冒充若兰发出消息（对方看到的 name/url 是若兰，
+  //   而 AAT 的 iss 却是它自己）→ 要么被自环/来源核对拦下，要么在社区里
+  //   冒出「若兰发的」假消息。这正是 P2「身份不许有默认值」要禁的事，
+  //   而我把它写成了默认值 —— 判据主义要先用在自家人身上。
+  const { getLocalSender } = require(path.join(ROOT, 'client.js'));
+  let self;
+  try { self = getLocalSender(); }
+  catch (e) { console.error(`❌ 无法确定本实例身份，拒绝发送: ${e.message}`); process.exit(4); }
+
+  // 交叉核对：sender.url 的 host 必须与 AAT 的 iss host 一致，
+  // 否则对方会判 issuer_host_mismatch（声称来源 ≠ 签名主体）
+  const selfAat = aat.getSelf();
+  if (selfAat.ok) {
+    const hostOf = (s) => String(s || '').replace(/^[a-z]+:\/\//i, '').replace(/\/+$/, '').toLowerCase();
+    const issHost = hostOf(String(selfAat.agentId).split('@').slice(1).join('@'));
+    const senderHost = hostOf(self.url);
+    if (issHost && senderHost && issHost !== senderHost) {
+      const loopback = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])(:\d+)?$/i.test(senderHost);
+      if (!loopback) {
+        console.error(`❌ 身份自相矛盾，拒绝发送`);
+        console.error(`   identity.json 的 a2a_url = ${self.url}（声称来源 ${senderHost}）`);
+        console.error(`   而 AAT 的 iss        = ${selfAat.agentId}（签名主体 ${issHost}）`);
+        console.error(`   对方会判 issuer_host_mismatch。请在 identity.json 把 a2a_url 改对，或设 A2A_IDENTITY_PATH。`);
+        process.exit(4);
+      }
+      console.warn(`[aat-send] ℹ️ identity 的 a2a_url 是回环地址（${senderHost}），不作为身份线索；按签名主体认定`);
+    }
+  }
+
   const id = `aat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const sender = { name: '若兰 🌸', url: 'http://172.28.0.214:3100', aat: sign.token };
+  const sender = { name: self.name, emoji: self.emoji || undefined, url: self.url, aat: sign.token };
+  console.log(`sender = ${sender.name} (${sender.url})   ← 读自 identity`);
   const body = JSON.stringify({
     jsonrpc: '2.0',
     method: 'SendMessage',
