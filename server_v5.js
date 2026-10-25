@@ -124,6 +124,15 @@ const A2A_ADVERTISE_HOST = require('./a2a-advertise-host')(identity, config);
 
 async function registerToRegistry() {
   try {
+    // [2026-10-26] 测试实例不得写生产注册表。
+    //   事故：tests/health-degraded.test.js I3 起临时实例（端口 3312）指向**真注册表**，
+    //   启动即 /register → 把「若兰」条目覆盖成 host:3312（无人监听）。
+    //   心跳只更新 lastHeartbeat、不修 host/port，于是注册表广播了一个死地址 16 小时。
+    //   症状：新邻居按注册表来敲，connection refused；双方都以为对方不理人。
+    if (process.env.A2A_SKIP_REGISTER === '1') {
+      console.log('[A2A] ⏭️ A2A_SKIP_REGISTER=1 → 跳过注册（测试/本地实例不污染注册表）');
+      return { skipped: true };
+    }
     // 若兰一页纸 #4：要求本地 identity.json 必带 publicHost；缺则回落会串台
     const publicHost = identity.publicHost || identity.host || config.getSelf?.()?.host;
     if (!publicHost) {
@@ -150,6 +159,7 @@ async function registerToRegistry() {
         headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
       }, (res) => {
         let data = '';
+        res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界多字节字符切成 U+FFFD
         res.on('data', (chunk) => data += chunk);
         res.on('end', () => {
           try {
@@ -186,6 +196,7 @@ async function sendHeartbeat() {
         headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
       }, (res) => {
         let data = '';
+        res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界多字节字符切成 U+FFFD
         res.on('data', (chunk) => data += chunk);
         res.on('end', () => resolve(data));
       });
@@ -212,6 +223,7 @@ function verifyRegistration() {
   return new Promise((resolve) => {
     const req = transport.get(url.origin + '/agents', (res) => {
       let data = '';
+      res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界多字节字符切成 U+FFFD
       res.on('data', (c) => data += c);
       res.on('end', () => {
         try {
@@ -228,6 +240,10 @@ function verifyRegistration() {
 }
 
 function startHeartbeatLoop() {
+  if (process.env.A2A_SKIP_REGISTER === '1') {
+    console.log('[A2A] ⏭️ A2A_SKIP_REGISTER=1 → 心跳循环不启动');
+    return;
+  }
   // 启动时立即注册（捕获错误，避免注册表离线时崩溃）
   registerToRegistry().catch((e) => {
     console.error(`[A2A] ⚠️ 初次注册失败，将在下个心跳周期补注册: ${e.message || e}`);

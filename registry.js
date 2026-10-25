@@ -358,16 +358,32 @@ app.post('/register', (req, res) => {
 });
 
 // 心跳
+//
+// [2026-10-26] 修「广播死地址」事故。
+//   事故经过：某实例被测试脚本以错误端口注册进生产注册表（172.28.0.214:3312），
+//   实际服务在 3100。客户端心跳**一直在发正确的 host+port**，
+//   但这个端点只解构 {name, version, platform} → host/port 被静默丢弃，
+//   于是错误地址在注册表里广播了 16 小时。新邻居照名单来敲 → connection refused，
+//   双方都以为对方不理人。
+//
+//   设计取舍（为什么不无脑覆盖）：
+//     心跳端点没有鉴权，任何人都能发。若无条件采信 host/port，
+//     等于任何人一条 POST 就能把任意 Agent 的地址改到自己机器上（合法劫持）。
+//   所以按风险分级处理：
+//     · 同 host、仅 port 变化 → 自动纠正并记账（我们的故障就是这个形态）
+//     · host 变了 → 必须带 admin token（REGISTRY_ADMIN_TOKEN），否则只告警不改
+//     · 未提供 host/port → 保持旧行为（向后兼容）
+//   每次纠正/拒绝都返回结构化字段，调用方不必猜。
 app.post('/heartbeat', (req, res) => {
-  const { name, version, platform } = req.body;
-  
+  const { name, version, platform, host, port } = req.body;
+
   if (!name) {
     return res.status(400).json({ error: '缺少 name 参数' });
   }
 
   const registry = loadRegistry();
   const agent = registry.agents.find(a => a.name === name);
-  
+
   if (!agent) {
     return res.status(404).json({ error: '智能体未注册' });
   }
@@ -375,14 +391,54 @@ app.post('/heartbeat', (req, res) => {
   agent.lastHeartbeat = new Date().toISOString();
   if (version) agent.version = version;
   if (platform) agent.platform = platform;
+
+  // —— 地址漂移处理 ——
+  let addressDrift = null;
+  const cleanHost = host ? String(host).replace(/^https?:\/\//, '').trim() : null;
+  const wantPort = (port === undefined || port === null || port === '') ? null : parseInt(port, 10);
+  const hostChanged = cleanHost && cleanHost !== agent.host;
+  const portChanged = wantPort !== null && Number.isFinite(wantPort) && wantPort !== agent.port;
+
+  if (hostChanged || portChanged) {
+    const adminToken = process.env.REGISTRY_ADMIN_TOKEN;
+    const providedToken = req.get('X-Admin-Token') || req.body.adminToken;
+    const authorized = !!(adminToken && providedToken && providedToken === adminToken);
+
+    if (hostChanged && !authorized) {
+      // 跨 host 变更 = 高权动作，本轮不动，只留痕
+      addressDrift = {
+        action: 'rejected',
+        reason: 'host_change_requires_admin_token',
+        from: { host: agent.host, port: agent.port },
+        to: { host: cleanHost, port: wantPort !== null ? wantPort : agent.port },
+      };
+      console.warn(`[A2A] ⚠️ 心跳申请改 host 被拒（需 admin token）: ${name} ${agent.host} → ${cleanHost}`);
+    } else {
+      const from = { host: agent.host, port: agent.port };
+      agent.host = cleanHost || agent.host;
+      if (wantPort !== null && Number.isFinite(wantPort)) agent.port = wantPort;
+      agent.url = (agent.port && agent.port > 0) ? `http://${agent.host}:${agent.port}` : `http://${agent.host}`;
+      agent.agentCard = (agent.port && agent.port > 0) ? `http://${agent.host}:${agent.port}/.well-known/agent-card.json` : null;
+      agent.addressCorrectedAt = new Date().toISOString();
+      agent.addressHistory = (agent.addressHistory || []).concat([{ ...from, correctedAt: agent.addressCorrectedAt }]).slice(-10);
+      addressDrift = {
+        action: 'corrected',
+        from,
+        to: { host: agent.host, port: agent.port },
+      };
+      console.warn(`[A2A] 🔧 心跳纠正地址: ${name} ${from.host}:${from.port} → ${agent.host}:${agent.port}`);
+    }
+  }
+
   saveRegistry(registry);
-  
+
   // 返回待投递消息数量
   const pendingMessages = getPendingMessages(name);
-  
-  res.json({ 
-    success: true, 
-    pendingMessages: pendingMessages.length 
+
+  res.json({
+    success: true,
+    pendingMessages: pendingMessages.length,
+    addressDrift,
   });
 });
 

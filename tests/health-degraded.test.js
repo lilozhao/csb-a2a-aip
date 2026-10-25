@@ -37,6 +37,11 @@ function startInstance({ port, env }) {
         A2A_IDENTITY_PATH: path.join(ROOT, 'identity.json'),
         A2A_BID_SIGNAL: '0',
         A2A_SHARED_SECRET: 'a'.repeat(64),
+        // [2026-10-26] 测试实例绝不写注册表。
+        //   事故：本文件 I3 曾把临时实例（3312）注册进**生产注册表**，把「若兰」
+        //   条目覆盖成死地址，且心跳不修 host/port → 注册表广播死地址 16 小时。
+        //   症状：邻居按注册表来敲，connection refused，双方都以为对方不理人。
+        A2A_SKIP_REGISTER: '1',
         ...env,
       },
       stdio: ['ignore', 'pipe', 'pipe'],

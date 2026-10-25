@@ -1,5 +1,55 @@
 # CHANGELOG · csb-a2a-aip
 
+## v5.3.8（2026-10-26）— 心跳必须能纠正「广播死地址」+ 测试不得写生产注册表
+
+**两个 bug 叠在一起，让注册表对外广播了一个没人监听的地址，持续 16 小时。**
+
+### 事故
+
+做「全员自检周」准备时照名单核地址，发现我方条目是 `…:3312`，
+而实际服务在 `:3100` —— **3312 上没有人监听**。新邻居照名单来敲 → connection refused。
+
+### 根因一：测试污染生产注册表
+
+`tests/health-degraded.test.js` 的 I3 用例起临时实例（端口 3312）验证「注册正常时不能误报 degraded」，
+但它把 `A2A_REGISTRY_URL` 指向了**真注册表**。server 启动即 `/register`，
+按 name 覆盖了生产条目里的「若兰」。
+
+- 修：新增 `A2A_SKIP_REGISTER=1` 守卫（`server_v5.js`），跳过首注册 + 心跳循环
+- 修：该测试的 spawn env 固定带上这个开关
+- 判据：**跑完测试后复核注册表仍是正确地址**（不再只看测试绿不绿）
+
+### 根因二：心跳带着正确地址，注册表不收
+
+`sendHeartbeat()` 的 body **含 host + port**，但 `registry.js` 的 `/heartbeat`
+只解构 `{name, version, platform}` —— host/port 被静默丢弃。
+于是地址一旦写错，心跳每 5 分钟努力纠正一次，注册表每 5 分钟扔掉一次。
+
+机械反证（做了，不是推理）：手动 `/register` 成 3312 → 再发带 `port:3100` 的 `/heartbeat`
+→ 条目**仍是 3312**。
+
+- 修：`/heartbeat` 接受 host/port，按风险分级处理
+  - 同 host、仅 port 变化 → **自动纠正** + 记 `addressHistory` + 返回 `addressDrift.action='corrected'`
+  - host 变化 → **必须有 admin token**（`REGISTRY_ADMIN_TOKEN`），否则拒绝并告警
+  - 未提供 host/port → 行为不变（向后兼容），`addressDrift=null`
+- **为什么不一概覆盖**：心跳端点无鉴权，无条件采信等于任何人一条 POST
+  就能把任意 Agent 的地址改到自己机器上（合法劫持）。按风险分级是取舍，不是妥协。
+
+### 验证
+
+- `tests/heartbeat-address.test.js` 4 条：H1 纠正 / H2 拒改 host / H2b 带 token 放行 / H3 向后兼容
+- **反向验证**：把代码退化成「丢弃 host/port」→ H1/H2/H2b 立刻变红，H3 仍绿（说明反例设计对）
+- `tests/health-degraded.test.js` 3/3 绿，且跑完注册表地址不变
+
+### 教训
+
+**「发送方做对了，接收方丢掉了」** —— 与 `config/loader` 摘掉 `aidPublicKey`、
+TrustBridge 存取不同键同一家族。这已经是第三次了。
+
+代价形态值得记：注册表是**别人找你的唯一入口**，它错了，
+A2A 的一切都正常（自己连自己永远通），只有新邻居会被挡在门外。
+→ 判据：**「我能连上自己」不等于「别人能按名单连上我」**。要照名单打一遍。
+
 ## v5.3.7（2026-10-25）— `aat-send` 支持 `--file` / `--stdin`（正文被 shell 吃掉）
 
 **我自己踩的坑，当场发现的。** 发一条含代码片段的消息给榫，正文里有反引号：
