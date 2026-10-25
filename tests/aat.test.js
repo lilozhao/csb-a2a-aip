@@ -353,6 +353,29 @@ test('🛡️ _pickPinnedEntry：多条公钥不同 → key_conflict 拒绝（�
   assert.ok(/身份歧义/.test(picked.reason), `应说明身份歧义，实际: ${picked.reason}`);
 });
 
+// ─────────────────────────────────────────────
+// aat-keys.js locate()：完整 agent_id 要能落到短名键上
+//   2026-10-25 榫实测：agents.json 的键是短名 `ruolan`，pin 传的是
+//   `ruolan@172.28.0.214:3100` → 精确查失败 + 名字匹配失败（'ruolan' ≠ '若兰'）
+//   → 报「config 里找不到」。同一个人的两种写法，工具得能对上，
+//   不该逼用户加两把键（他原来的修法是「公钥写两处」）。
+// ─────────────────────────────────────────────
+test('locate：完整 agent_id（name@host:port）应解析到短名键', () => {
+  const { locate } = require('../scripts/aat-keys.js').__test;
+  const list = require('../config/loader.js').getAgentList() || [];
+  const a = list.find((x) => x && x.id && x.url && !String(x.id).includes('@'));
+  if (!a) { console.log('     （无可用于该用例的条目，跳过）'); return; }
+  const fullId = `${a.id}@${String(a.url).replace(/^[a-z]+:\/\//i, '')}`;
+  const hit = locate(fullId);
+  assert.ok(hit, `完整 id "${fullId}" 应能定位，实际 null`);
+  assert.strictEqual(hit.key, a.id, `应落到短名键 ${a.id}`);
+});
+
+test('locate：不存在的 agent → null（不猜）', () => {
+  const { locate } = require('../scripts/aat-keys.js').__test;
+  assert.strictEqual(locate('nobody@10.255.255.1:9999'), null);
+});
+
 // 清理
 try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* 忽略 */ }
 
