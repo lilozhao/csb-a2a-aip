@@ -123,3 +123,6 @@ config/agents.local.json
 
 # 本地配置备份（含 aidPublicKey 等私有配置，不入库）
 config/agents.local.json.bak-*
+
+# 测试产生的临时账本（bid-hook.test.js）
+/.tmp-bid-test-*.jsonl

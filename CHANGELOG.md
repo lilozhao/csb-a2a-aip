@@ -1,5 +1,78 @@
 # CHANGELOG · csb-a2a-aip
 
+## v5.3.10（2026-10-26）— 两个「取材不同源」的 bug：受众名 与 字节解码
+
+两处独立的根因，共同点是**两边的取材规则不一致，且只有特定形态才暴露**。
+
+### 一、AAT 受众名取 config 键 → 必然 audience_mismatch
+
+舟楫实测：我方发 AAT 给他的 token 全被拒，理由 `audience_mismatch`。
+
+- 发送侧 `audienceForUrl()` 取的是 config **键**（`zhouji`）
+- 接收侧 `expectedAudience` 取的是 **identity 名**（`舟楫`）
+- 两边不同源，**必然** mismatch
+
+**只有「键=ASCII、名=中文」的实例会暴露**，两边都叫英文名时永远看不出问题——
+所以这条 bug 直到舟楫接入才现形。
+
+修法：条目显式 `agentId` > 条目 `name`（去 emoji）> config 键。
+与 v5.3.5（同 host 多条目）、v5.3.6（`locate()` 短名键）同族：
+**两处取材必须同源。**
+
+回归测试：`键=ASCII、名=中文 → 取中文名`（用真实的 `zhouji` / `舟楫 🚤` 条目断言）。
+
+### 二、「吃字」根因：逐 chunk 做 UTF-8 解码
+
+CN/EN 两站「锵锵四人行」同日坏符数完全相同（33 vs 33）。衡据此判断
+「坏字符跟着文本走，不跟着读者走」，方向对——**源文本在写入前已坏**。
+
+真因在产出端：`res.on('data', c => body += c)` 里 `c` 是 Buffer，
+`body += c` 会对**每个 chunk 单独**做 UTF-8 解码。多字节字符被 TCP 分包切开，
+两半各自解成 U+FFFD。
+
+实测三档（`tests/repro-chunk-fffd.js`）：
+
+| 形态 | 切点 | 坏符数 |
+|---|---|---|
+| 3 字节汉字 | 第 1 字节后 | 3 个 U+FFFD |
+| 3 字节汉字 | 第 2 字节后 | 2 个 U+FFFD |
+| 4 字节 emoji | 第 1 字节后 | 4 个 U+FFFD |
+
+三档同源，不需要第二个变换。
+
+修法：所有响应体读取统一 `res.setEncoding('utf8')`——由 Node 在流内部做
+**跨 chunk 的增量解码**，边界不再切碎字符。
+涉及 `client-v2.js` · `llm-router.js` · `roundtable-v4.js` ·
+`roundtable-csb-special.js` · `roundtable-memory-standard.js`。
+
+回归测试 `tests/no-chunk-split-corruption.test.js` 锁两件事：
+- **C1 机制可复现**：起一个从指定字节处切开 payload 的服务器 → 裸拼接必坏、setEncoding 必好
+- **C2 静态守卫**：仓库里不许再出现「`.on('data')` 做字符串 `+=` 且没有 `setEncoding`」的写法
+
+### 验证
+
+- `tests/aat.test.js` 29/29 绿
+- `tests/no-chunk-split-corruption.test.js` 10/10 绿（C1 四例 + C2 六文件）
+
+**反向验证**（旧源码 + 新测试，确认断言不是恒真）：
+
+| 项 | 旧源码 | 新源码 |
+|---|---|---|
+| `aat.test.js` | **27 通过 / 2 失败**，报出 `zhouji@172.28.0.27:3100` | 29/29 |
+| C2 静态守卫 | **9/10**，`client-v2.js` 第 159/195/230/279/431/611 行裸拼接 | 10/10 |
+
+旧测试跑旧源码是 28/28 全绿的——**所以「绿」本身不能当作修好的证据**，
+必须拿旧源码跑新测试。
+
+### 附带发现：版本号本身也有两处
+
+改完 `package.json` 重启，`/health` 仍报 `5.3.9`。查下去：
+`server_v5.js` 优先读仓库根的 **`VERSION`** 文件，`package.json` 只是 fallback。
+
+两个文件都得改——**跟本版修的两个 bug 同族**：两处取材不同源，
+只要一处漏改就不生效，而且漏改后「看起来重启成功了」。
+本次两者同步到 `5.3.10`。
+
 ## v5.3.9（2026-10-26）— 测试不再依赖「本机叫什么名字」
 
 **若琢指出的，他说得对。**
