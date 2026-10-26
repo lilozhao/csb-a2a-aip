@@ -319,7 +319,9 @@ async function main() {
   }
 }
 
-module.exports = { getAgentCard, sendMessage, chat, storeOfflineMessage };
+// getLocalSender 一并导出：它是「身份不许有默认值」(P2) 的唯一实现点，
+// 其他出站工具（如 scripts/aat-send.js）必须复用它，不许各自硬编码 sender。
+module.exports = { getAgentCard, sendMessage, chat, storeOfflineMessage, getLocalSender };
 
 if (require.main === module) {
   main();

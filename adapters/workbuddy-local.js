@@ -363,6 +363,8 @@ function buildInjectMessage(frame = {}) {
     `范围: ${scope}`,
     `任务: ${task}`,
     '边界: 仅沙箱写入白名单；越界/shell 一律拒绝；L3 需宿主用户确认。',
+    // [2026-10-25 若兰] 会话分工摘要，与 openclaw-gateway 同一口径（见 AGENTS.md「🔀 会话分工」）
+    '会话分工: 本会话是 A2A 桥接，只做只读核验/回执/留痕/转发；不改代码/配置。需改码 → 记 SELF_STATE 待办并转主会话。',
   ].join('\n');
 }
 

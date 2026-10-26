@@ -57,6 +57,22 @@ function t(name, fn) {
       const src = require('fs').readFileSync(file, 'utf8');
       assert.ok(/opts\.sinceMs/.test(src), '必须接受 opts.sinceMs（bridge 传的就是它）');
     });
+
+    // [2026-10-25 若兰] 会话分工必须**写进注入文本**，不能只写在 AGENTS.md 里。
+    //   起因：桥接会话的上下文里不一定注入完整 AGENTS.md，规则在文件里等于不存在；
+    //   而 2026-10-25 实测过两个会话对同一 bug 各提交一次（4f12104 / 2e7f16d）。
+    //   判据要机械可核对：注入文本里必须出现「不改代码/配置」这层意思。
+    await t(`${name}：注入文本自带「会话分工」约束（桥接不改码）`, () => {
+      const s = adapter.buildInjectMessage({
+        taskId: 'CONTRACT-PROBE',
+        delegatorLabel: '契约测试',
+        envelope: { scope: 'read', task: '契约探针' },
+      });
+      assert.strictEqual(typeof s, 'string', 'buildInjectMessage 应返回字符串');
+      assert.ok(/桥接/.test(s), '注入文本应点明本会话是桥接');
+      assert.ok(/不改代码\/配置/.test(s), '注入文本应明确禁止改代码/配置');
+      assert.ok(/主会话/.test(s), '应指明改动交回主会话');
+    });
   }
 
   // 反向自检：门禁本身要能抓出「缺 CONTRACT」的假适配器

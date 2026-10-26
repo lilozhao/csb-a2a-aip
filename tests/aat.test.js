@@ -291,6 +291,91 @@ test('exportPublicKey 指纹稳定且可复算', () => {
   assert.strictEqual(crypto.createHash('sha256').update(der).digest('hex'), r.fingerprint);
 });
 
+// ─────────────────────────────────────────────
+// 受众推断：查不到必须返回 null，不许回落成 agent@<host>
+//   （2026-10-25 若兰：旧回落会签出 100% audience_mismatch 的 token，且双方零报错）
+// ─────────────────────────────────────────────
+test('audienceForUrl：未登记的 host → null（不回落成 agent@<host>）', () => {
+  const aud = AAT.audienceForUrl('http://10.99.99.99:3999');
+  assert.strictEqual(aud, null, `不该回落到占位值，实际得到: ${aud}`);
+});
+
+test('audienceForUrl：config 命中的 host → <id>@<host>', () => {
+  // 用当前 config 里的真实条目推导，避免把某台机器的地址写死进测试
+  const list = (require('../config/loader.js').getAgentList() || []).filter((a) => a && a.id && a.url);
+  if (!list.length) { console.log('     （config 无可用条目，跳过正向用例）'); return; }
+  const a = list[0];
+  const host = String(a.url).replace(/^[a-z]+:\/\//i, '').replace(/\/+$/, '').toLowerCase();
+  assert.strictEqual(AAT.audienceForUrl(a.url), `${a.id}@${host}`);
+});
+
+// ─────────────────────────────────────────────
+// 同 host 多条目：顺序不该决定能不能验过
+//   2026-10-25 阿契实测：config 里同一台机器有三条（模板短名 / 中文名 / 完整 id），
+//   findPinnedKey 按 host 取第一个命中 —— 命中无公钥那条就必然 no_pinned_key。
+//   他的修法是让所有同 host 条目都带同一把钥；代码层更该做的是别让顺序当判据。
+// ─────────────────────────────────────────────
+test('findPinnedKeyByIssuer：无公钥条目排在前，仍应选中后面那条有公钥的', () => {
+  const picked = AAT.__test._pickPinnedEntry([
+    { id: 'ruolan', name: '若兰', url: 'http://10.0.0.9:3100' },                 // 无公钥，排第一
+    { id: 'ruolan-full', name: '若兰', url: 'http://10.0.0.9:3100', aidPublicKey: MINE.publicJwk },
+  ]);
+  assert.strictEqual(picked.ok, true, picked.reason);
+  assert.strictEqual(picked.key.x, MINE.publicJwk.x, '应选中带公钥那条');
+});
+
+test('_pickPinnedEntry：多条都无公钥 → no_pinned_key，且报出条目数', () => {
+  const picked = AAT.__test._pickPinnedEntry([
+    { id: 'a', name: '甲', url: 'http://10.0.0.9:3100' },
+    { id: 'b', name: '乙', url: 'http://10.0.0.9:3100' },
+  ]);
+  assert.strictEqual(picked.ok, false);
+  assert.strictEqual(picked.error, 'no_pinned_key');
+  assert.ok(/2 条/.test(picked.reason), `应报出条目数，实际: ${picked.reason}`);
+});
+
+test('_pickPinnedEntry：多条公钥相同 → 采用（无歧义）', () => {
+  const picked = AAT.__test._pickPinnedEntry([
+    { id: 'a', name: '甲', url: 'http://10.0.0.9:3100', aidPublicKey: MINE.publicJwk },
+    { id: 'b', name: '乙', url: 'http://10.0.0.9:3100', aidPublicKey: MINE.publicJwk },
+  ]);
+  assert.strictEqual(picked.ok, true, picked.reason);
+  assert.strictEqual(picked.key.x, MINE.publicJwk.x);
+});
+
+test('🛡️ _pickPinnedEntry：多条公钥不同 → key_conflict 拒绝（不许猜）', () => {
+  const picked = AAT.__test._pickPinnedEntry([
+    { id: 'a', name: '甲', url: 'http://10.0.0.9:3100', aidPublicKey: MINE.publicJwk },
+    { id: 'b', name: '乙', url: 'http://10.0.0.9:3100', aidPublicKey: PEER.publicJwk },
+  ]);
+  assert.strictEqual(picked.ok, false, '公钥冲突时必须拒绝');
+  assert.strictEqual(picked.error, 'key_conflict');
+  assert.ok(/身份歧义/.test(picked.reason), `应说明身份歧义，实际: ${picked.reason}`);
+});
+
+// ─────────────────────────────────────────────
+// aat-keys.js locate()：完整 agent_id 要能落到短名键上
+//   2026-10-25 榫实测：agents.json 的键是短名 `ruolan`，pin 传的是
+//   `ruolan@172.28.0.214:3100` → 精确查失败 + 名字匹配失败（'ruolan' ≠ '若兰'）
+//   → 报「config 里找不到」。同一个人的两种写法，工具得能对上，
+//   不该逼用户加两把键（他原来的修法是「公钥写两处」）。
+// ─────────────────────────────────────────────
+test('locate：完整 agent_id（name@host:port）应解析到短名键', () => {
+  const { locate } = require('../scripts/aat-keys.js').__test;
+  const list = require('../config/loader.js').getAgentList() || [];
+  const a = list.find((x) => x && x.id && x.url && !String(x.id).includes('@'));
+  if (!a) { console.log('     （无可用于该用例的条目，跳过）'); return; }
+  const fullId = `${a.id}@${String(a.url).replace(/^[a-z]+:\/\//i, '')}`;
+  const hit = locate(fullId);
+  assert.ok(hit, `完整 id "${fullId}" 应能定位，实际 null`);
+  assert.strictEqual(hit.key, a.id, `应落到短名键 ${a.id}`);
+});
+
+test('locate：不存在的 agent → null（不猜）', () => {
+  const { locate } = require('../scripts/aat-keys.js').__test;
+  assert.strictEqual(locate('nobody@10.255.255.1:9999'), null);
+});
+
 // 清理
 try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* 忽略 */ }
 

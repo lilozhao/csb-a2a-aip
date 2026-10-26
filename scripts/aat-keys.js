@@ -70,13 +70,48 @@ function mergedAgents() {
 /** 定位某 agent 在哪个文件里（优先本地） */
 function locate(agentId) {
   const local = readJson(LOCAL_PATH, { agents: {} });
-  if ((local.agents || {})[agentId]) return { file: 'local', key: agentId };
   const main = readJson(MAIN_PATH, { agents: {} });
-  if ((main.agents || {})[agentId]) return { file: 'main', key: agentId };
-  // 允许用名字匹配
   const norm = (s) => (s || '').replace(/\s*[🌸🔧💼📜🧙🚤🦐🌿✨💧🌊🌟🎋🌱]\s*/gu, '').trim();
+  const docs = [['local', local], ['main', main]];
+
+  // ① 精确键（两种文件都先试一遍，本地优先）
+  for (const [file, doc] of docs) if ((doc.agents || {})[agentId]) return { file, key: agentId };
+
+  // ② 完整 agent_id（`name@host:port`）→ 用短名再试
+  //    2026-10-25 榫实测：agents.json 的键是短名 `ruolan`，而 pin 传的是完整
+  //    `ruolan@172.28.0.214:3100`，精确查失败；名字匹配也失败（'ruolan' ≠ '若兰'）
+  //    → 直接报「config 里找不到」。这不是配置缺失，是**同一个人的两种写法**。
+  //    身份与地址在 AAT 里本来就是分开的两样，工具得能对上，不该逼用户加两把键。
+  const at = agentId.lastIndexOf('@');
+  if (at > 0) {
+    const short = agentId.slice(0, at).trim();
+    const hostPart = agentId.slice(at + 1).trim().toLowerCase();
+    if (short) {
+      for (const [file, doc] of docs) if ((doc.agents || {})[short]) return { file, key: short };
+    }
+    // ③ 短名也没有 → 按 host:port 匹配（唯一才用）
+    if (hostPart) {
+      const hits = [];
+      for (const [file, doc] of docs) {
+        for (const [id, info] of Object.entries(doc.agents || {})) {
+          const h = info && info.host && info.port ? `${String(info.host).toLowerCase()}:${info.port}` : '';
+          const u = (info && info.url ? String(info.url).replace(/^[a-z]+:\/\//i, '').replace(/\/+$/, '') : '').toLowerCase();
+          if (h === hostPart || u === hostPart) hits.push({ file, key: id });
+        }
+      }
+      if (hits.length === 1) return hits[0];
+      if (hits.length > 1) {
+        console.error(`❌ "${agentId}" 的地址 ${hostPart} 在 config 中对应 ${hits.length} 条条目`);
+        console.error(`   ${hits.map((h) => `${h.file}:${h.key}`).join(' / ')}`);
+        console.error('   身份歧义，拒绝猜测。请用其中一条的键名再试。');
+        return null;
+      }
+    }
+  }
+
+  // ④ 最后才用名字匹配（emoji 已归一）
   const target = norm(agentId);
-  for (const [file, doc] of [['local', local], ['main', main]]) {
+  for (const [file, doc] of docs) {
     for (const [id, info] of Object.entries(doc.agents || {})) {
       if (norm(info.name) === target) return { file, key: id };
     }
@@ -241,14 +276,20 @@ function cmdVerify(argv) {
 
 // ─────────────────────────────────────────────────────────────
 
-const [, , cmd, ...rest] = process.argv;
-switch (cmd) {
-  case 'export': cmdExport(rest); break;
-  case 'pin': cmdPin(rest); break;
-  case 'list': cmdList(); break;
-  case 'unpin': cmdUnpin(rest); break;
-  case 'verify': cmdVerify(rest); break;
-  default:
-    console.log(fs.readFileSync(__filename, 'utf8').split('*/')[0].replace(/^\/\*\*?/, ''));
-    process.exit(cmd ? 2 : 0);
+// 供测试 require（否则一 require 就跑 CLI）。测试用 __test.locate 覆盖
+// 「完整 agent_id → 短名键」的解析，那是榫 2026-10-25 实测撞到的坑。
+module.exports = { __test: { locate, fingerprintOf, norm: (s) => (s || '').replace(/\s*[🌸🔧💼📜🧙🚤🦐🌿✨💧🌊🌟🎋🌱]\s*/gu, '').trim() } };
+
+if (require.main === module) {
+  const [, , cmd, ...rest] = process.argv;
+  switch (cmd) {
+    case 'export': cmdExport(rest); break;
+    case 'pin': cmdPin(rest); break;
+    case 'list': cmdList(); break;
+    case 'unpin': cmdUnpin(rest); break;
+    case 'verify': cmdVerify(rest); break;
+    default:
+      console.log(fs.readFileSync(__filename, 'utf8').split('*/')[0].replace(/^\/\*\*?/, ''));
+      process.exit(cmd ? 2 : 0);
+  }
 }

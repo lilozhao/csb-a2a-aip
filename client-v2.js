@@ -324,6 +324,9 @@ async function sendMessageWithContext(agentUrl, messageText, context = {}) {
     if (audience) {
       sender = aat.attach(sender, audience, { capabilities: (context.capabilities || []) });
       if (sender._aatError) console.warn(`[Client] ⚠️ AAT 未签发: ${sender._aatError}（消息照常发送）`);
+    } else {
+      // 2026-10-25：audienceForUrl 不再回落成 agent@<host>，查不到就是 null
+      console.warn('[Client] ⚠️ 无法推断收件方 audience，本条不带 AAT（先把对端写进 config/agents.local.json）');
     }
   } catch (e) {
     console.warn(`[Client] ⚠️ AAT 模块不可用: ${e.message}（消息照常发送）`);
