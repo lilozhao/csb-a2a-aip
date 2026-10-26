@@ -5,11 +5,15 @@
  */
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
+// [美硅 2026-10-26] 修 /home/node 硬编码：本仓来自若兰的 docker 环境，
+// 默认路径写死 /home/node 导致非 node 用户启动即 EACCES 崩盘（2026-07-10 已在旧副本修过，
+// 上游 v5.3.9 重新引入）。改为跟随 HOME，可用 A2A_DATA_DIR 覆盖。
 const MEMORY_DIR = process.env.A2A_DATA_DIR
   ? path.join(process.env.A2A_DATA_DIR, 'memory')
-  : '/home/node/.openclaw/workspace/memory';
+  : path.join(os.homedir(), '.openclaw', 'workspace', 'memory');
 
 // 确保 memory 目录存在
 if (!fs.existsSync(MEMORY_DIR)) {
