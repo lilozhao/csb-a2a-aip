@@ -44,6 +44,7 @@ async function getFeishuToken() {
       hostname:'open.feishu.cn', path:'/open-apis/auth/v3/tenant_access_token/internal',
       method:'POST', headers:{'Content-Type':'application/json','Content-Length':Buffer.byteLength(body)}
     }, res => {
+      res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
       let d=''; res.on('data',c=>d+=c); res.on('end',()=>{
         try { const t=JSON.parse(d).tenant_access_token; _feishuToken=t; resolve(t); }
         catch(e){reject(e);}
@@ -68,6 +69,7 @@ async function pushToFeishu(title, content) {
         method:'POST',
         headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`,'Content-Length':Buffer.byteLength(body)}
       }, res => {
+        res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
         let d=''; res.on('data',c=>d+=c); res.on('end',()=>resolve(d));
       });
       req.on('error',reject); req.setTimeout(15000,()=>{req.destroy();reject(new Error('timeout'));});
@@ -188,6 +190,7 @@ function generateRuolanResponse(prompt) {
       headers: { 'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`,
         'Content-Length': Buffer.byteLength(payload) },
     }, res => {
+      res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
       let body = ''; res.on('data', c => body += c);
       res.on('end', () => {
         try {
@@ -226,6 +229,7 @@ function gatewayFallback(prompt, resolve) {
     headers: { 'Content-Type':'application/json', 'Authorization':`Bearer ${token}`,
       'Content-Length': Buffer.byteLength(payload) },
   }, res => {
+    res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
     let body = ''; res.on('data', c => body += c);
     res.on('end', () => {
       try {
@@ -243,6 +247,7 @@ function gatewayFallback(prompt, resolve) {
 function checkHealth(url) {
   return new Promise((resolve) => {
     const req = http.get(url+'/health', res => {
+      res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
       let body = ''; res.on('data', c => body += c);
       res.on('end', () => {
         try { resolve(JSON.parse(body)); } catch { resolve(null); }
@@ -336,6 +341,7 @@ async function postToCommunity(allResults) {
       timeout: 10000  // 10s 超时
     }, (res) => {
       let body = '';
+      res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
       res.on('data', chunk => body += chunk);
       res.on('end', () => {
         try {
@@ -417,6 +423,7 @@ async function postToCommunityEn(allResults) {
       timeout: 10000
     }, (res) => {
       let body = '';
+      res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
       res.on('data', chunk => body += chunk);
       res.on('end', () => {
         try {

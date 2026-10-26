@@ -115,6 +115,7 @@ register('openclaw', async (identity, systemPrompt, userMessage, options = {}) =
       },
     }, res => {
       let body = '';
+      res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
       res.on('data', c => body += c);
       res.on('end', () => {
         try {
@@ -170,6 +171,7 @@ register('hermes', async (identity, systemPrompt, userMessage, options = {}) => 
       },
     }, res => {
       let body = '';
+      res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
       res.on('data', c => body += c);
       res.on('end', () => {
         try {
@@ -223,6 +225,7 @@ register('openai', async (identity, systemPrompt, userMessage, options = {}) => 
       },
     }, res => {
       let body = '';
+      res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
       res.on('data', c => body += c);
       res.on('end', () => {
         try {

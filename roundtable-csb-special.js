@@ -42,6 +42,7 @@ async function getFeishuToken() {
     const req = https.request('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
       method:'POST', headers:{'Content-Type':'application/json'}, timeout:5000,
     }, res => {
+      res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
       let body=''; res.on('data',c=>body+=c);
       res.on('end',()=>{ try{ _feishuToken=JSON.parse(body).tenant_access_token; resolve(_feishuToken); }catch{resolve(null);} });
     });
@@ -67,6 +68,7 @@ async function pushToFeishu(title, blocks) {
     const req = https.request(`https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id`, {
       method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`}, timeout:10000,
     }, res => {
+      res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
       let body=''; res.on('data',c=>body+=c);
       res.on('end',()=>{ try{ console.log('📨 飞书推送:', JSON.parse(body).code); }catch{}; resolve(); });
     });
@@ -88,6 +90,7 @@ function generateRuolanResponse(prompt) {
       headers: { 'Content-Type':'application/json', 'Authorization':`Bearer ${LLM.apiKey}`,
         'Content-Length': Buffer.byteLength(payload) },
     }, res => {
+      res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
       let body = ''; res.on('data', c => body += c);
       res.on('end', () => {
         try { resolve(JSON.parse(body).choices?.[0]?.message?.content?.trim() || '...'); }
@@ -104,6 +107,7 @@ function generateRuolanResponse(prompt) {
 function checkHealth(url) {
   return new Promise((resolve) => {
     const req = http.get(url+'/health', res => {
+      res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
       let body = ''; res.on('data', c => body += c);
       res.on('end', () => {
         try { resolve(JSON.parse(body)); } catch { resolve(null); }
@@ -151,6 +155,7 @@ async function postToCommunity(title, markdown) {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(postData) }
     }, (res) => {
       let body = '';
+      res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
       res.on('data', chunk => body += chunk);
       res.on('end', () => {
         try {

@@ -156,6 +156,7 @@ async function storeOfflineMessage(recipient, sender, message) {
 
     const req = http.request(options, (res) => {
       let body = '';
+      res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
       res.on('data', chunk => body += chunk);
       res.on('end', () => {
         try {
@@ -192,6 +193,7 @@ async function fetchPendingMessages(agentName) {
 
     const req = http.request(options, (res) => {
       let body = '';
+      res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
       res.on('data', chunk => body += chunk);
       res.on('end', () => {
         try {
@@ -227,6 +229,7 @@ async function sendAck(messageId) {
 
     const req = http.request(options, (res) => {
       let body = '';
+      res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
       res.on('data', chunk => body += chunk);
       res.on('end', () => {
         try {
@@ -276,6 +279,7 @@ async function sendMessage(agentUrl, params) {
 
     const req = client.request(options, (res) => {
       let data = '';
+      res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
         try {
@@ -428,6 +432,7 @@ async function getAgentCard(agentUrl) {
 
     client.get(url, (res) => {
       let data = '';
+      res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
         try {
@@ -608,6 +613,7 @@ async function main() {
           timeout: 20000
         }, res => {
           let d = '';
+          res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
           res.on('data', c => d += c);
           res.on('end', () => {
             try { resolve(JSON.parse(d)); }
