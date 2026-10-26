@@ -518,6 +518,12 @@ function _explain(err) {
  *
  * 优先用 config 里的 id。**查不到就返回 null，不再回落成 `agent@<host>`。**
  *
+ * 2026-10-26 修（舟楫实测 audience_mismatch）：config 键 ≠ 身份名时，两侧取材不同源。
+ *   发送侧取 config **键**（`zhouji`），接收侧 expectedAudience 取 **identity 名**
+ *   （`舟楫`）→ 必然 mismatch，且只有「键=ASCII、名=中文」的实例会暴露。
+ *   现在：条目显式 `agentId` > 条目 `name`（去 emoji）> config 键。
+ *   与 5.3.5 key_conflict / 5.3.6 locate() 同族：**两处取材必须同源**。
+ *
  * 为什么改（2026-10-25 若兰）：
  *   旧实现查不到时返回 `agent@<host>`。这个占位值**永远不可能**等于对方的
  *   expectedAudience（对方锚定的是 `<名字>@<host>`），于是：
@@ -537,11 +543,14 @@ function audienceForUrl(agentUrl) {
     const list = require('./config/loader.js').getAgentList() || [];
     const hit = list.find((a) => _hostOfUrl(a.url) === host);
     if (hit && hit.id) {
-      // id 可能已经是完整 agent_id（config 用全名作键，如 "ruolan@172.28.0.214:3100"）。
+      // 身份名优先：接收侧 expectedAudience 用的是 identity 名（getSelf().agentId），
+      // 用 config 键会在「键=ASCII、名=中文」时必然 mismatch（2026-10-26 舟楫实测）。
+      const identity = hit.agentId || stripEmojiSafe(hit.name) || hit.id;
+      // 可能已经是完整 agent_id（config 用全名作键，如 "ruolan@172.28.0.214:3100"）。
       // 再拼一次会得到 ruolan@host:port@host:port —— 永远匹配不上对方 expectedAudience。
       // 实测代价：若琢连发 4 条全 audience_mismatch（2026-10-25）。
-      if (/@.+:\d+$/.test(hit.id)) return hit.id;
-      return `${hit.id}@${host}`;
+      if (/@.+:\d+$/.test(identity)) return identity;
+      return `${identity}@${host}`;
     }
 
     console.warn(

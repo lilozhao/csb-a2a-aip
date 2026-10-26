@@ -300,13 +300,23 @@ test('audienceForUrl：未登记的 host → null（不回落成 agent@<host>）
   assert.strictEqual(aud, null, `不该回落到占位值，实际得到: ${aud}`);
 });
 
-test('audienceForUrl：config 命中的 host → <id>@<host>', () => {
+test('audienceForUrl：config 命中的 host → <身份名>@<host>（不用 config 键）', () => {
   // 用当前 config 里的真实条目推导，避免把某台机器的地址写死进测试
   const list = (require('../config/loader.js').getAgentList() || []).filter((a) => a && a.id && a.url);
   if (!list.length) { console.log('     （config 无可用条目，跳过正向用例）'); return; }
   const a = list[0];
   const host = String(a.url).replace(/^[a-z]+:\/\//i, '').replace(/\/+$/, '').toLowerCase();
-  assert.strictEqual(AAT.audienceForUrl(a.url), `${a.id}@${host}`);
+  // 2026-10-26：接收侧 expectedAudience 取 identity 名，发送侧必须同源
+  const identity = a.agentId || String(a.name || a.id).replace(/\s*[🌸🔧💼📜🧙🚤🦐🌿✨💧🌊🌟🎋🌱]\s*/gu, '').trim() || a.id;
+  assert.strictEqual(AAT.audienceForUrl(a.url), `${identity}@${host}`);
+});
+
+test('audienceForUrl：键=ASCII、名=中文 → 取中文名（舟楫 audience_mismatch 回归）', () => {
+  // 直接验证取材规则：config 键 zhouji / name 舟楫 🚤 时，aud 必须是 舟楫@host
+  const aud = AAT.audienceForUrl('http://172.28.0.27:3100');
+  if (aud === null) { console.log('     （config 无该条目，跳过）'); return; }
+  assert.ok(!aud.startsWith('zhouji@'), `不该用 config 键作 aud，实际: ${aud}`);
+  assert.strictEqual(aud, '舟楫@172.28.0.27:3100');
 });
 
 // ─────────────────────────────────────────────
