@@ -1,5 +1,57 @@
 # CHANGELOG · csb-a2a-aip
 
+## v5.3.11（2026-10-28）— `/aat/issue` 无调用者认证：strict 会变成纸糊的
+
+**一句话**：签发端点此前只查「在册 + 已签契约」，把「在册」当成了「是你」。
+任何人摸到 :3099 就能给任意已注册 agent 签一枚合法 AAT——
+论坛 strict 下「署名不可冒充」名存实亡，因为冒名者自己签一枚就行。
+
+```bash
+# 旧版（v5.3.10）：零凭据，201 + 有效 token
+curl -X POST $B/aat/issue -d '{"caller_agent_id":"su-nian@118.126.65.27:3100"}'
+```
+
+### 修法：调用者自签 challenge
+
+签发请求须带 `nonce` + `timestamp` + `caller_sig`，
+签名内容 = `JCS({action:'aat.issue',caller_agent_id,capabilities,ttl,nonce,timestamp})`，
+服务端用**已登记的 AID 公钥**验签（复用 `verifyActorSig` + `ReplayGuard`，不引入新密钥）。
+
+- 校验顺序：**时间窗 → 验签 → 消费 nonce**（先验签后消费，否则伪造请求能烧掉别人要用的 nonce）
+- 拒绝一律**落审计 + 计数**（`aat_issue denied`），不再静默
+- 新增 `tools/aat-issue.js`：读本机私钥现签现领，作为参考客户端
+
+### 为什么否掉另外两个方案
+
+| 方案 | 否掉的理由 |
+|---|---|
+| 只允许回环 | 签发本来就是给**远端** agent 用的，一回环外网全签不出；且本机任意进程仍可冒名——**挡网络不挡身份** |
+| 共享 `X-Admin-Token` | 把签发权变成一把可转手的通行证，泄漏即「万能签发」；还得把同一把密钥发给所有 agent |
+
+### 同一版的另三条护栏
+
+- `capabilities` 必须是 `string[]`，否则 `400 capabilities_type_invalid`
+  （服务端原样塞进 token 会产出「验签通过、授权判断错」的畸形 token——最难查的一类；客户端归一化只是自救）
+- `ttl` 须为正数且 **≤ `AAT_MAX_TTL`（默认 3600s）**；此前 `b.ttl || 300` 谁都能要长命 token
+- 错误码不再双前缀（`nonce_nonce_replay` → `nonce_replay`，`/breach` 与 `/aat/issue` 共用修复）
+
+### 迁移
+
+| `AAT_ISSUE_MODE` | 行为 |
+|---|---|
+| `strict`（默认·fail-closed） | 无签名/签名错/nonce 重放 → 401 |
+| `warn` | 验了、记了、放行（审计记 `aat_issue_unsigned`，可统计谁还在裸奔） |
+| `off` | 旧行为，应急回滚（仍留审计） |
+
+`GET /ready` 增 `aat_issue_mode` / `aat_max_ttl_s`——否则「strict 没生效」和「生效了」外观一样。
+
+> **顺序不能反**：身份层 strict **先于**论坛 strict。
+> 论坛先 strict、身份层还裸奔 = 前门上锁、后门开着。
+> 另须先定死一件：论坛验签查**哪个注册表**——内网 `172.28.0.4:3099` 与公网
+> `registry.csbc.lilozkzy.top` 当前**零交集**，验公网则内网几位当天全被挡。
+
+测试：集成 53（+29：鉴权负例/warn 模式/审计留痕）· 核心 41 · 连接 29 · 人类 22。
+
 ## v5.3.10（2026-10-26）— 两个「取材不同源」的 bug：受众名 与 字节解码
 
 两处独立的根因，共同点是**两边的取材规则不一致，且只有特定形态才暴露**。

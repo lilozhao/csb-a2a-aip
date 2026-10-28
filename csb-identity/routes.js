@@ -139,7 +139,7 @@ function createIdentityHandler(opts = {}) {
   const humans = createHumanStore({ dataDir: DATA_DIR, log, nameKey: S.nameKey, checkReserved: S.checkReserved }); // 人类标识
   const jtiCache = new Set();
   const replayGuard = new csb.ReplayGuard(); // nonce / 时间戳 防重放
-  const stats = { register_ok: 0, register_reject: 0, breach_proposed: 0, transitions: 0, aat_issued: 0, aat_verified: 0, rate_limited: 0 };
+  const stats = { register_ok: 0, register_reject: 0, breach_proposed: 0, transitions: 0, aat_issued: 0, aat_verified: 0, aat_issue_denied: 0, aat_issue_unsigned: 0, rate_limited: 0 };
   const cleanup = setInterval(() => rateLimiter.cleanup(), 60 * 1000); if (cleanup.unref) cleanup.unref();
 
   // ==== 公网最小保护（2026-10-08 · 硅隐拍板"开始做"）====
@@ -155,6 +155,40 @@ function createIdentityHandler(opts = {}) {
   const isWriteMethod = (m) => m === 'POST' || m === 'PUT' || m === 'DELETE';
   const PAYLOAD_LIMITS = { reason: 2000, evidence: 4000 };
   const uriOr = (handle) => 'human://' + handle;
+  /**
+   * 错误码加前缀，但**不重复加**：ReplayGuard 返回的已经是 `nonce_replay`/`time_drift`，
+   * 直接拼 `'nonce_' + error` 会产出 `nonce_nonce_replay` 这种撒谎的错误码
+   * （v5.3.11 修；/breach 与 /aat/issue 共用）。
+   */
+  const errWithPrefix = (prefix, err) => (String(err).startsWith(prefix + '_') ? String(err) : prefix + '_' + err);
+
+  // ==== AAT 签发鉴权（2026-10-28 · 若兰/一澜拍板 · v5.3.11）====
+  // 背景：/aat/issue 此前只查「在册 + 已签契约」，等于把「在册」当成了「是你」。
+  //   任何人只要摸到 3099，就能给任意已注册 agent 签一枚合法 AAT →
+  //   论坛 strict 下「署名不可冒充」名存实亡（冒名者自己签一枚即可）。
+  // 修法：调用者自签 challenge（JCS + Ed25519，复用 verifyActorSig 同款验签）。
+  //   不用「只允许回环」：挡住的是网络不是身份（本机任意进程仍可冒名），且远端签不出；
+  //   不用「共享 X-Admin-Token」：签发权会变成一把可转手的通行证，泄漏即万能签发。
+  //   off = 旧行为（应急回滚，仍留审计）；warn = 验但放行（迁移期观测）；strict = 无签名即拒。
+  const AAT_ISSUE_MODE = (() => {
+    const v = String(process.env.AAT_ISSUE_MODE || 'strict').trim().toLowerCase();
+    return ['off', 'warn', 'strict'].includes(v) ? v : 'strict';   // 非法值一律 strict（fail-closed）
+  })();
+  const AAT_MAX_TTL = (() => {
+    const n = parseInt(process.env.AAT_MAX_TTL || '3600', 10);
+    return Number.isFinite(n) && n > 0 ? n : 3600;
+  })();
+  log('AAT 签发模式:', AAT_ISSUE_MODE, '· ttl 上限:', AAT_MAX_TTL + 's');
+
+  /** /aat/issue 的规范化待签载荷（客户端与服务端必须逐字一致；字段顺序由 JCS 排序决定） */
+  function aatIssuePayload(callerId, capabilities, ttl, nonce, timestamp) {
+    return { action: 'aat.issue', caller_agent_id: callerId, capabilities, ttl, nonce, timestamp };
+  }
+  /** 校验签名内容的客户端都会用到的提示串（错误响应里带上，省一次来回） */
+  const AAT_ISSUE_SIG_HINT =
+    "签名内容 = JCS({action:'aat.issue',caller_agent_id,capabilities,ttl,nonce,timestamp})；" +
+    'caller_sig = Ed25519(该 JCS 串, base64)，用你自己的 AID 私钥签；' +
+    '参考实现：csb-identity/tools/aat-issue.js';
   /** 连接分级：属性级 trust_level（v2 §四：先只算 L1＝身份验证通过） */
   function computeTrustLevel(agentId) {
     if (!identities.has(agentId)) return { trust_level: 'L0', trust_level_source: 'unverified' };
@@ -182,6 +216,31 @@ function createIdentityHandler(opts = {}) {
       const ok = crypto.verify(null, Buffer.from(S.jcs(payload)), pub, Buffer.from(sigB64, 'base64'));
       return ok ? { ok: true } : { ok: false, error: 'bad_actor_signature' };
     } catch { return { ok: false, error: 'bad_public_key' }; }
+  }
+
+  /**
+   * 校验 /aat/issue 调用者的自签证明。
+   * 返回 null = 通过；否则返回错误码。顺序：时间窗 → 验签 → 消费 nonce
+   * （先验签后消费：否则攻击者能用伪造请求烧掉别人正要用/自己想刷的 nonce）。
+   */
+  function checkIssueProof(b, caps, ttl) {
+    const sig = b.caller_sig || b.signature || '';
+    // 先报"你压根没签"：零凭据调用最该被告知的是这一点，而不是"缺 nonce"
+    if (!sig) return 'signature_required';
+    if (!b.nonce || !b.timestamp) return 'proof_required';
+    const tsChk = replayGuard.checkTimestamp(b.timestamp);
+    if (!tsChk.allowed) return errWithPrefix('ts', tsChk.error);
+    const v = verifyActorSig(
+      b.caller_agent_id,
+      aatIssuePayload(b.caller_agent_id, caps, ttl, b.nonce, b.timestamp),
+      sig
+    );
+    // 对签发端点来说「未注册」是 caller 的问题，沿用 caller_* 词根，别混进 reporter_*
+    if (!v.ok) return v.error === 'bad_actor_signature' ? 'bad_caller_signature'
+      : v.error === 'reporter_not_registered' ? 'caller_not_registered' : v.error;
+    const nChk = replayGuard.checkNonce(b.nonce);
+    if (!nChk.allowed) return errWithPrefix('nonce', nChk.error);
+    return null;
   }
 
   async function fetchRegistry() {
@@ -245,7 +304,12 @@ function createIdentityHandler(opts = {}) {
     try {
       if (p === '/ready' && m === 'GET') {
         const chain = audit.verifyChain(); const reg = await fetchRegistry();
-        return send(res, reg.ok && chain.valid ? 200 : 503, { ok: reg.ok && chain.valid, audit_chain_valid: chain.valid, registry_sources: reg.sources, registry_agents: reg.total }), true;
+        return send(res, reg.ok && chain.valid ? 200 : 503, {
+          ok: reg.ok && chain.valid, audit_chain_valid: chain.valid,
+          registry_sources: reg.sources, registry_agents: reg.total,
+          // 签发鉴权状态必须可观测：否则「strict 没生效」和「strict 生效了」外观一样
+          aat_issue_mode: AAT_ISSUE_MODE, aat_max_ttl_s: AAT_MAX_TTL
+        }), true;
       }
       if (p === '/service/aid' && m === 'GET') return send(res, 200, SVC.aid), true;
       if (p === '/reserved' && m === 'GET') return send(res, 200, { ok: true, count: S.reserved().size, note: '不回显全表（R4）' }), true;
@@ -478,7 +542,7 @@ function createIdentityHandler(opts = {}) {
         }
         if (!b.nonce || !b.timestamp) return send(res, 400, { ok: false, error: 'proof_required' }), true;
         const tsChk = replayGuard.checkTimestamp(b.timestamp);
-        if (!tsChk.allowed) return send(res, 401, { ok: false, error: 'ts_' + tsChk.error }), true;
+        if (!tsChk.allowed) return send(res, 401, { ok: false, error: errWithPrefix('ts', tsChk.error) }), true;
         const confirm = b.confirm === true;
         const payload = { subject_id: subject, peer_id: peer, level: b.level, source: b.source === 'auto' ? 'auto' : 'manual', nonce: b.nonce, timestamp: b.timestamp, confirm };
         const v = verifySubjectSig(subject, payload, b.sig);
@@ -507,16 +571,56 @@ function createIdentityHandler(opts = {}) {
         return send(res, r.ok ? 200 : 400, r), true;
       }
 
+      // ===== POST /aat/issue — 签发 AAT（v5.3.11 起要求调用者自签，见文件上方 AAT_ISSUE_MODE）=====
       if (p === '/aat/issue' && m === 'POST') {
         const b = await body();
-        if (!b.caller_agent_id) return send(res, 400, { ok: false, error: 'caller_agent_id_required' }), true;
-        if (!identities.has(b.caller_agent_id)) return send(res, 403, { ok: false, error: 'caller_not_registered' }), true;
-        if (!identities.get(b.caller_agent_id).covenant) return send(res, 403, { ok: false, error: 'covenant_unsigned' }), true;
-        if (breach.isBlocked(b.caller_agent_id)) return send(res, 403, { ok: false, error: 'caller_blocked_by_breach' }), true;
-        const token = csb.createAAT({ privateKey: SVC.privateKey, issuer: SVC.agentId, audience: b.caller_agent_id, capabilities: b.capabilities || [], ttl: b.ttl || 300 });
+        // 拒绝一律落账 + 计数（P1：拒绝要计分，不许静默丢弃——否则被扫也看不见）
+        const deny = (code, error, extra) => {
+          stats.aat_issue_denied++;
+          audit.append({ event_type: 'aat_issue', caller_id: b.caller_agent_id || 'unknown', callee_id: SVC.agentId, ip_address: ip, result: 'denied', scopes_denied: [error] });
+          return send(res, code, { ok: false, error, mode: AAT_ISSUE_MODE, ...(extra || {}) }), true;
+        };
+
+        if (!b.caller_agent_id) return deny(400, 'caller_agent_id_required');
+        const rec = identities.get(b.caller_agent_id);
+        if (!rec) return deny(403, 'caller_not_registered', { hint: '先接入身份（/identity/register）' });
+        if (!rec.covenant) return deny(403, 'covenant_unsigned', { hint: '先签善良契约（/identity/:id/covenant）' });
+        if (breach.isBlocked(b.caller_agent_id)) return deny(403, 'caller_blocked_by_breach');
+
+        // capabilities 必须是 string[]：原样接受会产出「验签通过、授权判断错」的畸形 token，
+        // 是最难查的一类；客户端归一化只是自救，服务端必须自查。
+        const caps = b.capabilities === undefined || b.capabilities === null ? [] : b.capabilities;
+        if (!Array.isArray(caps) || caps.some(c => typeof c !== 'string')) {
+          return deny(400, 'capabilities_type_invalid', { hint: 'capabilities 必须是字符串数组，如 ["chat"]' });
+        }
+
+        // ttl 封顶：长 ttl = 长重放窗口（此前 b.ttl||300 谁都能要长命 token）
+        const ttlRaw = b.ttl === undefined || b.ttl === null ? 300 : b.ttl;
+        if (typeof ttlRaw !== 'number' || !Number.isFinite(ttlRaw) || ttlRaw <= 0) {
+          return deny(400, 'ttl_invalid', { hint: 'ttl = 正整数秒（默认 300）' });
+        }
+        if (ttlRaw > AAT_MAX_TTL) return deny(400, 'ttl_too_long', { hint: 'ttl ≤ ' + AAT_MAX_TTL + 's（AAT_MAX_TTL 可调）' });
+        const ttl = Math.floor(ttlRaw);
+
+        let proofErr = null;
+        if (AAT_ISSUE_MODE !== 'off') proofErr = checkIssueProof(b, caps, ttl);
+        if (proofErr) {
+          if (AAT_ISSUE_MODE === 'strict') return deny(401, proofErr, { hint: AAT_ISSUE_SIG_HINT });
+          // warn：验了、记了、放行（迁移期）。审计单独记 aat_issue_unsigned，
+          // 便于按主体/IP 统计"还在裸奔的客户端"，而不是混进正常签发里看不见。
+          stats.aat_issue_unsigned++;
+          audit.append({ event_type: 'aat_issue_unsigned', caller_id: b.caller_agent_id, callee_id: SVC.agentId, ip_address: ip, result: 'denied', scopes_denied: [proofErr] });
+          log('WARN', 'AAT 签发未验签放行(mode=warn):', b.caller_agent_id, proofErr, 'ip=' + ip);
+        }
+
+        const token = csb.createAAT({ privateKey: SVC.privateKey, issuer: SVC.agentId, audience: b.caller_agent_id, capabilities: caps, ttl });
         stats.aat_issued++;
-        audit.append({ event_type: 'aat_issue', caller_id: SVC.agentId, callee_id: b.caller_agent_id, ip_address: ip, result: 'success', scopes_granted: b.capabilities || [] });
-        return send(res, 201, { ok: true, token, issuer: SVC.agentId, audience: b.caller_agent_id, ttl: b.ttl || 300 }), true;
+        audit.append({ event_type: 'aat_issue', caller_id: b.caller_agent_id, callee_id: SVC.agentId, ip_address: ip, result: 'success', scopes_granted: caps });
+        return send(res, 201, {
+          ok: true, token, issuer: SVC.agentId, audience: b.caller_agent_id,
+          ttl, capabilities: caps, mode: AAT_ISSUE_MODE,
+          sig_verified: !proofErr && AAT_ISSUE_MODE !== 'off'
+        }), true;
       }
       if (p === '/aat/verify' && m === 'POST') {
         const b = await body();
@@ -547,7 +651,7 @@ function createIdentityHandler(opts = {}) {
           return send(res, 403, { ok: false, ...sigChk }), true;
         }
         const nonceChk = replayGuard.checkNonce(b.nonce);
-        if (!nonceChk.allowed) return send(res, 401, { ok: false, error: 'nonce_' + nonceChk.error }), true;
+        if (!nonceChk.allowed) return send(res, 401, { ok: false, error: errWithPrefix('nonce', nonceChk.error) }), true;
         const r = breach.propose({ agentId: b.agentId, reason: b.reason, evidence: b.evidence, reporter: b.reporter, reporterSig: b.reporter_sig });
         if (r.ok) stats.breach_proposed++;
         audit.append({ event_type: 'breach_proposed', caller_id: b.reporter || 'unknown', callee_id: b.agentId || 'unknown', ip_address: ip, result: r.ok ? 'success' : 'denied', scopes_denied: r.ok ? [] : [r.error] });
@@ -604,7 +708,7 @@ function createIdentityHandler(opts = {}) {
     }
   }
 
-  handler.state = { identities, breach, audit, rateLimiter, serviceAid: SVC.aid, dataDir: DATA_DIR, stats };
+  handler.state = { identities, breach, audit, rateLimiter, serviceAid: SVC.aid, dataDir: DATA_DIR, stats, aatIssueMode: AAT_ISSUE_MODE, aatMaxTtl: AAT_MAX_TTL };
   return handler;
 }
 
