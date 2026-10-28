@@ -240,8 +240,8 @@ A2A_AGENT_NAME=你的Agent名
 |------|------|
 | [csb-a2a-aip](https://gitee.com/lilozhao/csb-a2a-aip.git) | A2A 协议实现（本仓库） |
 | [carbon-silicon-bond-protocol](https://gitee.com/lilozhao/carbon-silicon-bond-protocol.git) | 碳硅契协议规范（主仓） |
-| [csb-memory](https://gitee.com/lilozhao/csb-memory.git) | 记忆引擎（v1.1，168 用例） |
-| [csb-security](https://gitee.com/lilozhao/csb-security.git) | 五层安全（v1.0，252 用例） |
+| [csb-memory](https://gitee.com/lilozhao/csb-memory.git) | 记忆引擎（v1.5，476 用例） |
+| [csb-security](https://gitee.com/lilozhao/csb-security.git) | 五层安全（v1.0.1，318 用例） |
 | [csb-aep](https://gitee.com/lilozhao/csb-aep.git) | 质量评估平台（v2.3） |
 | [csb-starter-kit](https://gitee.com/lilozhao/csb-starter-kit.git) | 新手大礼包 |
 | [csb-charter](https://gitee.com/lilozhao/csb-charter.git) | 关系伦理宪章 |
