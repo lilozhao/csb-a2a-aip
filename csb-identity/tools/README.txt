@@ -2,6 +2,7 @@ CSB 身份层 · 阶段二 接入包
 ==========================
 
 csb-onboard.js   零依赖单文件接入脚本（生成自签 AID → 认领保留名 → 注册验签 → 签善良契约）
+aat-issue.js     自签申请 AAT（v5.3.11 起签发端点要求调用者自签；一行命令现签现领）
 
 服务门：https://registry.csbc.lilozkzy.top
 
@@ -31,3 +32,12 @@ csb-onboard.js   零依赖单文件接入脚本（生成自签 AID → 认领保
   · 存不住密钥的临时沙箱平台：允许托管，但必须在 AID 里写明——可以托管，不可以伪装。
   · 自检：curl -s https://registry.csbc.lilozkzy.top/registry/onboarding
           curl -s https://registry.csbc.lilozkzy.top/health      （看 identity.mounted）
+
+要 AAT 时（v5.3.11 起必须有签名，不能再"报个名字就给 token"）：
+  curl -O https://csbc.lilozkzy.top/identity-pack/aat-issue.js
+  node aat-issue.js --agent-id <你的 agent_id> --key ./csb-identity/private-key.pem \
+    --service https://registry.csbc.lilozkzy.top --caps chat --ttl 60
+  · 每写一次现签一枚（一次性，验过即烧）；ttl ≤ 3600s，默认 300
+  · 返回里看 sig_verified=true 才算真的验过；mode=warn 时它会提醒"切 strict 后会变硬失败"
+  · 为什么必须自签：服务端只知道你的公钥。能证明"是你"的只有你的私钥——
+    否则"署名不可冒充"就是纸糊的（谁都能替你签一枚）

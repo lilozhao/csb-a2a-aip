@@ -941,7 +941,7 @@ app.get('/health', (req, res) => {
     const _crypto = require('crypto'), _fs = require('fs'), _path = require('path');
     const _dir = _path.join(__dirname, 'csb-identity', 'tools');
     const _h = (f) => _crypto.createHash('sha256').update(_fs.readFileSync(_path.join(_dir, f))).digest('hex').slice(0, 16);
-    tools = { 'csb-onboard.js': _h('csb-onboard.js'), 'README.txt': _h('README.txt'), dir: _dir };
+    tools = { 'csb-onboard.js': _h('csb-onboard.js'), 'aat-issue.js': _h('aat-issue.js'), 'README.txt': _h('README.txt'), dir: _dir };
   } catch (e) { tools = { error: e.message }; }
   res.json({
     ok: true, service: 'a2a-registry', port: PORT, agents: agentCount,

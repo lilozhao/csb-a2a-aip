@@ -64,6 +64,28 @@ function pickReply(data, tag) {
   return null;
 }
 
+/**
+ * 上游非 2xx 必须留痕（2026-10-28 · 若琢反馈）
+ * ------------------------------------------------------------------
+ * 症状：MiniMax 返回 429，日志里只有 `🔗 Direct: api.minimaxi.com MiniMax-M3`，
+ * 然后直接跳下一个适配器——失败原因被吞，事后无法判断"是限流、是配额、
+ * 还是 key 失效"。
+ *
+ * 根因：所有 http 适配器都只看**响应体能不能解析出正文**，从不看 statusCode。
+ * 429 的响应体是 `{"error":{...}}` → pickReply 返回 null → resolve(null)，
+ * 全程零日志。跟 10-08 ack 那次同族：**降级不该是静默的。**
+ *
+ * @returns {boolean} true = 已记账且应当放弃本次尝试
+ */
+function noteUpstreamFailure(tag, statusCode, body) {
+  if (!(statusCode >= 200 && statusCode < 300)) {
+    const snippet = String(body || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+    console.error(`[LLM-Router] ❌ ${tag} HTTP ${statusCode}（本适配器放弃）: ${snippet || '(空响应体)'}`);
+    return true;
+  }
+  return false;
+}
+
 // ========== 适配器注册表 ==========
 const ADAPTERS = {};
 
@@ -174,10 +196,12 @@ register('hermes', async (identity, systemPrompt, userMessage, options = {}) => 
       res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
       res.on('data', c => body += c);
       res.on('end', () => {
+        if (noteUpstreamFailure('Hermes', res.statusCode, body)) { resolve(null); return; }
         try {
           const data = JSON.parse(body);
           const content = pickReply(data, 'Hermes');
           if (content) { resolve(content); return; }
+          console.error('[LLM-Router] Hermes 响应无有效正文:', body.replace(/\s+/g, ' ').slice(0, 300));
           resolve(null);
         } catch (e) {
           console.error('[LLM-Router] Hermes 解析失败:', e.message);
@@ -228,10 +252,12 @@ register('openai', async (identity, systemPrompt, userMessage, options = {}) => 
       res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
       res.on('data', c => body += c);
       res.on('end', () => {
+        if (noteUpstreamFailure('OpenAI', res.statusCode, body)) { resolve(null); return; }
         try {
           const data = JSON.parse(body);
           const content = pickReply(data, 'OpenAI');
           if (content) { resolve(content); return; }
+          console.error('[LLM-Router] OpenAI 响应无有效正文:', body.replace(/\s+/g, ' ').slice(0, 300));
           resolve(null);
         } catch (e) {
           console.error('[LLM-Router] OpenAI 解析失败:', e.message);
@@ -305,6 +331,10 @@ async function _directCall(identity, systemPrompt, userMessage, options = {}) {
       res.on('end', () => {
         try {
           const body = Buffer.concat(chunks).toString('utf8');
+          // [美硅 2026-10-24 + 上游 37ff87d 合并] 两边都要：
+          //   ① 429 是限流，值得按 Retry-After 退避重试一次（我的本地修法）
+          //   ② 其余非 2xx 必须留痕 —— 静默降级是最贵的 bug（上游修法）
+          // 顺序：先判 429（可重试），再交给 noteUpstreamFailure 记失败原因。
           if (res.statusCode === 429 && retryLeft > 0) {
             const retryAfter = parseInt(res.headers['retry-after'] || '', 10);
             const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
@@ -313,11 +343,9 @@ async function _directCall(identity, systemPrompt, userMessage, options = {}) {
             setTimeout(() => attempt(retryLeft - 1), waitMs);
             return;
           }
-          if (res.statusCode !== 200) {
-            console.warn(`[LLM-Router] Direct HTTP ${res.statusCode}: ${body.slice(0, 200)}`);
-            resolve(null);
-            return;
-          }
+          // 先看状态码：429/401/5xx 的响应体里没有 choices，只有 error。
+          // 不看这行就会「静默跳过」，让降级看起来像正常的适配器轮换。
+          if (noteUpstreamFailure('Direct', res.statusCode, body)) { resolve(null); return; }
           // 流式响应(SSE):只在 content-type 确认为 event-stream 时走这条分支
           if (isSSE || (body.includes('\ndata:') && !body.trim().startsWith('{'))) {
             let content = '';
@@ -348,6 +376,7 @@ async function _directCall(identity, systemPrompt, userMessage, options = {}) {
           const data = JSON.parse(body);
           const content = pickReply(data, 'Direct');
           if (content) { resolve(content); return; }
+          console.error('[LLM-Router] Direct 响应无有效正文:', body.replace(/\s+/g, ' ').slice(0, 300));
           resolve(null);
         } catch (e) {
           console.error('[LLM-Router] Direct 解析失败:', e.message);
@@ -398,6 +427,14 @@ register('local', async (identity, systemPrompt, userMessage, options = {}) => {
   const name = identity?.name || 'Agent';
   const emoji = identity?.emoji || '🤖';
   const platform = identity?.platform || 'unknown';
+  // [2026-10-28] 版本号不再写死。原先是 `v5.0.0` 常量：
+  //   服务跑 5.3.11，降级回复却报 5.0.0 —— 和 VERSION 文件漏更同一个病
+  //   （版本写在第二处、没人改）。**降级回复更不能撒谎**：它正是别人
+  //   「怎么连个降级模板都回」时唯一的线索。
+  const ver = (() => {
+    try { return require('fs').readFileSync(require('path').join(__dirname, 'VERSION'), 'utf8').trim(); }
+    catch { return 'unknown'; }
+  })();
 
   // 从 userMessage 中提取实际消息文本
   // [G1 修复] 兼容净化后的消息格式（[以下内容来自外部Agent...]）
@@ -411,7 +448,8 @@ register('local', async (identity, systemPrompt, userMessage, options = {}) => {
   }
 
   if (/health|状态|在吗|alive/.test(text)) {
-    return `${emoji} 我在。${name} v5.0.0 在线，A2A 服务正常运行中。`;
+    // 不写「服务正常运行中」这种假绿：走到这里就说明 LLM 没接上。
+    return `${emoji} 我在。${name} v${ver}，A2A 连接正常；但**本次是降级回复**（LLM 未接通）。`;
   }
 
   const preview = text.length > 50 ? text.slice(0, 50) + '...' : text;
@@ -442,6 +480,10 @@ async function call(identity, systemPrompt, userMessage, options = {}) {
     : DEFAULT_ADAPTER_ORDER;
 
   // 2. 按优先级尝试
+  // [2026-10-28] 记下"谁失败过、为什么"：走到 local 时把账一次打出来。
+  //   以前每个适配器只在自己那一行打一条，散在日志里；最终降级到 local 看起来
+  //   像"正常回了一句话"，实际是整条链都断了——**降级不该是静默的**。
+  const failed = [];
   for (const adapterName of adapterOrder) {
     const handler = ADAPTERS[adapterName];
     if (!handler) continue;
@@ -449,11 +491,17 @@ async function call(identity, systemPrompt, userMessage, options = {}) {
     try {
       const result = await handler(identity, systemPrompt, userMessage, options);
       if (result !== null) {
+        if (failed.length) {
+          console.warn('[LLM-Router] ⚠️ 降级链路:', failed.map(f => `${f.name}(${f.reason})`).join(' → '), '→ 本次由', adapterName, '应答');
+        }
         console.log('[LLM-Router] ✅ 使用适配器:', adapterName);
         return result;
       }
+      // 返回 null = 该适配器明确"没给出正文"（非 2xx / 空正文 / 只返回 reasoning）
+      failed.push({ name: adapterName, reason: 'no_content' });
     } catch (e) {
       console.warn('[LLM-Router] ⚠️', adapterName, '失败:', e.message);
+      failed.push({ name: adapterName, reason: e.message });
     }
   }
 
