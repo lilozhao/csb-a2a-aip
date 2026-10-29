@@ -11,6 +11,7 @@
  */
 
 const http = require('http');
+const https = require('https');   // [2026-10-29] 注册表可迁 https（域名）；只 require http 会把 https URL 按明文端口 80 发
 const fs = require('fs');
 const path = require('path');
 
@@ -261,8 +262,20 @@ class DHTColdStartManager {
 
   _httpGet(url) {
     return new Promise((resolve, reject) => {
-      const req = http.get(url, { timeout: this.registryTimeout }, (res) => {
+      // [2026-10-29 · 清漪 10-29 撞出] 按协议选客户端。
+      //   此前硬编码 http.get：注册表换成 https://域名 后
+      //   → 探测全失败 → DHT 降级 CACHE / onlineAgents=0，
+      //   而进程还在、/health 仍 200、只有 registryReachable:false 能看出来。
+      //   即「看起来在正常工作」的最贵故障形态（同 ac94694 同族）。
+      let client = http;
+      try {
+        client = new URL(url).protocol === 'https:' ? https : http;
+      } catch {
+        return reject(new Error('bad_registry_url: ' + url));
+      }
+      const req = client.get(url, { timeout: this.registryTimeout }, (res) => {
         let data = '';
+        res.setEncoding('utf8');   // 逐 chunk 拼 buffer 会把跨界多字节字符切成 U+FFFD（吃字）
         res.on('data', c => data += c);
         res.on('end', () => {
           try { resolve(JSON.parse(data)); } catch { resolve(data); }
