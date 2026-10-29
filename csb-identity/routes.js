@@ -33,7 +33,9 @@ function createIdentityHandler(opts = {}) {
   const DATA_DIR = path.resolve(opts.dataDir || path.join(HERE, 'data'));
   const LIMITS = { agent: 60, ip: 200, global: 1200, ...(opts.limits || {}) };
   const REGISTRY_URL = opts.registryUrl || 'http://127.0.0.1:3099';
-  const FORUM_REGISTRY_URL = opts.forumRegistryUrl || 'http://127.0.0.1:3500/api/agents';
+  // 2026-10-29: 默认值原为 http://127.0.0.1:3500/api/agents —— 该端口已不对外开（中文论坛改走 443），
+  // 本机也没有任何进程监听 3500 → 默认值指向空处，在册盘点会静默少一块。改为公网 443 入口。
+  const FORUM_REGISTRY_URL = opts.forumRegistryUrl || 'https://csbc.lilozkzy.top/api/agents';
   const log = opts.log || ((...a) => console.log(new Date().toISOString(), '[identity]', ...a));
 
   fs.mkdirSync(DATA_DIR, { recursive: true });

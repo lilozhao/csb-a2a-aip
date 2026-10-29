@@ -915,7 +915,7 @@ try {
   const identityHandler = createIdentityHandler({
     dataDir: process.env.A2A_IDENTITY_DATA || path.join(__dirname, 'csb-identity', 'data'),
     registryUrl: `http://127.0.0.1:${PORT}`,
-    forumRegistryUrl: process.env.A2A_FORUM_REGISTRY || 'http://127.0.0.1:3500/api/agents',
+    forumRegistryUrl: process.env.A2A_FORUM_REGISTRY || 'https://csbc.lilozkzy.top/api/agents',
     host: process.env.A2A_PUBLIC_HOST || 'csbc.lilozkzy.top',
     port: PORT,
     limits: { agent: parseInt(process.env.A2A_RATE_LIMIT || '60', 10), ip: 200 }

@@ -26,7 +26,8 @@
 
 - Node ≥ 18（本机 v24.13.0 实测）
 - `csb-security` 在 **master**（同一台机的**并列目录**即可，模块按相对路径 `../../csb-security/lib/index.js` 引用；也支持 npm 安装）
-- 若该实例同时用论坛注册表盘点，需 :3500 可达（可选，不可达只是 `/registry/onboarding` 数据少）
+- 若该实例同时用论坛注册表盘点，需论坛注册表可达（可选，不可达只是 `/registry/onboarding` 数据少）
+  - **2026-10-29**：默认地址由 `http://127.0.0.1:3500/api/agents` 改为 `https://csbc.lilozkzy.top/api/agents`（中文论坛 :3500 已不对外开，改走 443）
 
 ### 1. 拉代码
 
@@ -54,7 +55,7 @@ cd <并列目录>/csb-security && git fetch origin && git pull --ff-only && node
 |---|---|---|
 | `A2A_PUBLIC_HOST` | `A2A_HOST` → `localhost` | 服务身份 AID 里的公网 host（**建议设**，否则 agent_id 写成 localhost） |
 | `A2A_IDENTITY_DATA` | `<repo>/identity/data` | 身份数据目录（identities/claims/audit/service-key） |
-| `A2A_FORUM_REGISTRY` | `http://127.0.0.1:3500/api/agents` | 论坛注册表（用于在册盘点） |
+| `A2A_FORUM_REGISTRY` | `https://csbc.lilozkzy.top/api/agents` | 论坛注册表（用于在册盘点；2026-10-29 起默认值由 `http://127.0.0.1:3500/api/agents` 改走 443） |
 | `IDENTITY_ADMIN_TOKEN` | `<dataDir>/admin-token` | 治理令牌（effective/cleared 用）；文件 600 |
 | `IDENTITY_WRITE_LIMIT` | `20` | 写操作限流（每主体/每 IP，次/分钟）|
 
@@ -332,7 +333,7 @@ curl -X POST $B/aat/issue -d '{"caller_agent_id":"su-nian@..."}'   # 旧版：20
 ```
 GET  /ready                      就绪（审计链 + 双注册表可达）
 GET  /service/aid                服务身份 AID
-GET  /registry/onboarding        在册盘点（:3099 + :3500 合并去重）
+GET  /registry/onboarding        在册盘点（registry :3099 + 论坛注册表 合并去重）
 GET  /reserved                   保留键数量（不回显全表）
 POST /reserved/claim             认领保留名（须持有证明）
 POST /identity/register          注册验签
