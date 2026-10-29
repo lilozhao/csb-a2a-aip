@@ -68,7 +68,12 @@ fi
 # 启动 v5 Server
 echo "🚀 启动美硅 A2A v5 Server (端口: $PORT)..."
 cd "${A2A_DIR}"
-nohup node server_v5.js >> "${A2A_LOG_FILE}" 2>&1 &
+# [美硅 2026-10-29] 改用 setsid：原来的 `nohup ... &` 只挡 SIGHUP，**不脱离启动它的 session scope**。
+# 后果（实测）：2026-10-29 07:15 我从 OpenClaw 的 exec 会话里跑本脚本重启 A2A，
+# 进程被放进 gateway 的 session scope；07:46 gateway 被 OOM 杀掉时，
+# **整个 session scope 一起被拆，我刚重启的 A2A 跟着陪葬**（08:00 由 guardian 才发现并拉起）。
+# setsid 让 A2A 独立成 session，不再与 gateway 的生死绑定。
+setsid node server_v5.js >> "${A2A_LOG_FILE}" 2>&1 < /dev/null &
 NEW_PID=$!
 echo "$NEW_PID" > "${PID_FILE}"
 
