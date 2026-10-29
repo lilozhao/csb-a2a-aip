@@ -18,6 +18,7 @@ const crypto = require('crypto');
 const S = require('./core.js');
 const { createConnectionStore } = require('./connections.js');
 const { createHumanStore } = require('./humans.js');
+const { createFederation } = require('./federation.js');
 const csb = require('../../csb-security/lib/index.js');
 
 const HERE = __dirname;
@@ -140,6 +141,16 @@ function createIdentityHandler(opts = {}) {
   const jtiCache = new Set();
   const replayGuard = new csb.ReplayGuard(); // nonce / 时间戳 防重放
   const stats = { register_ok: 0, register_reject: 0, breach_proposed: 0, transitions: 0, aat_issued: 0, aat_verified: 0, aat_issue_denied: 0, aat_issue_unsigned: 0, rate_limited: 0 };
+
+  // ==== 身份联邦（B1 · 2026-10-29 硅隐拍板）====
+  // 只读公网 registry 的本地身份表 + 导入内网快照；**不碰 /agents**（R4）。
+  const federation = createFederation({
+    dataDir: DATA_DIR, identities, saveIdentities, audit, humans, S, csb, log,
+    replayGuard,
+    // 内网 Agent 要签 AAT 必须有 covenant（/aat/issue 会查），导入端提前拦，错误更早更清楚
+    requireCovenant: String(process.env.IDENTITY_FEDERATION_REQUIRE_COVENANT || '1') !== '0'
+  });
+
   const cleanup = setInterval(() => rateLimiter.cleanup(), 60 * 1000); if (cleanup.unref) cleanup.unref();
 
   // ==== 公网最小保护（2026-10-08 · 硅隐拍板"开始做"）====
@@ -308,7 +319,9 @@ function createIdentityHandler(opts = {}) {
           ok: reg.ok && chain.valid, audit_chain_valid: chain.valid,
           registry_sources: reg.sources, registry_agents: reg.total,
           // 签发鉴权状态必须可观测：否则「strict 没生效」和「strict 生效了」外观一样
-          aat_issue_mode: AAT_ISSUE_MODE, aat_max_ttl_s: AAT_MAX_TTL
+          aat_issue_mode: AAT_ISSUE_MODE, aat_max_ttl_s: AAT_MAX_TTL,
+          // R6：联邦状态必须可观测（否则「没生效」和「生效了」外观相同）
+          identity_federation: federation.status()
         }), true;
       }
       if (p === '/service/aid' && m === 'GET') return send(res, 200, SVC.aid), true;
@@ -376,7 +389,40 @@ function createIdentityHandler(opts = {}) {
       }
 
       if (p === '/identity' && m === 'GET') {
-        return send(res, 200, { ok: true, count: identities.size, identities: [...identities.values()].map(x => ({ agent_id: x.agent_id, name: x.name, passport_uri: x.passport_uri, reserved_claimed: x.reserved_claimed, covenant: !!x.covenant })) }), true;
+        return send(res, 200, { ok: true, count: identities.size, identities: [...identities.values()].map(x => ({ agent_id: x.agent_id, name: x.name, passport_uri: x.passport_uri, reserved_claimed: x.reserved_claimed, covenant: !!x.covenant, federated: x.federated || null, stale: x.stale || false, endpoint_scope: x.endpoint_scope || 'public' })) }), true;
+      }
+
+      // ===== 身份联邦（B1 · 2026-10-29）：源登记 / 快照摄入 / 状态 =====
+      if (p === '/identity/federation/status' && m === 'GET') return send(res, 200, { ok: true, ...federation.status() }), true;
+
+      // 源公钥带外 pin（治理动作 → 需 X-Admin-Token；不用共享签发权）
+      if (p === '/identity/federation/sources' && m === 'POST') {
+        const tok = req.headers['x-admin-token'] || '';
+        const okTok = !!ADMIN_TOKEN && tok.length === ADMIN_TOKEN.length && crypto.timingSafeEqual(Buffer.from(String(tok)), Buffer.from(ADMIN_TOKEN));
+        if (!okTok) {
+          audit.append({ event_type: 'federation_source_pin', caller_id: req.headers['x-agent-id'] || 'unknown', ip_address: ip, result: 'denied', scopes_denied: ['bad_admin_token'] });
+          return send(res, 403, { ok: false, error: 'bad_admin_token', hint: 'pin 源公钥属治理动作' }), true;
+        }
+        const b = await body();
+        const r = federation.pinSource({ source: b.source, public_key: b.public_key, note: b.note, by: b.by || ip });
+        audit.append({ event_type: 'federation_source_pin', caller_id: b.source || 'unknown', ip_address: ip, result: r.ok ? 'success' : 'denied', scopes_denied: r.ok ? [] : [r.error] });
+        return send(res, r.ok ? 200 : 409, r), true;
+      }
+      let mfs = /^\/identity\/federation\/sources\/([^/]+)$/.exec(p);
+      if (mfs && m === 'DELETE') {
+        const tok = req.headers['x-admin-token'] || '';
+        const okTok = !!ADMIN_TOKEN && tok.length === ADMIN_TOKEN.length && crypto.timingSafeEqual(Buffer.from(String(tok)), Buffer.from(ADMIN_TOKEN));
+        if (!okTok) return send(res, 403, { ok: false, error: 'bad_admin_token' }), true;
+        const r = federation.unpinSource(decodeURIComponent(mfs[1]));
+        audit.append({ event_type: 'federation_source_unpin', caller_id: decodeURIComponent(mfs[1]), ip_address: ip, result: r.ok ? 'success' : 'denied', scopes_denied: r.ok ? [] : [r.error] });
+        return send(res, r.ok ? 200 : 404, r), true;
+      }
+
+      // 快照摄入（内网 registry 定时全量推送；R1 每条独立全量校验，不因受信源跳过）
+      if (p === '/identity/federation/ingest' && m === 'POST') {
+        const b = await body();
+        const r = federation.ingest(b, { ip });
+        return send(res, r.code, r.body), true;
       }
 
       let mt = /^\/identity\/([^/]+)\/covenant$/.exec(p);
@@ -413,6 +459,16 @@ function createIdentityHandler(opts = {}) {
             trust_level_note: 'L1 = 身份验证通过（当前唯一可计算档）；L2/L3 需交互史/声誉，尚未实现',
             breach: breach.isBlocked(id) ? 'effective' : null,
             connections_band: conn.band(conn.count(id)), // 粗粒度：连接数本身是隐私（若兰反馈）
+            // R3：可达性显式 —— 「在册但不可直连」与「在册且可达」一眼能分
+            endpoint_scope: rec.endpoint_scope || 'public',
+            federated: rec.federated || null,
+            stale: rec.stale || false,
+            stale_since: rec.stale_since || null,
+            owner_unverified: !!rec.owner_unverified,
+            reachability: federation.reachabilityOf(rec),
+            aid_expires_at: (rec.aid && rec.aid.expires_at) || null,
+            aid_expired: federation.aidExpired(id),
+            federated_breach: federation.federatedBreach(id),
             aid: rec.aid
           }
         }), true;
@@ -586,6 +642,11 @@ function createIdentityHandler(opts = {}) {
         if (!rec) return deny(403, 'caller_not_registered', { hint: '先接入身份（/identity/register）' });
         if (!rec.covenant) return deny(403, 'covenant_unsigned', { hint: '先签善良契约（/identity/:id/covenant）' });
         if (breach.isBlocked(b.caller_agent_id)) return deny(403, 'caller_blocked_by_breach');
+        // 联邦身份的三种「在册但不可用」必须显式区分（R5 判据）：源侧撤销 / AID 到期 / 源侧 breach
+        if (federation.isStale(b.caller_agent_id)) return deny(403, 'caller_stale', { hint: '联邦源侧已无此身份（快照对账标 stale），需源侧恢复或重新推送' });
+        if (federation.aidExpired(b.caller_agent_id)) return deny(403, 'caller_aid_expired', { hint: 'AID 已过期，需源侧重签后重新推送' });
+        const fbr = federation.federatedBreach(b.caller_agent_id);
+        if (fbr) return deny(403, 'caller_blocked_by_breach', { hint: '源侧 breach 生效（federated）', source: fbr.source });
 
         // capabilities 必须是 string[]：原样接受会产出「验签通过、授权判断错」的畸形 token，
         // 是最难查的一类；客户端归一化只是自救，服务端必须自查。
@@ -708,7 +769,7 @@ function createIdentityHandler(opts = {}) {
     }
   }
 
-  handler.state = { identities, breach, audit, rateLimiter, serviceAid: SVC.aid, dataDir: DATA_DIR, stats, aatIssueMode: AAT_ISSUE_MODE, aatMaxTtl: AAT_MAX_TTL };
+  handler.state = { identities, breach, audit, rateLimiter, serviceAid: SVC.aid, dataDir: DATA_DIR, stats, aatIssueMode: AAT_ISSUE_MODE, aatMaxTtl: AAT_MAX_TTL, federation };
   return handler;
 }
 
