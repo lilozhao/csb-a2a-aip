@@ -89,11 +89,27 @@ class MetricsCollector {
 // ============================================
 class AuditLogger {
   constructor(options = {}) {
-    this.logPath = options.logPath || path.join(process.env.A2A_DATA_DIR || '/tmp', 'a2a-audit.log');
+    // [2026-11-02 P0-0] 不再默认落 /tmp：容器重启即丢账，而它是对外承诺「可审计」的唯一凭据。
+    //   解析顺序：显式 logPath → A2A_DATA_DIR → <repo>/data（持久回退）
+    //   ⚠️ 不用 fail-fast：生产未设 A2A_DATA_DIR，fail-fast 会让服务起不来。
+    //   改为「持久回退 + 路径来源可见」，由 /health 暴露，不静默。
+    const repoData = path.join(__dirname, 'data');
+    if (options.logPath) {
+      this.logPath = options.logPath;
+      this.pathSource = 'option';
+    } else if (process.env.A2A_DATA_DIR) {
+      this.logPath = path.join(process.env.A2A_DATA_DIR, 'a2a-audit.log');
+      this.pathSource = 'env';
+    } else {
+      this.logPath = path.join(repoData, 'a2a-audit.log');
+      this.pathSource = 'repo-fallback';
+    }
     this.buffer  = [];
     this.maxBuffer = options.maxBuffer || 100;
     this.flushInterval = options.flushInterval || 5000;
-
+    this.writeFailures = 0;
+    this.lastWriteError = null;
+    this.lastFlushAt = null;
     this._timer = setInterval(() => this.flush(), this.flushInterval);
   }
 
@@ -115,11 +131,34 @@ class AuditLogger {
   flush() {
     if (this.buffer.length === 0) return;
     try {
+      fs.mkdirSync(path.dirname(this.logPath), { recursive: true });
       fs.appendFileSync(this.logPath, this.buffer.join('\n') + '\n');
+      // [P0-0] 强制落盘：缓冲 + 无 fsync = 崩溃丢 5s 账
+      try {
+        const fd = fs.openSync(this.logPath, 'r');
+        try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+      } catch { /* fsync 不受支持时不阻断写入 */ }
       this.buffer = [];
+      this.lastFlushAt = Date.now();
     } catch (e) {
-      console.error('[Audit] 写入失败:', e.message);
+      // [P0-0] 写失败必须可见：「降级不该是静默的」
+      this.writeFailures += 1;
+      this.lastWriteError = e.message;
+      console.error('[Audit] 写入失败:', e.message, `(累计 ${this.writeFailures} 次)`);
     }
+  }
+
+  /** 审计自身状态（供 /health 消费，不猜） */
+  stats() {
+    return {
+      logPath: this.logPath,
+      pathSource: this.pathSource,
+      chainCapable: false,
+      writeFailures: this.writeFailures,
+      lastWriteError: this.lastWriteError,
+      lastFlushAt: this.lastFlushAt,
+      buffered: this.buffer.length,
+    };
   }
 
   shutdown() {
@@ -151,12 +190,22 @@ function traceMiddleware(options = {}) {
       }
 
       if (options.auditLogger) {
+        // [2026-11-02 P0-0] 必须把发送者带进去：GDI 按 caller_id 算通过率，
+        //   不带则全记 'unknown'（现有 233 条历史账全是 unknown 的原因）。
+        const body = req.body || {};
+        const senderRaw = body?.params?.metadata?.sender
+          ?? body?.params?.message?.sender
+          ?? body?.envelope?.sender
+          ?? null;
+        const agentName = (senderRaw && typeof senderRaw === 'object' ? senderRaw.name : senderRaw) || 'unknown';
         options.auditLogger.record({
           traceId, event: 'request',
+          agent: String(agentName),
           method: method.toString(),
           status: status,
           durationMs: duration,
-          details: req.body?.params?.message?.parts?.[0]?.text?.substring(0, 50) || '',
+          ip: req.ip || req.socket?.remoteAddress || null,
+          details: body?.params?.message?.parts?.[0]?.text?.substring(0, 50) || '',
         });
       }
     });

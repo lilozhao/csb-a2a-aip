@@ -95,6 +95,23 @@ class CompatAuditLogger {
 
   verifyChain() { return this.inner.verifyChain(); }
   query(filters = {}) { return this.inner.query(filters); }
+
+  /** [2026-11-02 P0-0] 审计自身状态 — 供 /health 消费（外部只读侧要能核「链可不可验」） */
+  stats() {
+    let entries = null;
+    try { entries = Array.isArray(this.inner.entries) ? this.inner.entries.length : null; } catch { /* 不阻断 */ }
+    return {
+      logPath: this.logPath || this.inner.logPath || null,
+      pathSource: 'repo',
+      chainCapable: true,
+      source: 'csb-security',
+      algorithm: 'sha256-chain' + (this.inner.privateKey ? '+ed25519' : ''),
+      entries,
+      signed: !!this.inner.privateKey,
+      writeFailures: this.writeFailures || 0,
+      lastWriteError: this.lastWriteError || null,
+    };
+  }
   summary() { return this.inner.summary(); }
   shutdown() { /* AuditLog 同步落盘，无定时器 */ }
 }
@@ -102,17 +119,37 @@ class CompatAuditLogger {
 /**
  * createAuditLogger — 审计日志工厂
  *
- * A2A_SECURITY_AUDIT=1 + csb-security 可用 → 哈希链审计（data/audit/）
- * 否则 → legacy observability AuditLogger（/tmp 明文，行为不变）
+ * [2026-11-02 P0-0] 改：默认走 csb-security 哈希链（不再靠 A2A_SECURITY_AUDIT 开关）
+ *
+ * 缘起：主审计一直是裸 append —— 无 prev_hash、无 fsync、默认落 /tmp。
+ *   而 GDI 的 verify.js 正指着这份文件验链，于是它只能永远返回 no_audit_source。
+ *   一个已完成的能力在空转（知微审计事实 4）。
+ *
+ * 决议：标准早就存在于 csb-security/lib/audit/audit-log.js（gdi/verify.js 头注释
+ *   自述「算法同构」），所以不新写第三套链，直接复用权威实现。
+ *
+ * 降级可见：csb-security 不可用时退回 legacy（无链），但必须能被 /health 看出来，
+ *   不假装「审计在运转」。
  */
 function createAuditLogger(options = {}) {
   const path = require('path');
-  if (source === 'csb-security' && process.env.A2A_SECURITY_AUDIT === '1') {
-    const logPath = options.logPath || path.join(__dirname, 'data', 'audit', 'security-audit.jsonl');
-    console.log(`[SECURITY] 🛡️ 哈希链审计已启用 (A2A_SECURITY_AUDIT=1 → ${logPath})`);
-    return new CompatAuditLogger({ logPath });
+  const logPath = options.logPath || path.join(__dirname, 'data', 'audit', 'security-audit.jsonl');
+  const legacy = process.env.A2A_SECURITY_AUDIT === '0'; // 显式关闭才退 legacy
+
+  if (source === 'csb-security' && !legacy) {
+    console.log(`[SECURITY] 🛡️ 哈希链审计已启用 (${logPath})`);
+    const logger = new CompatAuditLogger({ logPath });
+    logger.chainCapable = true;
+    logger.logPath = logPath;
+    logger.source = 'csb-security';
+    return logger;
   }
-  return new (require('./a2a-observability.js').AuditLogger)(options);
+
+  const fallback = new (require('./a2a-observability.js').AuditLogger)(options);
+  fallback.chainCapable = false;
+  fallback.degradedReason = source !== 'csb-security' ? 'csb_security_unavailable' : 'explicitly_disabled';
+  console.warn(`[SECURITY] ⚠️ 审计退化为无链模式（${fallback.degradedReason}）→ ${fallback.logPath}`);
+  return fallback;
 }
 
 /**

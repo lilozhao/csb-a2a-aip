@@ -799,6 +799,29 @@ function trustHealthSection() {
   catch (e) { return { error: e.message, probeEndpoint: '/health/trust-probe' }; }
 }
 
+// [2026-11-02 P0-0] 审计自检：链可验才算可审计。
+//   缘起：/capabilities.observability.audit 一直硬编码 true，而主审计是裸 append + 落 /tmp。
+//   判据只认机械结果（verifyChain 返回值），不认「我们已经开启了」这类自述。
+function auditHealthSection() {
+  try {
+    const base = (typeof auditLogger.stats === 'function') ? auditLogger.stats() : {};
+    if (!auditLogger.chainCapable || typeof auditLogger.verifyChain !== 'function') {
+      return { ...base, chainValid: false, reason: 'no_chain_impl' };
+    }
+    const v = auditLogger.verifyChain();
+    const ok = !!(v && (v.valid === true || v.ok === true));
+    return {
+      ...base,
+      chainValid: ok,
+      entries: v?.count ?? v?.verified ?? null,
+      reason: ok ? 'chain_valid' : (v?.reason || 'chain_invalid'),
+      brokenAt: v?.brokenAt ?? v?.atSeq ?? null,
+    };
+  } catch (e) {
+    return { chainValid: false, reason: 'audit_probe_error: ' + e.message };
+  }
+}
+
 app.get('/health', (req, res) => {
   // [2026-10-24 舟楫实测反馈 · P0] status 不再写死 'ok'。
   //
@@ -835,6 +858,9 @@ app.get('/health', (req, res) => {
   let degradedReason = [];
   if (!checks.configResolved.ok) { status = 'degraded'; degradedReason.push('registry 配置未解析'); }
   if (!checks.registryReachable.ok) { status = 'degraded'; degradedReason.push(`注册表不可达（onlineAgents=0, DHT=${dhtLevel}）`); }
+  // [2026-11-02 P0-0] 审计不可验 → 也算 degraded：对外承诺「可审计」的凭据没了
+  const auditStatus = auditHealthSection();
+  if (!auditStatus.chainValid) { status = 'degraded'; degradedReason.push(`审计链${auditStatus.reason || '不可验'}`); }
 
   res.json({
     status,
@@ -849,6 +875,7 @@ app.get('/health', (req, res) => {
     rateLimit: rateLimiter.getStats(),
     tasks: taskStore.getStats(),
     trust: trustHealthSection(),
+    audit: auditStatus,
     uac: uacHealth.uacHealthSnapshot(process.env, {
       assembled: _uacRuntime.assembled,
       error: _uacRuntime.error,
@@ -927,7 +954,12 @@ app.get('/capabilities', (req, res) => {
   const capabilities = standardAPI.getCapabilities();
   capabilities.e2e = e2eManager.enabled;
   capabilities.dht = dhtManager.getStatus().level.name;
-  capabilities.observability = { metrics: true, tracing: true, audit: true };
+  capabilities.observability = {
+    metrics: true,
+    tracing: true,
+    // [2026-11-02 P0-0] 不再硬编码 true：链不可验就说 degraded，不假装审计在运转。
+    audit: (() => { const a = auditHealthSection(); return a.chainValid ? true : 'degraded'; })(),
+  };
   res.json({ agent: identity.name, version: A2A_VERSION, capabilities });
 });
 
