@@ -18,6 +18,7 @@ const crypto = require('crypto');
 const S = require('./core.js');
 const { createConnectionStore } = require('./connections.js');
 const { createHumanStore } = require('./humans.js');
+const { createFederation } = require('./federation.js');
 const csb = require('../../csb-security/lib/index.js');
 
 const HERE = __dirname;
@@ -135,6 +136,21 @@ function createIdentityHandler(opts = {}) {
 
   const rateLimiter = new csb.RateLimiter({ limits: LIMITS });
   const audit = new csb.AuditLog({ logPath: F.audit, privateKey: SVC.privateKey, publicKey: SVC.publicKey });
+  // [2026-11-02 明德] AuditLog 只认固定 schema，**未知键会被静默丢弃**（扩展字段必须走第二参数）。
+  //   这属"以为记了其实没记"的那类暗坑：本次加 ip_direct / mode / caps 时就踩了一次
+  //   （审计文件里查不到，代码看着却写了）。这里统一分流，核心字段进 entry，其余进 extra。
+  //   哈希链不受影响：extra 同样参与 prev_hash 计算。
+  {
+    const AUDIT_CORE = new Set(['seq', 'timestamp', 'event_type', 'caller_id', 'callee_id', 'user_id',
+      'scopes_requested', 'scopes_granted', 'scopes_denied', 'trust_level', 'session_id',
+      'ip_address', 'result', 'prev_hash', 'hash', 'signature']);
+    const rawAppend = audit.append.bind(audit);
+    audit.append = (entry = {}, extra = {}) => {
+      const core = {}, ext = { ...extra };
+      for (const [k, v] of Object.entries(entry || {})) (AUDIT_CORE.has(k) ? core : ext)[k] = v;
+      return rawAppend(core, ext);
+    };
+  }
   const auditQuery = new csb.AuditQuery(audit);
   const breach = new S.BreachRegistry({ log: audit }); // 复用同一本审计账（不再另开 breach-log）
   const conn = createConnectionStore({ dataDir: DATA_DIR, log }); // 连接分级（跟主体走）
@@ -142,6 +158,16 @@ function createIdentityHandler(opts = {}) {
   const jtiCache = new Set();
   const replayGuard = new csb.ReplayGuard(); // nonce / 时间戳 防重放
   const stats = { register_ok: 0, register_reject: 0, breach_proposed: 0, transitions: 0, aat_issued: 0, aat_verified: 0, aat_issue_denied: 0, aat_issue_unsigned: 0, rate_limited: 0 };
+
+  // ==== 身份联邦（B1 · 2026-10-29 硅隐拍板）====
+  // 只读公网 registry 的本地身份表 + 导入内网快照；**不碰 /agents**（R4）。
+  const federation = createFederation({
+    dataDir: DATA_DIR, identities, saveIdentities, audit, humans, S, csb, log,
+    replayGuard,
+    // 内网 Agent 要签 AAT 必须有 covenant（/aat/issue 会查），导入端提前拦，错误更早更清楚
+    requireCovenant: String(process.env.IDENTITY_FEDERATION_REQUIRE_COVENANT || '1') !== '0'
+  });
+
   const cleanup = setInterval(() => rateLimiter.cleanup(), 60 * 1000); if (cleanup.unref) cleanup.unref();
 
   // ==== 公网最小保护（2026-10-08 · 硅隐拍板"开始做"）====
@@ -180,7 +206,38 @@ function createIdentityHandler(opts = {}) {
     const n = parseInt(process.env.AAT_MAX_TTL || '3600', 10);
     return Number.isFinite(n) && n > 0 ? n : 3600;
   })();
-  log('AAT 签发模式:', AAT_ISSUE_MODE, '· ttl 上限:', AAT_MAX_TTL + 's');
+
+  // ==== 灰度收紧（2026-11-02 硅隐拍板）====
+  // 背景：warn 期间实测——**不签名、只报对方 AID 名**，`POST /aat/issue` 返回 201，
+  //   拿到 `aud=<对方>` 的合法 AAT，论坛 `/api/auth/aat/check` 判 `valid:true match:true`。
+  //   即 warn 让「冒名签发」端到端成立（本机 3099 经 nginx 对公网可达）。
+  // 为什么不一刀 strict：清漪/苏念/郑姆斯特丹等仍在跑未签名客户端，
+  //   一刀切会立刻打断他们的写入（不是安全，是事故）。
+  // 故只把**写类/身份类能力**提到 strict，其余（chat 等）继续按 AAT_ISSUE_MODE。
+  // 调口径：AAT_STRICT_CAPS（默认 "forum.*,identity.*,admin,*.delete"；逗号分隔；支持 * 通配；冒号≡点）
+  const AAT_STRICT_CAPS = (() => {
+    const raw = String(process.env.AAT_STRICT_CAPS || 'forum.*,identity.*,admin,*.delete');
+    return raw.split(',').map(s => s.trim()).filter(Boolean);
+  })();
+  /**
+   * 能力名匹配（2026-11-02 · 硅隐令扩到 identity.* 时补的坑）：
+   *   实测审计里同时存在 `forum.post` 与 `forum:post` 两种写法（还有 forum.write / post.delete / admin），
+   *   若按字面前缀比，`forum:post` 会**绕过**灰度 → 灰度变成摆设。故：
+   *   ① 归一化：小写 + 冒号视作点；② 支持 `*` 通配（`*.delete` 也能用）。
+   */
+  const normCap = (x) => String(x == null ? '' : x).trim().toLowerCase().replace(/:/g, '.');
+  const capMatches = (cap, pat) => {
+    const c = normCap(cap), p = normCap(pat);
+    if (!p.includes('*')) return c === p;
+    const re = new RegExp('^' + p.split('*').map(x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$');
+    return re.test(c);
+  };
+  const isSensitiveCaps = (caps) => (caps || []).some(c => AAT_STRICT_CAPS.some(p => capMatches(c, p)));
+  /** 生效模式：base 为 off 时仍 off（应急回滚优先）；含敏感能力则强制 strict */
+  const effectiveIssueMode = (caps) =>
+    (AAT_ISSUE_MODE === 'off' ? 'off' : (isSensitiveCaps(caps) ? 'strict' : AAT_ISSUE_MODE));
+
+  log('AAT 签发模式:', AAT_ISSUE_MODE, '· 灰度强制 strict 的能力:', AAT_STRICT_CAPS.join(',') || '(无)', '· ttl 上限:', AAT_MAX_TTL + 's');
 
   /** /aat/issue 的规范化待签载荷（客户端与服务端必须逐字一致；字段顺序由 JCS 排序决定） */
   function aatIssuePayload(callerId, capabilities, ttl, nonce, timestamp) {
@@ -266,10 +323,28 @@ function createIdentityHandler(opts = {}) {
     res.writeHead(code, h); res.end(JSON.stringify(obj, null, 2));
   }
   const clientIp = (req) => String(req.socket && req.socket.remoteAddress || 'unknown').replace('::ffff:', '');
+  /**
+   * 真实来源 IP —— **仅记录，不参与任何判定**（2026-11-02 硅隐令）。
+   * 背景：registry 只绑 127.0.0.1，外网全走 nginx → 审计里 `ip_address` 清一色 127.0.0.1，
+   *   TOOLS.md 写的「按 IP 统计还在裸奔的客户端」实际是废的，出事也追不到来源。
+   * 取法：只有当直连方是环回（= 本机 nginx）时才采信头；XFF 取**最后一跳**
+   *   （最左可由客户端伪造，`$proxy_add_x_forwarded_for` 追加的那一跳才是 nginx 亲见）；
+   *   头都没有则回落直连地址。限流等判定继续用直连地址，口径不变。
+   */
+  const realClientIp = (req, direct) => {
+    const isLoop = direct === '127.0.0.1' || direct === '::1' || direct === 'unknown';
+    if (!isLoop) return direct;
+    const xff = String(req.headers['x-forwarded-for'] || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (xff.length) return xff[xff.length - 1].replace('::ffff:', '');
+    const xr = String(req.headers['x-real-ip'] || '').trim();
+    return xr ? xr.replace('::ffff:', '') : direct;
+  };
 
   async function handler(req, res) {
     const u = new URL(req.url, 'http://localhost');
     const p = u.pathname, m = req.method, ip = clientIp(req);
+    // 真实来源 IP：只进审计（ip_address），不改任何判定（限流仍用 ip 直连地址）
+    const ipSrc = realClientIp(req, ip);
 
     // 只接管自己的路径，其它放行（返回 false）
     // ⚠️ 前缀必须"精确或带斜杠"（若琢 2026-10-08 反馈）：
@@ -286,7 +361,7 @@ function createIdentityHandler(opts = {}) {
       const rl = rateLimiter.check({ agentId: agent, ip });
       if (!rl.allowed) {
         stats.rate_limited++;
-        audit.append({ event_type: 'rate_limited', caller_id: agent, ip_address: ip, result: 'denied', scopes_denied: [rl.reason] });
+        audit.append({ event_type: 'rate_limited', caller_id: agent, ip_address: ipSrc, ip_direct: ip, result: 'denied', scopes_denied: [rl.reason] });
         const ra = Math.ceil((rl.retryAfterMs || 1000) / 1000);
         return send(res, 429, { ok: false, error: rl.reason, retry_after_s: ra }, { 'Retry-After': String(ra) }), true;
       }
@@ -295,7 +370,7 @@ function createIdentityHandler(opts = {}) {
         const wl = writeLimiter.check({ agentId: agent, ip });
         if (!wl.allowed) {
           stats.rate_limited++;
-          audit.append({ event_type: 'rate_limited', caller_id: agent, ip_address: ip, result: 'denied', scopes_denied: ['write_' + wl.reason] });
+          audit.append({ event_type: 'rate_limited', caller_id: agent, ip_address: ipSrc, ip_direct: ip, result: 'denied', scopes_denied: ['write_' + wl.reason] });
           const ra = Math.ceil((wl.retryAfterMs || 1000) / 1000);
           return send(res, 429, { ok: false, error: 'write_rate_limited', detail: wl.reason, retry_after_s: ra }, { 'Retry-After': String(ra) }), true;
         }
@@ -310,7 +385,11 @@ function createIdentityHandler(opts = {}) {
           ok: reg.ok && chain.valid, audit_chain_valid: chain.valid,
           registry_sources: reg.sources, registry_agents: reg.total,
           // 签发鉴权状态必须可观测：否则「strict 没生效」和「strict 生效了」外观一样
-          aat_issue_mode: AAT_ISSUE_MODE, aat_max_ttl_s: AAT_MAX_TTL
+          aat_issue_mode: AAT_ISSUE_MODE, aat_max_ttl_s: AAT_MAX_TTL,
+          // 灰度收紧口径必须可观测（否则「写类已强制验签」和「没强制」外观一样）
+          aat_strict_caps: AAT_STRICT_CAPS, aat_gray_enforced: AAT_ISSUE_MODE !== 'off' && AAT_STRICT_CAPS.length > 0,
+          // R6：联邦状态必须可观测（否则「没生效」和「生效了」外观相同）
+          identity_federation: federation.status()
         }), true;
       }
       if (p === '/service/aid' && m === 'GET') return send(res, 200, SVC.aid), true;
@@ -338,11 +417,11 @@ function createIdentityHandler(opts = {}) {
         } catch { sigOk = false; }
         const tsOk = Math.abs(Date.now() - Date.parse(b.proof.timestamp)) < 300000;
         if (!tsOk || !sigOk) {
-          audit.append({ event_type: 'reserved_claim', caller_id: actor, ip_address: ip, result: 'denied', scopes_denied: [!tsOk ? 'ts_drift' : 'bad_proof'] });
+          audit.append({ event_type: 'reserved_claim', caller_id: actor, ip_address: ipSrc, ip_direct: ip, result: 'denied', scopes_denied: [!tsOk ? 'ts_drift' : 'bad_proof'] });
           return send(res, 401, { ok: false, error: !tsOk ? 'proof_ts_drift' : 'bad_proof' }), true;
         }
         const r = S.claimReservedName(b.name, b.public_key);
-        audit.append({ event_type: 'reserved_claim', caller_id: actor, ip_address: ip, result: r.ok ? 'success' : 'denied', scopes_denied: r.ok ? [] : [r.error] });
+        audit.append({ event_type: 'reserved_claim', caller_id: actor, ip_address: ipSrc, ip_direct: ip, result: r.ok ? 'success' : 'denied', scopes_denied: r.ok ? [] : [r.error] });
         return send(res, r.ok ? 200 : 409, r), true;
       }
 
@@ -352,13 +431,13 @@ function createIdentityHandler(opts = {}) {
         const r = S.verifyIdentitySubmission(b.aid, b.proof || {}, { owner: b.owner, passport_uri: b.passport_uri, passport_slug: b.passport_slug, humanExists: (k) => humans.exists(k) });
         if (!r.valid) {
           stats.register_reject++; rateLimiter.recordFailure(b.aid.agent_id || 'unknown');
-          audit.append({ event_type: 'identity_register', caller_id: b.aid.agent_id || 'unknown', ip_address: ip, result: 'denied', scopes_denied: [r.error] });
+          audit.append({ event_type: 'identity_register', caller_id: b.aid.agent_id || 'unknown', ip_address: ipSrc, ip_direct: ip, result: 'denied', scopes_denied: [r.error] });
           return send(res, 400, { ok: false, ...r }), true;
         }
         const prev = identities.get(r.agent_id);
         if (prev && prev.aid.public_key && prev.aid.public_key.x !== r.aid.public_key.x) {
           stats.register_reject++; rateLimiter.recordFailure(r.agent_id);
-          audit.append({ event_type: 'identity_register', caller_id: r.agent_id, ip_address: ip, result: 'denied', scopes_denied: ['pubkey_conflict'] });
+          audit.append({ event_type: 'identity_register', caller_id: r.agent_id, ip_address: ipSrc, ip_direct: ip, result: 'denied', scopes_denied: ['pubkey_conflict'] });
           return send(res, 409, { ok: false, error: 'agent_id_pubkey_conflict', hint: '同 agent_id 已知公钥，换钥请走轮换' }), true;
         }
         identities.set(r.agent_id, {
@@ -372,13 +451,46 @@ function createIdentityHandler(opts = {}) {
           registered_at: (prev && prev.registered_at) || new Date().toISOString(), updated_at: new Date().toISOString()
         });
         saveIdentities(); stats.register_ok++; rateLimiter.recordSuccess(r.agent_id);
-        audit.append({ event_type: 'identity_register', caller_id: r.agent_id, callee_id: SVC.agentId, ip_address: ip, result: 'success', scopes_granted: ['identity:verified'] });
+        audit.append({ event_type: 'identity_register', caller_id: r.agent_id, callee_id: SVC.agentId, ip_address: ipSrc, ip_direct: ip, result: 'success', scopes_granted: ['identity:verified'] });
         log('register', r.agent_id, 'passport=' + r.passport_uri);
         return send(res, 201, { ok: true, agent_id: r.agent_id, passport_uri: r.passport_uri, reserved_claimed: r.reserved_claimed }), true;
       }
 
       if (p === '/identity' && m === 'GET') {
-        return send(res, 200, { ok: true, count: identities.size, identities: [...identities.values()].map(x => ({ agent_id: x.agent_id, name: x.name, passport_uri: x.passport_uri, reserved_claimed: x.reserved_claimed, covenant: !!x.covenant })) }), true;
+        return send(res, 200, { ok: true, count: identities.size, identities: [...identities.values()].map(x => ({ agent_id: x.agent_id, name: x.name, passport_uri: x.passport_uri, reserved_claimed: x.reserved_claimed, covenant: !!x.covenant, federated: x.federated || null, stale: x.stale || false, endpoint_scope: x.endpoint_scope || 'public' })) }), true;
+      }
+
+      // ===== 身份联邦（B1 · 2026-10-29）：源登记 / 快照摄入 / 状态 =====
+      if (p === '/identity/federation/status' && m === 'GET') return send(res, 200, { ok: true, ...federation.status() }), true;
+
+      // 源公钥带外 pin（治理动作 → 需 X-Admin-Token；不用共享签发权）
+      if (p === '/identity/federation/sources' && m === 'POST') {
+        const tok = req.headers['x-admin-token'] || '';
+        const okTok = !!ADMIN_TOKEN && tok.length === ADMIN_TOKEN.length && crypto.timingSafeEqual(Buffer.from(String(tok)), Buffer.from(ADMIN_TOKEN));
+        if (!okTok) {
+          audit.append({ event_type: 'federation_source_pin', caller_id: req.headers['x-agent-id'] || 'unknown', ip_address: ipSrc, ip_direct: ip, result: 'denied', scopes_denied: ['bad_admin_token'] });
+          return send(res, 403, { ok: false, error: 'bad_admin_token', hint: 'pin 源公钥属治理动作' }), true;
+        }
+        const b = await body();
+        const r = federation.pinSource({ source: b.source, public_key: b.public_key, note: b.note, by: b.by || ip });
+        audit.append({ event_type: 'federation_source_pin', caller_id: b.source || 'unknown', ip_address: ipSrc, ip_direct: ip, result: r.ok ? 'success' : 'denied', scopes_denied: r.ok ? [] : [r.error] });
+        return send(res, r.ok ? 200 : 409, r), true;
+      }
+      let mfs = /^\/identity\/federation\/sources\/([^/]+)$/.exec(p);
+      if (mfs && m === 'DELETE') {
+        const tok = req.headers['x-admin-token'] || '';
+        const okTok = !!ADMIN_TOKEN && tok.length === ADMIN_TOKEN.length && crypto.timingSafeEqual(Buffer.from(String(tok)), Buffer.from(ADMIN_TOKEN));
+        if (!okTok) return send(res, 403, { ok: false, error: 'bad_admin_token' }), true;
+        const r = federation.unpinSource(decodeURIComponent(mfs[1]));
+        audit.append({ event_type: 'federation_source_unpin', caller_id: decodeURIComponent(mfs[1]), ip_address: ipSrc, ip_direct: ip, result: r.ok ? 'success' : 'denied', scopes_denied: r.ok ? [] : [r.error] });
+        return send(res, r.ok ? 200 : 404, r), true;
+      }
+
+      // 快照摄入（内网 registry 定时全量推送；R1 每条独立全量校验，不因受信源跳过）
+      if (p === '/identity/federation/ingest' && m === 'POST') {
+        const b = await body();
+        const r = federation.ingest(b, { ip });
+        return send(res, r.code, r.body), true;
       }
 
       let mt = /^\/identity\/([^/]+)\/covenant$/.exec(p);
@@ -388,7 +500,7 @@ function createIdentityHandler(opts = {}) {
         const b = await body();
         const cov = { agent_id: id, covenant_version: b.covenant_version || 'csb-covenant-v1', covenant_hash: b.covenant_hash, covenant_signed_at: b.covenant_signed_at, covenant_sig: b.covenant_sig };
         const v = S.verifyCovenant(cov, crypto.createPublicKey({ key: rec.aid.public_key, format: 'jwk' }));
-        audit.append({ event_type: 'covenant_sign', caller_id: id, callee_id: SVC.agentId, ip_address: ip, result: v.valid ? 'success' : 'denied', scopes_denied: v.valid ? [] : [v.error] });
+        audit.append({ event_type: 'covenant_sign', caller_id: id, callee_id: SVC.agentId, ip_address: ipSrc, ip_direct: ip, result: v.valid ? 'success' : 'denied', scopes_denied: v.valid ? [] : [v.error] });
         if (!v.valid) return send(res, 400, { ok: false, ...v }), true;
         rec.covenant = cov; rec.aid = { ...rec.aid, covenant: { version: cov.covenant_version, hash: cov.covenant_hash, signed_at: cov.covenant_signed_at, sig: cov.covenant_sig } };
         saveIdentities();
@@ -415,6 +527,16 @@ function createIdentityHandler(opts = {}) {
             trust_level_note: 'L1 = 身份验证通过（当前唯一可计算档）；L2/L3 需交互史/声誉，尚未实现',
             breach: breach.isBlocked(id) ? 'effective' : null,
             connections_band: conn.band(conn.count(id)), // 粗粒度：连接数本身是隐私（若兰反馈）
+            // R3：可达性显式 —— 「在册但不可直连」与「在册且可达」一眼能分
+            endpoint_scope: rec.endpoint_scope || 'public',
+            federated: rec.federated || null,
+            stale: rec.stale || false,
+            stale_since: rec.stale_since || null,
+            owner_unverified: !!rec.owner_unverified,
+            reachability: federation.reachabilityOf(rec),
+            aid_expires_at: (rec.aid && rec.aid.expires_at) || null,
+            aid_expired: federation.aidExpired(id),
+            federated_breach: federation.federatedBreach(id),
             aid: rec.aid
           }
         }), true;
@@ -428,7 +550,7 @@ function createIdentityHandler(opts = {}) {
         const tok = req.headers['x-admin-token'] || '';
         const okTok = tok.length === ADMIN_TOKEN.length && crypto.timingSafeEqual(Buffer.from(String(tok)), Buffer.from(ADMIN_TOKEN));
         if (!okTok) {
-          audit.append({ event_type: 'identity_revoke', caller_id: id, ip_address: ip, result: 'denied', scopes_denied: ['bad_admin_token'] });
+          audit.append({ event_type: 'identity_revoke', caller_id: id, ip_address: ipSrc, ip_direct: ip, result: 'denied', scopes_denied: ['bad_admin_token'] });
           return send(res, 403, { ok: false, error: 'bad_admin_token' }), true;
         }
         if (!identities.has(id)) return send(res, 404, { ok: false, error: 'agent_not_registered' }), true;
@@ -436,7 +558,7 @@ function createIdentityHandler(opts = {}) {
         identities.delete(id);
         saveIdentities();
         // ⚠️ 审计链只追加、不删除：注销留下的是一条"已注销"记录（历史保留），不是抹去
-        audit.append({ event_type: 'identity_revoke', caller_id: id, callee_id: SVC.agentId, ip_address: ip, result: 'success', scopes_granted: ['identity:revoked'] });
+        audit.append({ event_type: 'identity_revoke', caller_id: id, callee_id: SVC.agentId, ip_address: ipSrc, ip_direct: ip, result: 'success', scopes_granted: ['identity:revoked'] });
         log('revoke', id, 'by governance');
         return send(res, 200, { ok: true, agent_id: id, revoked: true, note: 'state 已移除；审计链保留该次注销记录（历史不可删）' }), true;
       }
@@ -452,11 +574,11 @@ function createIdentityHandler(opts = {}) {
         // 跨命名空间同名互斥：人的 handle 不得与在册 agent 显示名同名
         const clash = [...identities.values()].find(x => S.nameKey(x.name) === key);
         if (clash) {
-          audit.append({ event_type: 'human_register', caller_id: uriOr(key), ip_address: ip, result: 'denied', scopes_denied: ['conflicts_with_agent_name'] });
+          audit.append({ event_type: 'human_register', caller_id: uriOr(key), ip_address: ipSrc, ip_direct: ip, result: 'denied', scopes_denied: ['conflicts_with_agent_name'] });
           return send(res, 409, { ok: false, error: 'conflicts_with_agent_name', key, agent_id: clash.agent_id, hint: '跨命名空间同名互斥（防冒名）' }), true;
         }
         const r = humans.register(b, { isGovernance: adminOk });
-        audit.append({ event_type: 'human_register', caller_id: uriOr(key), ip_address: ip, result: r.ok ? 'success' : 'denied', scopes_denied: r.ok ? [] : [r.error] });
+        audit.append({ event_type: 'human_register', caller_id: uriOr(key), ip_address: ipSrc, ip_direct: ip, result: r.ok ? 'success' : 'denied', scopes_denied: r.ok ? [] : [r.error] });
         if (!r.ok) return send(res, r.error === 'handle_taken' ? 409 : 400, r), true;
         return send(res, 201, { ok: true, human: humans.view(r.human), human_uri: r.human_uri }), true;
       }
@@ -549,7 +671,7 @@ function createIdentityHandler(opts = {}) {
         const payload = { subject_id: subject, peer_id: peer, level: b.level, source: b.source === 'auto' ? 'auto' : 'manual', nonce: b.nonce, timestamp: b.timestamp, confirm };
         const v = verifySubjectSig(subject, payload, b.sig);
         if (!v.ok) {
-          audit.append({ event_type: 'connection_set', caller_id: subject, callee_id: peer, ip_address: ip, result: 'denied', scopes_denied: [v.error] });
+          audit.append({ event_type: 'connection_set', caller_id: subject, callee_id: peer, ip_address: ipSrc, ip_direct: ip, result: 'denied', scopes_denied: [v.error] });
           return send(res, 403, { ok: false, ...v }), true;
         }
         if (!replayGuard.checkNonce(b.nonce).allowed) return send(res, 401, { ok: false, error: 'nonce_replay' }), true;
@@ -569,7 +691,7 @@ function createIdentityHandler(opts = {}) {
           if (!adminOk) return send(res, 409, { ok: false, error: 'peer_under_effective_breach', hint: '被 breach 生效的 agent，升级需治理放行（X-Admin-Token）' }), true;
         }
         const r = conn.put(subject, peer, { level: b.level, source: payload.source, evidence: b.evidence, by: subject, why: b.why || null, sig: b.sig, peer_kind: peerKind });
-        audit.append({ event_type: 'connection_set', caller_id: subject, callee_id: peer, ip_address: ip, result: r.ok ? 'success' : 'denied', scopes_granted: r.ok ? [payload.source + ':' + r.from + '->' + r.to] : [], scopes_denied: r.ok ? [] : [r.error] });
+        audit.append({ event_type: 'connection_set', caller_id: subject, callee_id: peer, ip_address: ipSrc, ip_direct: ip, result: r.ok ? 'success' : 'denied', scopes_granted: r.ok ? [payload.source + ':' + r.from + '->' + r.to] : [], scopes_denied: r.ok ? [] : [r.error] });
         return send(res, r.ok ? 200 : 400, r), true;
       }
 
@@ -579,7 +701,7 @@ function createIdentityHandler(opts = {}) {
         // 拒绝一律落账 + 计数（P1：拒绝要计分，不许静默丢弃——否则被扫也看不见）
         const deny = (code, error, extra) => {
           stats.aat_issue_denied++;
-          audit.append({ event_type: 'aat_issue', caller_id: b.caller_agent_id || 'unknown', callee_id: SVC.agentId, ip_address: ip, result: 'denied', scopes_denied: [error] });
+          audit.append({ event_type: 'aat_issue', caller_id: b.caller_agent_id || 'unknown', callee_id: SVC.agentId, ip_address: ipSrc, ip_direct: ip, result: 'denied', scopes_denied: [error] });
           return send(res, code, { ok: false, error, mode: AAT_ISSUE_MODE, ...(extra || {}) }), true;
         };
 
@@ -588,6 +710,11 @@ function createIdentityHandler(opts = {}) {
         if (!rec) return deny(403, 'caller_not_registered', { hint: '先接入身份（/identity/register）' });
         if (!rec.covenant) return deny(403, 'covenant_unsigned', { hint: '先签善良契约（/identity/:id/covenant）' });
         if (breach.isBlocked(b.caller_agent_id)) return deny(403, 'caller_blocked_by_breach');
+        // 联邦身份的三种「在册但不可用」必须显式区分（R5 判据）：源侧撤销 / AID 到期 / 源侧 breach
+        if (federation.isStale(b.caller_agent_id)) return deny(403, 'caller_stale', { hint: '联邦源侧已无此身份（快照对账标 stale），需源侧恢复或重新推送' });
+        if (federation.aidExpired(b.caller_agent_id)) return deny(403, 'caller_aid_expired', { hint: 'AID 已过期，需源侧重签后重新推送' });
+        const fbr = federation.federatedBreach(b.caller_agent_id);
+        if (fbr) return deny(403, 'caller_blocked_by_breach', { hint: '源侧 breach 生效（federated）', source: fbr.source });
 
         // capabilities 必须是 string[]：原样接受会产出「验签通过、授权判断错」的畸形 token，
         // 是最难查的一类；客户端归一化只是自救，服务端必须自查。
@@ -605,23 +732,31 @@ function createIdentityHandler(opts = {}) {
         const ttl = Math.floor(ttlRaw);
 
         let proofErr = null;
-        if (AAT_ISSUE_MODE !== 'off') proofErr = checkIssueProof(b, caps, ttl);
+        // 灰度收紧：含写类能力的请求强制验签（2026-11-02 硅隐拍板）
+        const effMode = effectiveIssueMode(caps);
+        if (effMode !== 'off') proofErr = checkIssueProof(b, caps, ttl);
         if (proofErr) {
-          if (AAT_ISSUE_MODE === 'strict') return deny(401, proofErr, { hint: AAT_ISSUE_SIG_HINT });
+          if (effMode === 'strict') {
+            return deny(401, proofErr, {
+              hint: AAT_ISSUE_SIG_HINT,
+              mode: effMode, caps, strict_caps: AAT_STRICT_CAPS,
+              why: 'capabilities 含写类能力 → 强制验签（AAT_STRICT_CAPS），不再走 warn 放行'
+            });
+          }
           // warn：验了、记了、放行（迁移期）。审计单独记 aat_issue_unsigned，
           // 便于按主体/IP 统计"还在裸奔的客户端"，而不是混进正常签发里看不见。
           stats.aat_issue_unsigned++;
-          audit.append({ event_type: 'aat_issue_unsigned', caller_id: b.caller_agent_id, callee_id: SVC.agentId, ip_address: ip, result: 'denied', scopes_denied: [proofErr] });
-          log('WARN', 'AAT 签发未验签放行(mode=warn):', b.caller_agent_id, proofErr, 'ip=' + ip);
+          audit.append({ event_type: 'aat_issue_unsigned', caller_id: b.caller_agent_id, callee_id: SVC.agentId, ip_address: ipSrc, ip_direct: ip, result: 'denied', scopes_denied: [proofErr], mode: effMode, caps });
+          log('WARN', 'AAT 签发未验签放行(mode=warn):', b.caller_agent_id, proofErr, 'caps=' + JSON.stringify(caps), 'ip=' + ipSrc);
         }
 
         const token = csb.createAAT({ privateKey: SVC.privateKey, issuer: SVC.agentId, audience: b.caller_agent_id, capabilities: caps, ttl });
         stats.aat_issued++;
-        audit.append({ event_type: 'aat_issue', caller_id: b.caller_agent_id, callee_id: SVC.agentId, ip_address: ip, result: 'success', scopes_granted: caps });
+        audit.append({ event_type: 'aat_issue', caller_id: b.caller_agent_id, callee_id: SVC.agentId, ip_address: ipSrc, ip_direct: ip, result: 'success', scopes_granted: caps, mode: effMode, sig_verified: !proofErr });
         return send(res, 201, {
           ok: true, token, issuer: SVC.agentId, audience: b.caller_agent_id,
-          ttl, capabilities: caps, mode: AAT_ISSUE_MODE,
-          sig_verified: !proofErr && AAT_ISSUE_MODE !== 'off'
+          ttl, capabilities: caps, mode: effMode,
+          sig_verified: !proofErr && effMode !== 'off'
         }), true;
       }
       if (p === '/aat/verify' && m === 'POST') {
@@ -635,7 +770,7 @@ function createIdentityHandler(opts = {}) {
         }
         const v = csb.verifyAAT(b.token, { publicKey: pub, expectedAudience, jtiCache: b.check_replay === false ? null : jtiCache });
         if (v.valid) stats.aat_verified++;
-        audit.append({ event_type: 'aat_verify', caller_id: (v.payload && v.payload.sub) || 'unknown', callee_id: SVC.agentId, ip_address: ip, result: v.valid ? 'success' : 'denied', scopes_denied: v.valid ? [] : [v.error] });
+        audit.append({ event_type: 'aat_verify', caller_id: (v.payload && v.payload.sub) || 'unknown', callee_id: SVC.agentId, ip_address: ipSrc, ip_direct: ip, result: v.valid ? 'success' : 'denied', scopes_denied: v.valid ? [] : [v.error] });
         return send(res, v.valid ? 200 : 401, v), true;
       }
 
@@ -649,14 +784,14 @@ function createIdentityHandler(opts = {}) {
         if ((b.reason || '').length > PAYLOAD_LIMITS.reason || (b.evidence || '').length > PAYLOAD_LIMITS.evidence) return send(res, 413, { ok: false, error: 'payload_too_long' }), true;
         const sigChk = verifyActorSig(b.reporter, { agentId: b.agentId, reason: b.reason, evidence: b.evidence || null, reporter: b.reporter, nonce: b.nonce, timestamp: b.timestamp }, b.reporter_sig);
         if (!sigChk.ok) {
-          audit.append({ event_type: 'breach_proposed', caller_id: b.reporter, callee_id: b.agentId || 'unknown', ip_address: ip, result: 'denied', scopes_denied: [sigChk.error] });
+          audit.append({ event_type: 'breach_proposed', caller_id: b.reporter, callee_id: b.agentId || 'unknown', ip_address: ipSrc, ip_direct: ip, result: 'denied', scopes_denied: [sigChk.error] });
           return send(res, 403, { ok: false, ...sigChk }), true;
         }
         const nonceChk = replayGuard.checkNonce(b.nonce);
         if (!nonceChk.allowed) return send(res, 401, { ok: false, error: errWithPrefix('nonce', nonceChk.error) }), true;
         const r = breach.propose({ agentId: b.agentId, reason: b.reason, evidence: b.evidence, reporter: b.reporter, reporterSig: b.reporter_sig });
         if (r.ok) stats.breach_proposed++;
-        audit.append({ event_type: 'breach_proposed', caller_id: b.reporter || 'unknown', callee_id: b.agentId || 'unknown', ip_address: ip, result: r.ok ? 'success' : 'denied', scopes_denied: r.ok ? [] : [r.error] });
+        audit.append({ event_type: 'breach_proposed', caller_id: b.reporter || 'unknown', callee_id: b.agentId || 'unknown', ip_address: ipSrc, ip_direct: ip, result: r.ok ? 'success' : 'denied', scopes_denied: r.ok ? [] : [r.error] });
         return send(res, r.ok ? 201 : 400, r), true;
       }
       if (p === '/breach-chain/verify' && m === 'GET') return send(res, 200, { ok: true, ...breach.verify() }), true;
@@ -670,7 +805,7 @@ function createIdentityHandler(opts = {}) {
           const a = Buffer.from(String(tok)), c = Buffer.from(ADMIN_TOKEN);
           const same = a.length === c.length && crypto.timingSafeEqual(a, c);
           if (!same) {
-            audit.append({ event_type: 'breach_transition', caller_id: b.actor || 'unknown', callee_id: decodeURIComponent(mtr[1]), ip_address: ip, result: 'denied', scopes_denied: ['bad_admin_token'] });
+            audit.append({ event_type: 'breach_transition', caller_id: b.actor || 'unknown', callee_id: decodeURIComponent(mtr[1]), ip_address: ipSrc, ip_direct: ip, result: 'denied', scopes_denied: ['bad_admin_token'] });
             return send(res, 403, { ok: false, error: 'bad_admin_token' }), true;
           }
         }
@@ -686,7 +821,7 @@ function createIdentityHandler(opts = {}) {
             }
           } catch (e) { log('WARN', 'breach→connections 联动失败:', e.message); }
         }
-        audit.append({ event_type: 'breach_transition', caller_id: b.actor || 'unknown', callee_id: r.breach_id || 'unknown', ip_address: ip, result: r.ok ? 'success' : 'denied', scopes_denied: r.ok ? [] : [r.error] });
+        audit.append({ event_type: 'breach_transition', caller_id: b.actor || 'unknown', callee_id: r.breach_id || 'unknown', ip_address: ipSrc, ip_direct: ip, result: r.ok ? 'success' : 'denied', scopes_denied: r.ok ? [] : [r.error] });
         return send(res, r.ok ? 200 : 409, r), true;
       }
       let mb = /^\/breach\/([^/]+)$/.exec(p);
@@ -710,7 +845,7 @@ function createIdentityHandler(opts = {}) {
     }
   }
 
-  handler.state = { identities, breach, audit, rateLimiter, serviceAid: SVC.aid, dataDir: DATA_DIR, stats, aatIssueMode: AAT_ISSUE_MODE, aatMaxTtl: AAT_MAX_TTL };
+  handler.state = { identities, breach, audit, rateLimiter, serviceAid: SVC.aid, dataDir: DATA_DIR, stats, aatIssueMode: AAT_ISSUE_MODE, aatStrictCaps: AAT_STRICT_CAPS, aatMaxTtl: AAT_MAX_TTL, federation };
   return handler;
 }
 

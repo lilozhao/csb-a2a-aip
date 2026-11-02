@@ -131,6 +131,11 @@ function normalizeManifest(m) {
     components,
     skills: normList(src.skills),
     plugins: normList(src.plugins),
+    // AEP §7.2 入场券（循环上限 / 压缩策略 / 沙箱边界 / 可观测输出格式 + Trace）。
+    // 与 Harness² 的 C1–C8 是两个口径：C1–C8 说「我由哪些件组成」，
+    // aep 说「这些件跑起来的参数是什么」。缺 aep 不改变 C1–C8 的 N/A 判定——
+    // 两套尺子的缺口要分开记，不能用一个填另一个。
+    aep: (src.aep && typeof src.aep === 'object' && !Array.isArray(src.aep)) ? src.aep : null,
     n_a: na,                             // 透明呈现：这些块本卡未声明
   };
 }

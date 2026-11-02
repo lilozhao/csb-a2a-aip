@@ -1,17 +1,17 @@
 {
-  "generated_at": "2026-10-08T04:46:56.924Z",
+  "generated_at": "2026-10-30T07:19:29.893Z",
   "sources": {
-    "a2a_registry_3099": 9,
-    "forum_3500": 31,
+    "a2a_registry_3099": 14,
+    "forum_3500": 34,
     "manual_aliases": 32
   },
   "normalize_spec": "NFKC → strip emoji/VS/ZWJ/ZWSP → collapse ws → trim → lowercase",
   "counts": {
-    "total_keys": 119,
+    "total_keys": 120,
     "A_system": 42,
-    "B_human": 7,
-    "C_agents_raw": 40,
-    "C_aliases_raw": 69
+    "B_human": 5,
+    "C_agents_raw": 48,
+    "C_aliases_raw": 77
   },
   "reserved_keys": [
     "347669467",
@@ -41,10 +41,8 @@
     "ftp",
     "guest",
     "help",
-    "jeason",
-    "kai",
-    "laozhao",
-    "lilozhao",
+    "li-heng",
+    "liheng",
     "lingling",
     "lingling-eazo",
     "mail",
@@ -89,6 +87,7 @@
     "墨丘",
     "官方",
     "客服",
+    "川贝",
     "库库ai",
     "引路者",
     "微痕",
@@ -96,6 +95,7 @@
     "恺",
     "承契",
     "拾微",
+    "拾萤",
     "支持",
     "明德",
     "明澈",
@@ -112,6 +112,7 @@
     "知微",
     "知砚",
     "砚",
+    "砺衡",
     "硅隐",
     "碳硅契观察者",
     "简一",
@@ -351,36 +352,21 @@
         "A_system"
       ]
     },
-    "jeason": {
+    "li-heng": {
       "displays": [
-        "Jeason"
-      ],
-      "sources": [
-        "C_agent:forum:3500"
-      ]
-    },
-    "kai": {
-      "displays": [
-        "Kai"
+        "Li-Heng"
       ],
       "sources": [
         "C_alias"
       ]
     },
-    "laozhao": {
+    "liheng": {
       "displays": [
-        "laozhao"
+        "liheng",
+        "LiHeng"
       ],
       "sources": [
-        "B_human"
-      ]
-    },
-    "lilozhao": {
-      "displays": [
-        "lilozhao"
-      ],
-      "sources": [
-        "B_human"
+        "C_alias"
       ]
     },
     "lingling": {
@@ -738,6 +724,14 @@
         "A_system"
       ]
     },
+    "川贝": {
+      "displays": [
+        "川贝"
+      ],
+      "sources": [
+        "C_agent:a2a:3099"
+      ]
+    },
     "库库ai": {
       "displays": [
         "库库AI"
@@ -797,6 +791,14 @@
       ],
       "sources": [
         "C_alias"
+      ]
+    },
+    "拾萤": {
+      "displays": [
+        "拾萤"
+      ],
+      "sources": [
+        "C_agent:forum:3500"
       ]
     },
     "支持": {
@@ -933,6 +935,16 @@
         "C_alias"
       ]
     },
+    "砺衡": {
+      "displays": [
+        "砺衡"
+      ],
+      "sources": [
+        "C_agent:a2a:3099",
+        "C_agent:forum:3500",
+        "C_alias"
+      ]
+    },
     "硅隐": {
       "displays": [
         "硅隐"
@@ -978,7 +990,8 @@
         "美硅"
       ],
       "sources": [
-        "B_human"
+        "B_human",
+        "C_agent:a2a:3099"
       ]
     },
     "聆灵": {
@@ -1063,6 +1076,7 @@
         "郑姆斯特丹"
       ],
       "sources": [
+        "C_agent:a2a:3099",
         "C_alias"
       ]
     },
@@ -1107,6 +1121,7 @@
         "青烛🕯️"
       ],
       "sources": [
+        "C_agent:a2a:3099",
         "C_agent:forum:3500",
         "C_alias"
       ]
@@ -1114,10 +1129,10 @@
   },
   "collisions": [
     {
-      "key": "明德",
+      "key": "青烛",
       "displays": [
-        "明德",
-        "明德🎋"
+        "青烛",
+        "青烛🕯️"
       ]
     },
     {
@@ -1125,6 +1140,13 @@
       "displays": [
         "言蹊",
         "言蹊🌾"
+      ]
+    },
+    {
+      "key": "明德",
+      "displays": [
+        "明德",
+        "明德🎋"
       ]
     },
     {
@@ -1171,17 +1193,17 @@
       ]
     },
     {
-      "key": "青烛",
-      "displays": [
-        "青烛",
-        "青烛🕯️"
-      ]
-    },
-    {
       "key": "siyuan",
       "displays": [
         "Siyuan 🌱",
         "Siyuan"
+      ]
+    },
+    {
+      "key": "liheng",
+      "displays": [
+        "liheng",
+        "LiHeng"
       ]
     }
   ]

@@ -159,5 +159,31 @@ t('非 C1–C8 的键 → 被忽略（不认识的不偷塞进来）', () => {
 });
 
 // ── 汇总 ────────────────────────────────────────────────
+
+// ── 6. AEP §7.2 入场券（aep 块）——2026-10-30 ────────────
+// 背景：C1–C8 是 Harness² 口径的组件清单，AEP §7.2 要的是运行参数
+// （循环上限/压缩策略/沙箱边界/可观测输出格式 + Trace）。两套尺子分开记。
+t('未提供 aep → 字段为 null（不生成空壳，也不进 n_a）', () => {
+  const c = card.build({
+    ...BASE,
+    harness_manifest: { components: { C1: { readonly: true }, C2: { readonly: true } } },
+  });
+  assert.strictEqual(c.harness_manifest.aep, null);
+  assert.deepStrictEqual(c.harness_manifest.n_a, ['C3', 'C4', 'C5', 'C6', 'C7', 'C8']);
+});
+
+t('提供 aep → 原样随卡携带（声明要能被别人读到）', () => {
+  const aep = { sandbox: { mode: 'off', note: '无隔离' }, trace: { format: 'jsonl' } };
+  const c = card.build({ ...BASE, harness_manifest: { aep } });
+  assert.strictEqual(c.harness_manifest.aep.sandbox.mode, 'off');
+  assert.strictEqual(c.harness_manifest.aep.trace.format, 'jsonl');
+});
+
+t('aep 非对象（字符串/数组）→ 归 null，不塞进卡里', () => {
+  assert.strictEqual(card.build({ ...BASE, harness_manifest: { aep: 'oops' } }).harness_manifest.aep, null);
+  assert.strictEqual(card.build({ ...BASE, harness_manifest: { aep: [1, 2] } }).harness_manifest.aep, null);
+});
+
+// ── 汇总 ────────────────────────────────────────────────
 console.log(`\n[agent-card-manifest] 通过: ${passed} / 失败: ${failed}\n`);
 if (failed > 0) process.exit(1);

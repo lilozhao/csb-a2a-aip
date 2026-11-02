@@ -715,6 +715,19 @@ if (securityAdapter.source === 'csb-security' && handshakeAIDPath && handshakeKe
   console.log('[A2A] ℹ️  对等握手端点未启用（需 A2A_SECURITY_HANDSHAKE_AID + A2A_SECURITY_HANDSHAKE_KEY）');
 }
 
+// [2026-11-02] 入站消息的三个口子。**不要**用 app.use('/message:send', fn) 这种写法：
+//   Express 会把 `:send` 当成命名参数，`/message:stream` 也会匹配 `/message:send`，
+//   一个请求会跑两遍中间件（余温双计的根因，实测 hits=["send","stream"]）。
+const INBOUND_PATHS = new Set(['/a2a/json-rpc', '/message:send', '/message:stream']);
+function mountOnInboundPaths(fn) {
+  app.use((req, res, next) => {
+    const raw = req.path || '/';
+    const p = raw.length > 1 ? raw.replace(/\/+$/, '') : raw;
+    if (!INBOUND_PATHS.has(p)) return next();
+    return fn(req, res, next);
+  });
+}
+
 // AIP 消息兼容中间件（覆盖 /a2a/json-rpc + /message:send + /message:stream）
 // 在消息进出两端都接：
 //   - 入站: 解析 AIP 元数据 (parseIncoming)
@@ -757,9 +770,11 @@ if (aipIntegration) {
     } catch (e) { /* 非消息请求跳过 */ }
     next();
   };
-  app.use('/a2a/json-rpc', aipMessageHook);
-  app.use('/message:send', aipMessageHook);
-  app.use('/message:stream', aipMessageHook);
+  // [2026-11-02 修] 原来写三条 app.use(path, hook)。但 Express 把路径里的
+  //   `:send` / `:stream` 当**命名参数**，于是 `/message:stream` 也匹配 `/message:send`
+  //   → 一个 POST 命中两个中间件，余温 +10 被记成 +20（自 09 月以来的静默双计）。
+  //   改成「一条 app 级中间件 + 精确路径判定」，一次请求只跑一次。
+  mountOnInboundPaths(aipMessageHook);
 
   // === 人类用户余温 API (v0.5.2) ===
   app.post('/aip/human-warmth', (req, res) => {
@@ -783,6 +798,83 @@ if (aipIntegration) {
   });
 }
 
+// [2026-11-02 P0-5] 入站调用者鉴权 · 灰度第一段（只记不打回）
+//   一澜 11-02 定：shadow 观察 2 周（→ 2026-11-16）再谈放量。
+//   本中间件**默认不改变任何行为**：只有 A2A_INBOUND_AUTH_MODE=shadow|enforce 才动手。
+//   为什么挂在 registerRoutes 之前：要能在路由处理前就拿到 sender，事后就晚了。
+const inboundAuth = require('./a2a-inbound-auth');
+const inboundAuthMode = inboundAuth.modeFromEnv();
+let inboundKnown = new Set();
+if (inboundAuthMode !== inboundAuth.MODE.OFF) {
+  const refreshKnown = () => {
+    inboundAuth.loadKnown()
+      .then((s) => {
+        if (s.size > 0) inboundKnown = s;
+        console.log(`[inbound-auth] 已知 agent ${inboundKnown.size} 个（mode=${inboundAuthMode}）`);
+      })
+      .catch((e) => console.warn('[inbound-auth] 注册表读取失败，沿用上次名单:', e.message));
+  };
+  refreshKnown();
+  setInterval(refreshKnown, 5 * 60 * 1000).unref?.();
+}
+const inboundAuthHook = (req, res, next) => {
+  try {
+    if (inboundAuthMode === inboundAuth.MODE.OFF) return next();
+    const sender = inboundAuth.extractSender(req.body, req.headers);
+    // AAT 验签（P0-5 第二段 · 「一次性重新握手续期」的凭据一侧）
+    //   B 类不是靠白名单放行，而是靠**一次真凭据**转正：对方重签 AAT 后，
+    //   后续调用带 X-CSB-AAT → 验过即 C（密码学身份，强于名称+出处）。
+    //   验不了（本实例 agent_id 缺失/库不可用）不算对方的错 → 标 aatUnverifiable，不判 B。
+    let aatVerified = false, aatVerifiable = null, aatError = null;
+    if (sender.aat) {
+      try {
+        const aat = require('./a2a-aat.js');
+        const self = aat.getSelf();
+        if (!self.ok) {
+          aatVerifiable = false;
+          aatError = self.reason || 'self_agent_id_unavailable';
+        } else {
+          const r = aat.verifyInbound({ ...sender, aat: sender.aat }, { expectedAudience: self.agentId });
+          aatVerifiable = true;
+          aatVerified = r.ok === true;
+          if (!r.ok) aatError = r.error || 'verify_failed';
+        }
+      } catch (e) {
+        aatVerifiable = false;
+        aatError = `aat_lib_error:${e.message}`;
+      }
+    }
+    const c = inboundAuth.classify(sender, inboundKnown, { aatVerified, aatVerifiable, aatError, hasAat: !!sender.aat });
+    // 名单为空（注册表没读到）时，enforce 一律降为 shadow：
+    //   宁可少拦，不可把「我们看不见名单」变成「把所有人关在门外」。
+    const effMode = (inboundAuthMode === inboundAuth.MODE.ENFORCE && inboundKnown.size === 0)
+      ? inboundAuth.MODE.SHADOW : inboundAuthMode;
+    const d = inboundAuth.decide(c, effMode);
+    if (d.record) {
+      inboundAuth.recordShadow({
+        // req.path 在挂载点是相对的（会记成 "/"），必须带 baseUrl 才知道是哪个入站口
+        path: (req.baseUrl || '') + (req.path === '/' ? '' : req.path), mode: effMode, cls: c.cls, why: c.why,
+        name: c.name, url: c.url, hasAat: c.hasAat,
+        verified: c.verified || null, aatError: aatError || null,
+        wouldBlock: d.wouldBlock, action: d.action, reason: d.reason,
+        ip: req.ip,
+      });
+    }
+    if (d.action === 'block') {
+      return res.status(d.httpStatus || 401).json({
+        error: 'caller_not_authenticated',
+        cls: c.cls,
+        hint: '需要带 sender（name+url）或 X-CSB-AAT；见 docs/inbound-auth-rollout.md',
+      });
+    }
+  } catch (e) {
+    // 鉴权中间件自身出错绝不阻断业务（fail-open，并留痕）
+    try { console.warn('[inbound-auth] 中间件异常，按放行处理:', e.message); } catch { /* noop */ }
+  }
+  next();
+};
+mountOnInboundPaths(inboundAuthHook);
+
 standardAPI.registerRoutes(app);
 
 // 健康检查 (增强: 含 DHT + E2E + 指标)
@@ -797,6 +889,29 @@ const trustEvidenceModule = require('./a2a-trust-evidence');
 function trustHealthSection() {
   try { return trustEvidenceModule.ledgerHealth(); }
   catch (e) { return { error: e.message, probeEndpoint: '/health/trust-probe' }; }
+}
+
+// [2026-11-02 P0-0] 审计自检：链可验才算可审计。
+//   缘起：/capabilities.observability.audit 一直硬编码 true，而主审计是裸 append + 落 /tmp。
+//   判据只认机械结果（verifyChain 返回值），不认「我们已经开启了」这类自述。
+function auditHealthSection() {
+  try {
+    const base = (typeof auditLogger.stats === 'function') ? auditLogger.stats() : {};
+    if (!auditLogger.chainCapable || typeof auditLogger.verifyChain !== 'function') {
+      return { ...base, chainValid: false, reason: 'no_chain_impl' };
+    }
+    const v = auditLogger.verifyChain();
+    const ok = !!(v && (v.valid === true || v.ok === true));
+    return {
+      ...base,
+      chainValid: ok,
+      entries: v?.count ?? v?.verified ?? null,
+      reason: ok ? 'chain_valid' : (v?.reason || 'chain_invalid'),
+      brokenAt: v?.brokenAt ?? v?.atSeq ?? null,
+    };
+  } catch (e) {
+    return { chainValid: false, reason: 'audit_probe_error: ' + e.message };
+  }
 }
 
 app.get('/health', (req, res) => {
@@ -835,6 +950,9 @@ app.get('/health', (req, res) => {
   let degradedReason = [];
   if (!checks.configResolved.ok) { status = 'degraded'; degradedReason.push('registry 配置未解析'); }
   if (!checks.registryReachable.ok) { status = 'degraded'; degradedReason.push(`注册表不可达（onlineAgents=0, DHT=${dhtLevel}）`); }
+  // [2026-11-02 P0-0] 审计不可验 → 也算 degraded：对外承诺「可审计」的凭据没了
+  const auditStatus = auditHealthSection();
+  if (!auditStatus.chainValid) { status = 'degraded'; degradedReason.push(`审计链${auditStatus.reason || '不可验'}`); }
 
   res.json({
     status,
@@ -849,11 +967,24 @@ app.get('/health', (req, res) => {
     rateLimit: rateLimiter.getStats(),
     tasks: taskStore.getStats(),
     trust: trustHealthSection(),
+    audit: auditStatus,
     uac: uacHealth.uacHealthSnapshot(process.env, {
       assembled: _uacRuntime.assembled,
       error: _uacRuntime.error,
       guardWarned: _uacGuardWarned,
     }),
+    // [2026-11-02 P0-5] 入站鉴权灰度状态：mode 与「记录没记录」都要能外部核。
+    //   只报状态，不在 /health 里读日志（无 IO，保持 /health 便宜）。
+    inboundAuth: {
+      mode: inboundAuthMode,
+      knownAgents: inboundKnown.size,
+      shadowLog: inboundAuth.SHADOW_LOG,
+      note: inboundAuthMode === inboundAuth.MODE.OFF
+        ? '未启用（A2A_INBOUND_AUTH_MODE 未设）'
+        : (inboundAuthMode === inboundAuth.MODE.SHADOW
+          ? 'shadow：只记不打回，观察期至 2026-11-16'
+          : 'enforce：A/B 类返回 401'),
+    },
   });
 });
 
@@ -927,7 +1058,12 @@ app.get('/capabilities', (req, res) => {
   const capabilities = standardAPI.getCapabilities();
   capabilities.e2e = e2eManager.enabled;
   capabilities.dht = dhtManager.getStatus().level.name;
-  capabilities.observability = { metrics: true, tracing: true, audit: true };
+  capabilities.observability = {
+    metrics: true,
+    tracing: true,
+    // [2026-11-02 P0-0] 不再硬编码 true：链不可验就说 degraded，不假装审计在运转。
+    audit: (() => { const a = auditHealthSection(); return a.chainValid ? true : 'degraded'; })(),
+  };
   res.json({ agent: identity.name, version: A2A_VERSION, capabilities });
 });
 

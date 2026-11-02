@@ -301,7 +301,10 @@ app.post('/register', (req, res) => {
 
   // port=0 表示无公网地址：URL 字段省略端口（不生成 http://coze:0 这种）
   const url = (port && port > 0) ? `http://${cleanHost}:${port}` : `http://${cleanHost}`;
-  const agentCard = (port && port > 0) ? `http://${cleanHost}:${port}/.well-known/agent-card.json` : null;
+  // [2026-10-29] 路径统一到 agent.json：同一份数据在 :304 / :421 / :866 三处生成过 URL，
+  //   其中两处写 agent-card.json（301 跳转）、一处写 agent.json（200）。
+  //   只认 200 的客户端（严格 healthcheck）会把在线邻居判成离线。
+  const agentCard = (port && port > 0) ? `http://${cleanHost}:${port}/.well-known/agent.json` : null;
 
   const agentInfo = {
     name,
@@ -418,7 +421,7 @@ app.post('/heartbeat', (req, res) => {
       agent.host = cleanHost || agent.host;
       if (wantPort !== null && Number.isFinite(wantPort)) agent.port = wantPort;
       agent.url = (agent.port && agent.port > 0) ? `http://${agent.host}:${agent.port}` : `http://${agent.host}`;
-      agent.agentCard = (agent.port && agent.port > 0) ? `http://${agent.host}:${agent.port}/.well-known/agent-card.json` : null;
+      agent.agentCard = (agent.port && agent.port > 0) ? `http://${agent.host}:${agent.port}/.well-known/agent.json` : null;
       agent.addressCorrectedAt = new Date().toISOString();
       agent.addressHistory = (agent.addressHistory || []).concat([{ ...from, correctedAt: agent.addressCorrectedAt }]).slice(-10);
       addressDrift = {

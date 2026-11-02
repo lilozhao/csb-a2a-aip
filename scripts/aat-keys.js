@@ -36,7 +36,10 @@ const path = require('path');
 const crypto = require('crypto');
 
 const ROOT = path.join(__dirname, '..');
-const LOCAL_PATH = path.join(ROOT, 'config', 'agents.local.json');
+// AAT_KEYS_LOCAL：允许测试指向副本。默认仍是生产文件。
+// （为什么要有：冲突构造必须能跑，而跑它就意味着往 pin 表里写东西 ——
+//   没有这个开关，测试只能在生产表上做，那比不测更危险。）
+const LOCAL_PATH = process.env.AAT_KEYS_LOCAL || path.join(ROOT, 'config', 'agents.local.json');
 const MAIN_PATH = path.join(ROOT, 'config', 'agents.json');
 
 function fingerprintOf(jwk) {
@@ -151,11 +154,18 @@ function cmdExport(argv) {
 function cmdPin(argv) {
   const [agentId, source] = argv;
   if (!agentId || !source) {
-    console.error('用法: node scripts/aat-keys.js pin <agent-id> <jwk-file|jwk-string> [--fingerprint <f>]');
+    console.error('用法: node scripts/aat-keys.js pin <agent-id> <jwk-file|jwk-string> [--fingerprint <f>] [--rotate --reason "..."]');
     process.exit(2);
   }
   const fi = argv.indexOf('--fingerprint');
   const expectFp = fi !== -1 ? String(argv[fi + 1] || '').trim() : null;
+  // [2026-10-30 · A-1 第②件] 「同 issuer、不同指纹」必须显式声明轮换。
+  // 旧实现在 206 行直接 `{...existing, aidPublicKey: jwk}` —— 静默覆盖：
+  // 谁贴错一个人的公钥、或对端悄悄换了钥，本地 pin 就被无声改掉，
+  // 之后每条消息 bad_signature，而两边都以为自己没错（R-2 同族）。
+  const rotate = argv.includes('--rotate');
+  const ri = argv.indexOf('--reason');
+  const reason = ri !== -1 ? String(argv[ri + 1] || '').trim() : '';
 
   let raw = source;
   if (fs.existsSync(source)) raw = fs.readFileSync(source, 'utf8');
@@ -203,7 +213,56 @@ function cmdPin(argv) {
 
   const local = readLocal();
   local.agents = local.agents || {};
-  local.agents[loc.key] = { ...(local.agents[loc.key] || {}), aidPublicKey: jwk };
+
+  const existing = (local.agents[loc.key] || {}).aidPublicKey || null;
+  let existingFp = null;
+  if (existing) {
+    try {
+      existingFp = fingerprintOf(typeof existing === 'string' ? JSON.parse(existing) : existing);
+    } catch { existingFp = null; }
+  }
+
+  if (existingFp && existingFp === fp && !rotate) {
+    console.log(`ℹ️  ${loc.key} 已固定同一把公钥，无需变更`);
+    console.log(`   指纹: ${fp}`);
+    process.exit(0);
+  }
+
+  if (existingFp && existingFp !== fp && !rotate) {
+    // 判据（演练清单第 4 步）：非 0 退出 + 把两个指纹都打出来，不许静默覆盖
+    console.error('❌ 拒绝：同 issuer 已固定另一把公钥，且未声明轮换');
+    console.error(`   issuer : ${loc.key}`);
+    console.error(`   已固定 : ${existingFp}`);
+    console.error(`   待固定 : ${fp}`);
+    console.error('');
+    console.error('   这可能是三种情况之一，脚本不替你猜：');
+    console.error('   a) 对端真的换了钥 → 确认后加 --rotate（建议附 --reason "..."）');
+    console.error('   b) 你贴错了别人的公钥 → 别加 --rotate，先核对来源');
+    console.error('   c) 同一 agent 有多把钥并存 → 先查清「哪把在服役」再动（见 docs/key-rotation-drill.md）');
+    console.error('');
+    console.error('   ⚠️ 轮换顺序：先让对端通知全部已 pin 邻居 → 邻居侧逐个 --rotate → 最后才撤旧钥。');
+    process.exit(4);
+  }
+
+  const entry = { ...(local.agents[loc.key] || {}) };
+  if (existingFp && existingFp !== fp) {
+    // 声明的轮换：旧钥进历史，不删（撤旧钥要单独决定，不由 pin 顺手做）
+    entry.aidKeyHistory = [
+      ...(Array.isArray(entry.aidKeyHistory) ? entry.aidKeyHistory : []),
+      {
+        fingerprint: existingFp,
+        publicKey: typeof existing === 'string' ? JSON.parse(existing) : existing,
+        retiredAt: new Date().toISOString(),
+        reason: reason || null,
+      },
+    ];
+    entry.keyRotatedAt = new Date().toISOString();
+    console.log('🔄 声明轮换：旧公钥已移入 aidKeyHistory（未删除，撤旧钥需另行决定）');
+    console.log(`   旧指纹: ${existingFp}`);
+    if (reason) console.log(`   原因  : ${reason}`);
+  }
+  entry.aidPublicKey = jwk;
+  local.agents[loc.key] = entry;
 
   // 备份后写入
   if (fs.existsSync(LOCAL_PATH)) {

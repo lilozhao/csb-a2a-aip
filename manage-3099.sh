@@ -51,12 +51,20 @@ read_pid() {
 pid_by_port() {
     local port=$1 hex inode pid
     hex=$(printf '%04X' "${port}")
-    inode=$(awk -v h="$hex" 'NR>1 && $2 ~ h"$" && $4=="0A" {print $10; exit}' /proc/net/tcp /proc/net/tcp6 2>/dev/null | head -1)
+    # 2026-10-29 明德：只认**环回绑定**（127.0.0.1）且进程名是 node 的监听。
+    # 原因（当日事故根因）：nginx 兼容桥也监听 :3099（私网 IP），原写法"按端口反查 PID"
+    #   会先把 nginx worker 认成 registry → cmd_start 误判"已运行"直接 return 0 →
+    #   guard 反复"重启"却什么都没起 → registry 静默死掉，心跳全部中断。
+    inode=$(awk -v h="$hex" 'NR>1 && $2=="0100007F:"h && $4=="0A" {print $10; exit}' /proc/net/tcp 2>/dev/null)
     [ -z "$inode" ] && return 1
     for pid in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
         if ls -l /proc/$pid/fd/ 2>/dev/null | grep -q "socket:\[${inode}\]"; then
-            echo "$pid"
-            return 0
+            # 双保险：命令行必须是 node 且跑 registry.js（防将来别的东西占住环回 :3099）
+            # 注意：不能看 comm —— Node 主线程的 comm 是 "MainThread"，不是 "node"
+            local cmdline; cmdline=$(tr '\0' ' ' < /proc/$pid/cmdline 2>/dev/null)
+            case "$cmdline" in
+              *registry.js*|*node*) echo "$pid"; return 0 ;;
+            esac
         fi
     done
     return 1
@@ -111,9 +119,13 @@ cmd_start() {
 
     if is_healthy; then
         # 验证 fork 子进程（registry.js 真绑端口的进程）
-        local child_pid
-        child_pid=$(pid_by_port "${REGISTRY_PORT}" 2>/dev/null || echo "")
-        ok "Registry 已启动（parent=${new_pid}, child=${child_pid}, 端口=${REGISTRY_PORT}）"
+        local child_pid i
+        for i in 1 2 3 4 5 6; do
+            child_pid=$(pid_by_port "${REGISTRY_PORT}" 2>/dev/null || echo "")
+            [ -n "${child_pid}" ] && break
+            sleep 0.5
+        done
+        ok "Registry 已启动（parent=${new_pid}, child=${child_pid:-未及时解析}, 端口=${REGISTRY_PORT}）"
         ok "数据目录: ${DATA_DIR}"
         ok "日志: ${LOG_FILE}"
         return 0

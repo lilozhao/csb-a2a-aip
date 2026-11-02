@@ -6,22 +6,24 @@ A2A_DIR="/home/node/.openclaw/workspace/csb-a2a-aip"
 LOG_FILE="$A2A_DIR/logs/healthcheck.log"
 REGISTRY_URL="http://172.28.0.4:3099"
 
+# [2026-10-29] 这两条检查原本都是**死检查**：`if curl -s <url>; then`
+#   curl 对 404/301/500 同样 exit 0（除非用 -f）→ 注册表挂了或路由改名也会判「活着」。
+#   改成只认 HTTP 200（-L 跟 301；-w 取状态码）。
+http_ok() {   # $1=url  $2=期望码(默认 200)
+    local code
+    code=$(curl -s -L -o /dev/null -w '%{http_code}' \
+        --connect-timeout 5 --max-time 10 "$1" 2>/dev/null)
+    [ "$code" = "${2:-200}" ]
+}
+
 # 检查远程注册表
 check_registry() {
-    if curl -s "$REGISTRY_URL/agents" --connect-timeout 5 > /dev/null 2>&1; then
-        return 0
-    else
-        return 1
-    fi
+    http_ok "$REGISTRY_URL/agents"
 }
 
 # 检查若兰 Server（端口 3100）
 check_server() {
-    if curl -s http://localhost:3100/.well-known/agent-card.json --connect-timeout 2 > /dev/null 2>&1; then
-        return 0
-    else
-        return 1
-    fi
+    http_ok "http://localhost:3100/.well-known/agent.json"
 }
 
 # 启动若兰 Server
