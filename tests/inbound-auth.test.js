@@ -39,10 +39,10 @@ t('未设 / 乱填 → off（宁可少拦）', () => {
 
 console.log('\n=== 2. 取 sender 的三种形态 ===');
 t('sender 字符串', () => {
-  assert.deepStrictEqual(A.extractSender({ sender: '若兰' }), { name: '若兰', url: '' });
+  assert.deepStrictEqual(A.extractSender({ sender: '若兰' }), { name: '若兰', url: '', aat: null });
 });
 t('sender 对象带 url', () => {
-  assert.deepStrictEqual(A.extractSender({ sender: { name: '阿轩', url: 'http://172.28.0.5:3100' } }), { name: '阿轩', url: 'http://172.28.0.5:3100' });
+  assert.deepStrictEqual(A.extractSender({ sender: { name: '阿轩', url: 'http://172.28.0.5:3100' } }), { name: '阿轩', url: 'http://172.28.0.5:3100', aat: null });
 });
 t('JSON-RPC params.sender', () => {
   assert.strictEqual(A.extractSender({ params: { sender: { name: 'mingde', host: '172.28.0.9' } } }).url, '172.28.0.9');
@@ -51,7 +51,13 @@ t('from 字符串（AIP 旧形态）', () => {
   assert.strictEqual(A.extractSender({ from: '若琢' }).name, '若琢');
 });
 t('什么都没有 → 空（判 A）', () => {
-  assert.deepStrictEqual(A.extractSender({}), { name: '', url: '' });
+  assert.deepStrictEqual(A.extractSender({}), { name: '', url: '', aat: null });
+});
+t('header 里的 AAT 能被取到（我方写入侧就这么带）', () => {
+  assert.strictEqual(A.extractSender({ sender: { name: 'x' } }, { 'x-csb-aat': 'aaa.bbb.ccc' }).aat, 'aaa.bbb.ccc');
+});
+t('header 的 AAT 优先于 body', () => {
+  assert.strictEqual(A.extractSender({ sender: { name: 'x', aat: 'body' } }, { 'x-csb-aat': 'header' }).aat, 'header');
 });
 
 console.log('\n=== 3. 分类 ===');
@@ -66,9 +72,41 @@ t('C 的 why 写明「未验签」——不许把自洽说成验签', () => {
   assert.ok(A.classify({ name: '若兰', url: 'http://a:1' }, known).why.includes('未验签'));
 });
 t('hasAat 透传（只记录，不改变分类）', () => {
-  const r = A.classify({ name: '若兰', url: '' }, known, { hasAat: true });
+  const r = A.classify({ name: '若兰', url: '' }, known, { hasAat: true, aatVerifiable: false });
   assert.strictEqual(r.cls, 'B');
   assert.strictEqual(r.hasAat, true);
+});
+
+console.log('\n=== 3b. AAT 凭据（「一次性重新握手续期」的凭据一侧） ===');
+t('AAT 验过 → C，且标记 verified=aat（这才是真有签字的 C）', () => {
+  const r = A.classify({ name: '若辰', url: '', aat: 't' }, known, { aatVerified: true, aatVerifiable: true });
+  assert.strictEqual(r.cls, 'C');
+  assert.strictEqual(r.verified, 'aat');
+  assert.ok(r.why.includes('AAT'));
+});
+t('AAT 验过时没 url 也算 C（NAT 下地址不可靠，密码学身份更强）', () => {
+  assert.strictEqual(A.classify({ name: '若辰', url: '', aat: 't' }, known, { aatVerified: true, aatVerifiable: true }).cls, 'C');
+});
+t('带了 AAT 但验签失败 → B（有凭据却对不上，比没凭据更可疑）', () => {
+  const r = A.classify({ name: '若辰', url: '', aat: 'bad' }, known, { aatVerifiable: true, aatVerified: false, aatError: 'signature_mismatch' });
+  assert.strictEqual(r.cls, 'B');
+  assert.ok(r.why.includes('signature_mismatch'));
+});
+t('带了 AAT 但**我们**验不了 → 不判 B，保留原分类 + 标 aatUnverifiable', () => {
+  const r = A.classify({ name: '若兰', url: '', aat: 't' }, known, { aatVerifiable: false, aatError: 'self_agent_id_unavailable' });
+  assert.strictEqual(r.cls, 'B');  // 原本就是 B（已知名无 url），不得因我方故障升为更重
+  assert.strictEqual(r.aatUnverifiable, true);
+  assert.ok(r.why.includes('无法验签'));
+});
+t('enforce 下 AAT 验过的调用放行，reason 写明 aat', () => {
+  const c = A.classify({ name: '若辰', url: '', aat: 't' }, known, { aatVerified: true, aatVerifiable: true });
+  const d = A.decide(c, 'enforce');
+  assert.strictEqual(d.action, 'allow');
+  assert.strictEqual(d.reason, 'allow_aat_verified');
+});
+t('enforce 下 B（含带坏 AAT 的）仍然拦', () => {
+  const c = A.classify({ name: '若辰', url: '', aat: 'bad' }, known, { aatVerifiable: true, aatVerified: false, aatError: 'x' });
+  assert.strictEqual(A.decide(c, 'enforce').action, 'block');
 });
 
 console.log('\n=== 4. 决策：shadow 一律放行 ===');

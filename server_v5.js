@@ -805,9 +805,31 @@ if (inboundAuthMode !== inboundAuth.MODE.OFF) {
 const inboundAuthHook = (req, res, next) => {
   try {
     if (inboundAuthMode === inboundAuth.MODE.OFF) return next();
-    const sender = inboundAuth.extractSender(req.body);
-    const hasAat = !!(req.headers['x-csb-aat'] || req.headers['X-CSB-AAT']);
-    const c = inboundAuth.classify(sender, inboundKnown, { hasAat });
+    const sender = inboundAuth.extractSender(req.body, req.headers);
+    // AAT 验签（P0-5 第二段 · 「一次性重新握手续期」的凭据一侧）
+    //   B 类不是靠白名单放行，而是靠**一次真凭据**转正：对方重签 AAT 后，
+    //   后续调用带 X-CSB-AAT → 验过即 C（密码学身份，强于名称+出处）。
+    //   验不了（本实例 agent_id 缺失/库不可用）不算对方的错 → 标 aatUnverifiable，不判 B。
+    let aatVerified = false, aatVerifiable = null, aatError = null;
+    if (sender.aat) {
+      try {
+        const aat = require('./a2a-aat.js');
+        const self = aat.getSelf();
+        if (!self.ok) {
+          aatVerifiable = false;
+          aatError = self.reason || 'self_agent_id_unavailable';
+        } else {
+          const r = aat.verifyInbound({ ...sender, aat: sender.aat }, { expectedAudience: self.agentId });
+          aatVerifiable = true;
+          aatVerified = r.ok === true;
+          if (!r.ok) aatError = r.error || 'verify_failed';
+        }
+      } catch (e) {
+        aatVerifiable = false;
+        aatError = `aat_lib_error:${e.message}`;
+      }
+    }
+    const c = inboundAuth.classify(sender, inboundKnown, { aatVerified, aatVerifiable, aatError, hasAat: !!sender.aat });
     // 名单为空（注册表没读到）时，enforce 一律降为 shadow：
     //   宁可少拦，不可把「我们看不见名单」变成「把所有人关在门外」。
     const effMode = (inboundAuthMode === inboundAuth.MODE.ENFORCE && inboundKnown.size === 0)
@@ -817,6 +839,7 @@ const inboundAuthHook = (req, res, next) => {
       inboundAuth.recordShadow({
         path: req.path, mode: effMode, cls: c.cls, why: c.why,
         name: c.name, url: c.url, hasAat: c.hasAat,
+        verified: c.verified || null, aatError: aatError || null,
         wouldBlock: d.wouldBlock, action: d.action, reason: d.reason,
         ip: req.ip,
       });

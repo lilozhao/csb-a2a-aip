@@ -24,12 +24,41 @@ P0-5 要的是：**看得见谁来了，然后才谈拦不拦**。
 | 类 | 判据 | 处置 |
 |---|---|---|
 | **A** 无身份 | `name` 缺失 / `unknown` / `?` | 应 100% 拦 |
-| **B** 冒名嫌疑 | 名字命中已知 agent，但**没有 url 可核** | 人工通道（不是放行）|
-| **C** 名称+出处自洽 | `name` + `url`，注册表命中 | 放行 —— **但这是「自洽」不是「验签通过」** |
+| **B** 冒名嫌疑 | 名字命中已知 agent，但**没有 url 可核**；或带了 AAT 但**验签没通过** | 人工通道 → 一次性重新握手续期（见下）|
+| **C** 名称+出处自洽 | `name` + `url`，注册表命中；**或 AAT 验签通过** | 放行 —— 只有 AAT 验过的 C 才等于「真有签字」|
 | **D** 未注册 | `name` + `url` 都有，注册表查不到 | 灰度只记；分档阶段单独定 |
 
-⚠️ **C 类不等于身份可信**。现在只校验「名字和出处对得上注册表」，AAT 真验签是第二阶段的事。
-对外表述不许写成「已验证身份」。
+⚠️ **C 类分两种，不能混说**：
+- `verified: null` —— 只是「名字和出处对得上注册表」，**不等于验签通过**
+- `verified: "aat"` —— AAT 签名真验过，这才是密码学身份
+
+对外表述必须区分：「名称+出处自洽」不能说成「已验证身份」。
+
+## B 类：一次性重新握手续期（2026-11-02 一澜拍板）
+
+**为什么不用白名单**：按名字放行 = 谁都能改个字段冒充。名单是静态的、会过期、还养出「只要叫这个名字就能进」。
+
+**选的办法**：凭据说话。B 类对方**重签一次 AAT**（受众锚定我方 agent_id），之后每次调用带 `X-CSB-AAT`，
+我方验过即转 C（`verified:'aat'`），长期有效，不需要我们再维护名单。
+
+判据链（每一步都机械可核）：
+
+```
+无 AAT            → 按名称+出处判 A/B/C/D
+有 AAT，验过       → C（verified:aat）→ enforce 下放行
+有 AAT，验不过     → B（有凭据却对不上，比没凭据更可疑）→ 拦 + 提示怎么续期
+有 AAT，我方验不了 → 保留原分类 + 标 aatUnverifiable（不把我们的故障算成对方的错）
+```
+
+操作：
+
+```bash
+node scripts/inbound-rehandshake.js --pending            # 列出 B 类待续期 + 生成通知文本（不外发）
+node scripts/inbound-rehandshake.js --verify <token>     # 验一条 AAT 我方认不认
+node scripts/inbound-rehandshake.js --card http://h:p    # 对方端点自称什么名字（附免责说明）
+```
+
+**通知文本只打印，不发送** —— 外发要人点头。
 
 ## 基线数据（2026-11-02 · 214 条历史入站）
 
@@ -75,6 +104,7 @@ node scripts/restart-a2a.js --set A2A_INBOUND_AUTH_MODE=shadow             # 真
 
 ## 验收
 
-- `node tests/inbound-auth.test.js`（26 条：口径 / 决策 / 取 sender / 接线 / 安全阀）
+- `node tests/inbound-auth.test.js`（34 条：口径 / 决策 / 取 sender / AAT 凭据 / 接线 / 安全阀）
 - `node tests/inbound-auth-topn.test.js`（11 条：统计口径自洽）
+- `node tests/inbound-rehandshake.test.js`（8 条：续期文本口径 / 无数据不编造）
 - `/health.inboundAuth.mode` 能读出当前档位 —— 外部可核，不靠自述

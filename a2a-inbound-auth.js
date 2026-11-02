@@ -38,22 +38,33 @@ function modeFromEnv(env = process.env) {
 }
 
 /** 从请求体取 sender（三种历史形态：sender 对象 / params.sender / from 字符串） */
-function extractSender(body) {
+function extractSender(body, headers) {
   const b = body || {};
   const pick = (x) => {
     if (!x) return null;
-    if (typeof x === 'string') return { name: x, url: '' };
-    if (typeof x === 'object') return { name: x.name || x.agent || '', url: x.url || x.host || '' };
+    if (typeof x === 'string') return { name: x, url: '', aat: null };
+    if (typeof x === 'object') return { name: x.name || x.agent || '', url: x.url || x.host || '', aat: x.aat || x.attestation || null };
     return null;
   };
-  return pick(b.sender) || pick(b.params && b.params.sender) || pick(b.from) || pick(b.params && b.params.from) || { name: '', url: '' };
+  const s = pick(b.sender) || pick(b.params && b.params.sender) || pick(b.from) || pick(b.params && b.params.from) || { name: '', url: '', aat: null };
+  // AAT 也可能只放在头里（我方写入侧就是这么带的）——头优先于 body 里的同名值
+  const h = headers || {};
+  const hdrAat = h['x-csb-aat'] || h['X-CSB-AAT'] || null;
+  if (hdrAat) s.aat = String(hdrAat).trim();
+  return s;
 }
 
 /**
  * 分类（纯函数，无 IO）
  * @param {object} sender { name, url }
  * @param {Set<string>|Array<string>} known 已知 agent 名（小写）
- * @param {object} extra { hasAat }
+ * @param {object} extra { aatVerified, aatVerifiable, aatError }
+ *
+ * AAT 与「名称+出处」是两条独立证据，且 AAT 更强（密码学），所以：
+ *   验过 → C（且标记 verified:'aat'，这时的 C 才真是「签过字的」，不再只是自洽）
+ *   带了但验不过 → B（有凭据却对不上，比没凭据更可疑，不是"努力分"）
+ *   带了但我们验不了（自身 agent_id 缺失 / 库不可用）→ 不让「我们的故障」变成对方的错：
+ *     保留原分类，只标记 aatUnverifiable —— 交给观察期数据说话
  */
 function classify(sender, known, extra = {}) {
   const set = known instanceof Set ? known : new Set((known || []).map((x) => String(x).toLowerCase()));
@@ -64,6 +75,7 @@ function classify(sender, known, extra = {}) {
   const hasUrl = !!url;
   const lower = name.toLowerCase();
   const knownName = hasName && (set.has(lower) || [...set].some((k) => k && lower.includes(k)));
+  const hasAat = !!(s.aat || extra.hasAat === true);
 
   let cls, why;
   if (!hasName) { cls = 'A'; why = '无身份（name 缺失/unknown）'; }
@@ -71,7 +83,25 @@ function classify(sender, known, extra = {}) {
   else if (knownName) { cls = 'C'; why = 'name + url，注册表命中（未验签）'; }
   else { cls = 'D'; why = 'name + url，注册表未命中'; }
 
-  return { cls, why, name: name || null, url: url || null, knownName, hasAat: extra.hasAat === true };
+  let verified = null;      // null=无凭据 / 'aat'=验过
+  let aatVerifiable = null; // null=未尝试 / true / false
+
+  if (extra.aatVerified === true) {
+    // 密码学证据优先于地址：AAT 验过就是 C，哪怕没 url（NAT 环境下自报地址本就不可靠）
+    verified = 'aat';
+    cls = 'C';
+    why = 'AAT 签名验过（密码学身份，强于名称+出处）';
+  } else if (hasAat && extra.aatVerifiable === true && extra.aatVerified !== true) {
+    // 验过但没过 → 有凭据却对不上，比没凭据更可疑
+    cls = 'B';
+    why = `携带 AAT 但验签未通过（${extra.aatError || 'unknown'}）`;
+  } else if (hasAat && extra.aatVerifiable === false) {
+    // 带了 AAT 但**我们**这边验不了（自身 agent_id 缺失/库不可用）：
+    //   不把自己的故障算成对方的错 → 保留原分类，只标记，交给观察期数据
+    return { cls, why: `${why}｜带了 AAT 但本实例无法验签（${extra.aatError || 'self_agent_id_unavailable'}）`, name: name || null, url: url || null, knownName, hasAat, verified: null, aatVerifiable: false, aatUnverifiable: true };
+  }
+
+  return { cls, why, name: name || null, url: url || null, knownName, hasAat, verified, aatVerifiable };
 }
 
 /**
@@ -92,7 +122,7 @@ function decide(c, mode) {
   }
   // enforce
   if (shouldBlock) return { action: 'block', record: true, wouldBlock: true, reason: `blocked_${c.cls}`, httpStatus: 401 };
-  return { action: 'allow', record: true, wouldBlock: false, reason: 'allow_with_credential' };
+  return { action: 'allow', record: true, wouldBlock: false, reason: c.verified === 'aat' ? 'allow_aat_verified' : 'allow_with_credential' };
 }
 
 /** 追加一条影子记录（失败绝不阻断主流程） */
