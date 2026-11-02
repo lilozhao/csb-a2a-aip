@@ -783,6 +783,61 @@ if (aipIntegration) {
   });
 }
 
+// [2026-11-02 P0-5] 入站调用者鉴权 · 灰度第一段（只记不打回）
+//   一澜 11-02 定：shadow 观察 2 周（→ 2026-11-16）再谈放量。
+//   本中间件**默认不改变任何行为**：只有 A2A_INBOUND_AUTH_MODE=shadow|enforce 才动手。
+//   为什么挂在 registerRoutes 之前：要能在路由处理前就拿到 sender，事后就晚了。
+const inboundAuth = require('./a2a-inbound-auth');
+const inboundAuthMode = inboundAuth.modeFromEnv();
+let inboundKnown = new Set();
+if (inboundAuthMode !== inboundAuth.MODE.OFF) {
+  const refreshKnown = () => {
+    inboundAuth.loadKnown()
+      .then((s) => {
+        if (s.size > 0) inboundKnown = s;
+        console.log(`[inbound-auth] 已知 agent ${inboundKnown.size} 个（mode=${inboundAuthMode}）`);
+      })
+      .catch((e) => console.warn('[inbound-auth] 注册表读取失败，沿用上次名单:', e.message));
+  };
+  refreshKnown();
+  setInterval(refreshKnown, 5 * 60 * 1000).unref?.();
+}
+const inboundAuthHook = (req, res, next) => {
+  try {
+    if (inboundAuthMode === inboundAuth.MODE.OFF) return next();
+    const sender = inboundAuth.extractSender(req.body);
+    const hasAat = !!(req.headers['x-csb-aat'] || req.headers['X-CSB-AAT']);
+    const c = inboundAuth.classify(sender, inboundKnown, { hasAat });
+    // 名单为空（注册表没读到）时，enforce 一律降为 shadow：
+    //   宁可少拦，不可把「我们看不见名单」变成「把所有人关在门外」。
+    const effMode = (inboundAuthMode === inboundAuth.MODE.ENFORCE && inboundKnown.size === 0)
+      ? inboundAuth.MODE.SHADOW : inboundAuthMode;
+    const d = inboundAuth.decide(c, effMode);
+    if (d.record) {
+      inboundAuth.recordShadow({
+        path: req.path, mode: effMode, cls: c.cls, why: c.why,
+        name: c.name, url: c.url, hasAat: c.hasAat,
+        wouldBlock: d.wouldBlock, action: d.action, reason: d.reason,
+        ip: req.ip,
+      });
+    }
+    if (d.action === 'block') {
+      return res.status(d.httpStatus || 401).json({
+        error: 'caller_not_authenticated',
+        cls: c.cls,
+        hint: '需要带 sender（name+url）或 X-CSB-AAT；见 docs/inbound-auth-rollout.md',
+      });
+    }
+  } catch (e) {
+    // 鉴权中间件自身出错绝不阻断业务（fail-open，并留痕）
+    try { console.warn('[inbound-auth] 中间件异常，按放行处理:', e.message); } catch { /* noop */ }
+  }
+  next();
+};
+app.use('/a2a/json-rpc', inboundAuthHook);
+app.use('/message:send', inboundAuthHook);
+app.use('/message:stream', inboundAuthHook);
+
 standardAPI.registerRoutes(app);
 
 // 健康检查 (增强: 含 DHT + E2E + 指标)
@@ -881,6 +936,18 @@ app.get('/health', (req, res) => {
       error: _uacRuntime.error,
       guardWarned: _uacGuardWarned,
     }),
+    // [2026-11-02 P0-5] 入站鉴权灰度状态：mode 与「记录没记录」都要能外部核。
+    //   只报状态，不在 /health 里读日志（无 IO，保持 /health 便宜）。
+    inboundAuth: {
+      mode: inboundAuthMode,
+      knownAgents: inboundKnown.size,
+      shadowLog: inboundAuth.SHADOW_LOG,
+      note: inboundAuthMode === inboundAuth.MODE.OFF
+        ? '未启用（A2A_INBOUND_AUTH_MODE 未设）'
+        : (inboundAuthMode === inboundAuth.MODE.SHADOW
+          ? 'shadow：只记不打回，观察期至 2026-11-16'
+          : 'enforce：A/B 类返回 401'),
+    },
   });
 });
 

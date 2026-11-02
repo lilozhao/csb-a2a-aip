@@ -97,18 +97,12 @@ async function loadKnownAgentsLive() {
   return { names: out, source: src.join('+') };
 }
 
+// 分类口径**只有一处实现**（a2a-inbound-auth.js），本脚本只做统计 ——
+// 两处各写一套的下场是：报出来的比例和真正拦人的规则对不上，而且没人发现。
+const { classify: classifySender } = require('../a2a-inbound-auth');
 function classify(rec, known) {
-  const from = (rec && rec.from && typeof rec.from === 'object') ? rec.from : {};
-  const name = String(from.name || '').trim();
-  const url = String(from.url || from.host || '').trim();
-  const hasName = name && !['unknown', '?', 'undefined', 'null'].includes(name.toLowerCase());
-  const hasUrl = !!url;
-  const knownName = hasName && (known.has(name.toLowerCase()) || [...known].some(k => k && name.toLowerCase().includes(k)));
-
-  if (!hasName) return { cls: 'A', why: '无身份（name 缺失/unknown）' };
-  if (!hasUrl) return { cls: knownName ? 'B' : 'A', why: knownName ? '声称已知身份但无 url 可核' : '无身份（无 url 且非已知名）' };
-  if (knownName) return { cls: 'C', why: 'name + url，注册表命中（未验签）' };
-  return { cls: 'D', why: 'name + url，注册表未命中' };
+  const from = (rec && rec.from && typeof rec.from === 'object') ? rec.from : { name: rec && rec.name, url: rec && rec.url };
+  return classifySender({ name: from.name, url: from.url || from.host }, known);
 }
 
 async function main() {
