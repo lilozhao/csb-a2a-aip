@@ -715,6 +715,19 @@ if (securityAdapter.source === 'csb-security' && handshakeAIDPath && handshakeKe
   console.log('[A2A] ℹ️  对等握手端点未启用（需 A2A_SECURITY_HANDSHAKE_AID + A2A_SECURITY_HANDSHAKE_KEY）');
 }
 
+// [2026-11-02] 入站消息的三个口子。**不要**用 app.use('/message:send', fn) 这种写法：
+//   Express 会把 `:send` 当成命名参数，`/message:stream` 也会匹配 `/message:send`，
+//   一个请求会跑两遍中间件（余温双计的根因，实测 hits=["send","stream"]）。
+const INBOUND_PATHS = new Set(['/a2a/json-rpc', '/message:send', '/message:stream']);
+function mountOnInboundPaths(fn) {
+  app.use((req, res, next) => {
+    const raw = req.path || '/';
+    const p = raw.length > 1 ? raw.replace(/\/+$/, '') : raw;
+    if (!INBOUND_PATHS.has(p)) return next();
+    return fn(req, res, next);
+  });
+}
+
 // AIP 消息兼容中间件（覆盖 /a2a/json-rpc + /message:send + /message:stream）
 // 在消息进出两端都接：
 //   - 入站: 解析 AIP 元数据 (parseIncoming)
@@ -757,9 +770,11 @@ if (aipIntegration) {
     } catch (e) { /* 非消息请求跳过 */ }
     next();
   };
-  app.use('/a2a/json-rpc', aipMessageHook);
-  app.use('/message:send', aipMessageHook);
-  app.use('/message:stream', aipMessageHook);
+  // [2026-11-02 修] 原来写三条 app.use(path, hook)。但 Express 把路径里的
+  //   `:send` / `:stream` 当**命名参数**，于是 `/message:stream` 也匹配 `/message:send`
+  //   → 一个 POST 命中两个中间件，余温 +10 被记成 +20（自 09 月以来的静默双计）。
+  //   改成「一条 app 级中间件 + 精确路径判定」，一次请求只跑一次。
+  mountOnInboundPaths(aipMessageHook);
 
   // === 人类用户余温 API (v0.5.2) ===
   app.post('/aip/human-warmth', (req, res) => {
@@ -837,7 +852,8 @@ const inboundAuthHook = (req, res, next) => {
     const d = inboundAuth.decide(c, effMode);
     if (d.record) {
       inboundAuth.recordShadow({
-        path: req.path, mode: effMode, cls: c.cls, why: c.why,
+        // req.path 在挂载点是相对的（会记成 "/"），必须带 baseUrl 才知道是哪个入站口
+        path: (req.baseUrl || '') + (req.path === '/' ? '' : req.path), mode: effMode, cls: c.cls, why: c.why,
         name: c.name, url: c.url, hasAat: c.hasAat,
         verified: c.verified || null, aatError: aatError || null,
         wouldBlock: d.wouldBlock, action: d.action, reason: d.reason,
@@ -857,9 +873,7 @@ const inboundAuthHook = (req, res, next) => {
   }
   next();
 };
-app.use('/a2a/json-rpc', inboundAuthHook);
-app.use('/message:send', inboundAuthHook);
-app.use('/message:stream', inboundAuthHook);
+mountOnInboundPaths(inboundAuthHook);
 
 standardAPI.registerRoutes(app);
 

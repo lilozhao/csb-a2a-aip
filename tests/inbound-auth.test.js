@@ -165,14 +165,32 @@ t('正常写入 → true 且是一行 JSON', () => {
 
 console.log('\n=== 7. 接线核验（防「写了没人挂」） ===');
 const src = fs.readFileSync(path.join(__dirname, '..', 'server_v5.js'), 'utf8');
-t('挂在 /a2a/json-rpc', () => assert.ok(/app\.use\('\/a2a\/json-rpc', inboundAuthHook\)/.test(src)));
-t('挂在 /message:send', () => assert.ok(/app\.use\('\/message:send', inboundAuthHook\)/.test(src)));
-t('挂在 /message:stream', () => assert.ok(/app\.use\('\/message:stream', inboundAuthHook\)/.test(src)));
+t('用精确路径挂载，不用 app.use(\'/message:send\')（那会被当成命名参数）', () => {
+  assert.ok(/mountOnInboundPaths\(inboundAuthHook\)/.test(src));
+  // 只看代码行（注释里会提到这个反例，别把自己写说明的注释也判成 bug —— 上一版就栽过）
+  const code = src.split('\n').filter((l) => !/^\s*\/\//.test(l) && !/^\s*\*/.test(l)).join('\n');
+  assert.ok(!/app\.use\('\/message:send'/.test(code), 'Express 会把 :send 当参数，导致一次请求跑两遍');
+  assert.ok(!/app\.use\('\/message:stream'/.test(code));
+});
+t('三个入站路径都在白名单里', () => {
+  const m = src.match(/INBOUND_PATHS = new Set\(\[([^\]]+)\]\)/);
+  assert.ok(m, '缺 INBOUND_PATHS');
+  for (const p of ['/a2a/json-rpc', '/message:send', '/message:stream']) {
+    assert.ok(m[1].includes(p), `缺 ${p}`);
+  }
+});
 t('注册顺序在 registerRoutes 之前（否则路由先跑，看得见但来不及）', () => {
-  const hookAt = src.indexOf("app.use('/a2a/json-rpc', inboundAuthHook)");
+  const hookAt = src.indexOf('mountOnInboundPaths(inboundAuthHook)');
   const routesAt = src.indexOf('standardAPI.registerRoutes(app)');
   assert.ok(hookAt > 0 && routesAt > 0 && hookAt < routesAt, `hook@${hookAt} routes@${routesAt}`);
 });
+t('AIP 余温中间件也走精确挂载（否则 +10 被记两次）', () => {
+  assert.ok(/mountOnInboundPaths\(aipMessageHook\)/.test(src));
+});
+t('shadow 记录带完整路径（req.path 在挂载点会变成 "/"，必须补 baseUrl）', () => {
+  assert.ok(/path:\s*\(req\.baseUrl \|\| ''\)/.test(src), '记录路径必须含 baseUrl');
+});
+
 t('/health 暴露 inboundAuth.mode（外部可核）', () => {
   assert.ok(/inboundAuth:\s*\{[\s\S]{0,200}mode:\s*inboundAuthMode/.test(src));
 });
