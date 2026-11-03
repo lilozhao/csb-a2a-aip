@@ -1,5 +1,43 @@
 # CHANGELOG · csb-a2a-aip
 
+## v5.3.14（2026-11-03）— AAT 交换模板 v2.0：补上「错误长在别人机器上」的那一处
+
+### 背景（A-2 · 模板 v1.0 欠下的两处）
+
+v1.0 只在 §7 反面教材里提过一句「`sender.url` 当身份用」，没给判据、没给修法。
+而这是**唯一一类「本机全绿、对方拒收」的病因**：`client.js` 的 `getLocalSender()`
+在缺 `a2a_url` 时回落到 `http://localhost:<port>`，AAT 的 `iss` 却来自 AID 文件 —— 两者各自独立、可以互相矛盾。
+承契与榫都踩过，对端报 `issuer_host_mismatch`，两边都以为自己没错。
+
+### 新增
+
+- **`scripts/lib/identity-source.js`** —— 出站自检判据 `checkIdentitySource()`，四态：
+  `same` / `loopback` / `missing` / **`mismatch`**（只有最后一个会让对方拒收）。
+- **`tests/identity-source.test.js`（8 条）** —— 不只看注释说得对不对，而是**真签一条 AAT、真跑 `verifyInbound`**，
+  再用 `identity-source` 的结论去对。六种 `sender.url` 全覆盖。任何一边改了行为，这条立刻红。
+  （失败的写法就是在两个文件里各写一份规矩 —— 那是「两套口径」的经典起手式。）
+- **`scripts/aat-doctor.js` 第 5 项** —— 「出站 sender.url 与签名主体同源」。`mismatch` → `fail`（exit 1），
+  其余三态 → `pass`/`warn`。负向实测：把 `a2a_url` 改成 `10.9.9.9:3100` → ❌ + exit 1，改回 → ✅。
+- **`docs/AAT-EXCHANGE-TEMPLATE.md` v2.0**：
+  - §0⑤ 「一条命令把四项全查完」+ 四态判据表 + **实测四组对照**（证明 `loopback` 确实不会让你被拒，但换环境就会变 `mismatch`）
+  - **§7 全节新增「轮换与 pin 更新」**：三条铁律（`aidKeyHistory` 是记账不是双钥并存 / 先 pin 新后撤旧 / 指纹从私钥算不从 `/a2a/aid` 算）、
+    五步顺序与 `PLAN_ID` 复现判据、三个症状三不同病因（`no_pinned_key` / `bad_signature` / `key_conflict`）、轮换期诚实边界（无撤销广播、`/identity/register` 同 id 换钥 409）
+  - 验收清单加一项：`aat-doctor` 第 5 项必须 `pass`
+
+### 判据
+
+- `node --test tests/identity-source.test.js` → **8/8**
+- `node tests/version-sync.test.js` → 通过（VERSION / package.json / CHANGELOG 三处咬合）
+- `node scripts/aat-doctor.js` → **8/8 ✅**（新增项 `172.28.0.214:3100 两侧一致`）
+- `rotate-keys.js --dry-run` 连跑两次 → `PLAN_ID 8150c654bb3076f1a14d627f` 逐字相同（文档里写的判据自己先验过）
+
+### 诚实边界
+
+1. 只覆盖**出站自检**与文档；**没有**改 `client.js` 的回落行为 —— 缺 `a2a_url` 仍会回落 localhost（改为直接抛错是破坏性变更，得单独立项）。
+2. §7 的五步顺序是**推演 + 逐件实测**组合出来的（`rotate-keys` dry-run 实跑、`pin --rotate` 逻辑读码核对、`key_conflict` 分支读码核对），
+   **没有**对真实邻居跑过完整一轮轮换 —— 那要先通知 13 家（A-1 第③步，仍待一澜点头）。
+3. `docs/key-rotation-drill.md` 引用已改指本文 §7.1；该文件从未存在过。
+
 ## v5.3.13（2026-11-03）— P0-4：E2E 的「假绿」终于不再对外报绿
 
 ### 背景（知微《CSB-Harness 2.0 优化升级方案 v1》事实 3 · 唯一漏做的 P0）

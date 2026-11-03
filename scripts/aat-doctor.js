@@ -121,6 +121,28 @@ function localHealth(port) {
     push('identity', 'agent_id 与 identity 地址一致', null, '取不到 identity.json', '补 identity.json（name/port/publicHost）');
   }
 
+  // ── 4b. 出站声称来源 vs 签名主体（A-2 第①件 · 2026-11-03）──
+  // 为什么塞进体检：这条不同源时，本机一切正常、日志一切正常，
+  // 只有在**对方**那边才会报 issuer_host_mismatch —— 典型的「错误长在别人机器上」。
+  // 判据同源：scripts/lib/identity-source.js（与 a2a-aat.js 的 verifyInbound 有单测锁死）。
+  if (identity && self) {
+    let chk = null;
+    try { chk = require(path.join(ROOT, 'scripts', 'lib', 'identity-source.js')).checkIdentitySource(identity.a2a_url, self.agentId); } catch { /* 老版本无此模块 */ }
+    if (chk) {
+      const ok = chk.verdict === 'same' ? true : chk.verdict === 'missing' ? null : chk.verdict === 'loopback' ? null : false;
+      push('sender_url', '出站 sender.url 与签名主体同源', ok
+        , chk.verdict === 'same' ? chk.reason
+          : chk.verdict === 'loopback' ? chk.reason
+            : chk.verdict === 'missing' ? chk.reason
+              : chk.reason
+        , chk.verdict === 'mismatch'
+          ? '在 identity.json 把 a2a_url 改成 http://<AID 里的 host:port>（与注册表同源），或设 A2A_HOST'
+          : chk.verdict === 'loopback'
+            ? '现在是回环 → 对端会接受。但只要换一颗实例/换网络，同一份配置就会变 mismatch。建议直接写成真实地址'
+            : 'identity 里补 a2a_url');
+    }
+  }
+
   // ── 5. 服务在跑，且版本对得上 ──────────────────
   const port = identity?.port || 3100;
   const h = await localHealth(port);
