@@ -299,6 +299,10 @@ const anomalyDetector = securityAdapter.createAnomalyDetector();
 const e2eManager = new E2EEncryption({
   masterKey: process.env.A2A_ENCRYPTION_KEY || null,
   keyVersion: parseInt(process.env.A2A_KEY_VERSION || '1'),
+  // [2026-11-03 · P0-4] 出站信封级真加密**尚未实现**（见 a2a-e2e-encryption.js 文件头诚实边界）。
+  //   这里默认 false ⇒ 配了密钥也只会是 degraded，/health 如实说「有密钥但出站是明文」。
+  //   等真做的那天，改成读 A2A_E2E_OUTBOUND_ENCRYPTED=1 —— 但必须先确认协议两端解包顺序已打通。
+  outboundEncrypted: process.env.A2A_E2E_OUTBOUND_ENCRYPTED === '1',
 });
 
 const standardAPI = new A2AStandardAPI({
@@ -556,11 +560,18 @@ app.use((req, res, next) => {
 app.use(traceMiddleware({ metrics, auditLogger }));
 
 // E2E 加密中间件 (A2A-021)
-if (e2eManager.enabled) {
+// [2026-11-03 · P0-4] 三态取代布尔：enabled / degraded / disabled。
+//   degraded = 有密钥但出站未真加密 —— 以前这里打 ✅，外部以为能传敏感数据。
+const _e2eStatus = e2eManager.getStatus();
+if (_e2eStatus.status === 'enabled') {
   app.use(createEncryptionMiddleware(e2eManager));
-  console.log('[A2A] ✅ E2E 加密已启用 (A2A-021)');
+  console.log('[A2A] ✅ E2E 加密已启用（出站真加密）');
+} else if (_e2eStatus.status === 'degraded') {
+  // 入站解密仍可用（密钥在），出站不加密 —— 如实说出来
+  app.use(createEncryptionMiddleware(e2eManager));
+  console.log(`[A2A] ⚠️  E2E 降级（${_e2eStatus.reason}）：有密钥可解入站，但出站**未真加密**（明文），勿传敏感数据`);
 } else {
-  console.log('[A2A] ℹ️  E2E 加密未配置密钥');
+  console.log(`[A2A] ℹ️  E2E 未启用（${_e2eStatus.reason}）`);
 }
 
 // ===== 路由注册 =====
@@ -1056,7 +1067,8 @@ app.get('/agents', async (req, res) => {
 // 能力声明
 app.get('/capabilities', (req, res) => {
   const capabilities = standardAPI.getCapabilities();
-  capabilities.e2e = e2eManager.enabled;
+  // [2026-11-03 · P0-4] 能力声明同样三态化：对外说「我支持什么」不能比 /health 更乐观
+  capabilities.e2e = e2eManager.getStatus().status;
   capabilities.dht = dhtManager.getStatus().level.name;
   capabilities.observability = {
     metrics: true,
@@ -1150,7 +1162,7 @@ app.get('/.well-known/ai-catalog.json', (req, res) => {
 console.log(`\n${'─'.repeat(55)}`);
 console.log(`  ${identity.emoji || '🌸'} ${identity.name} A2A Server v${A2A_VERSION}`);
 console.log(`  📡 端口:${port}  协议:A2A v0.6(27条+Google v1.0.0)  DHT:待启动`);
-console.log(`  📋 JSON-RPC  │ REST  │ SSE  │ E2E(${e2eManager.enabled ? '✅' : '⚠️ '})`);
+console.log(`  📋 JSON-RPC  │ REST  │ SSE  │ E2E(${{ enabled: '✅', degraded: '⚠️', disabled: '⚪' }[e2eManager.getStatus().status] || '⚪'} ${e2eManager.getStatus().status})`);
 console.log(`${'─'.repeat(55)}`);
 
 // 启动 DHT 探测

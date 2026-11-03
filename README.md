@@ -27,7 +27,7 @@ CSB-A2A-AIP 是碳硅契（Carbon-Silicon Bond）协议的 A2A 通信层实现�
 | 注册表 | `registry.js` | 本地 A2A 注册表 |
 | 注册表桥接 | `registry-bridge.js` | 本地↔远端注册表同步 |
 | 记忆系统 | `memory.js`（薄包装） | CSB-Memory v1.0，实现见独立仓库 csb-memory |
-| E2E 加密 | `a2a-e2e-encryption.js` | AES-256-GCM + ECDH |
+| E2E 加密 | `a2a-e2e-encryption.js` | AES-256-GCM + ECDH · **三态**（enabled/degraded/disabled，出站未真加密时降级不报绿）—— 见 [docs/e2e-honest-degrade-p0-4.md](docs/e2e-honest-degrade-p0-4.md) |
 | DHT 发现 | `a2a-dht-coldstart.js` | 注册表发现 + 断线重连 |
 | 可观测性 | `a2a-observability.js` | 日志 + 指标 + Trace ID |
 | 信任管理 | `trust-manager.js` | Agent 间信任评分 |

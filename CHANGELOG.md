@@ -1,5 +1,49 @@
 # CHANGELOG · csb-a2a-aip
 
+## v5.3.13（2026-11-03）— P0-4：E2E 的「假绿」终于不再对外报绿
+
+### 背景（知微《CSB-Harness 2.0 优化升级方案 v1》事实 3 · 唯一漏做的 P0）
+
+三处假绿叠在一起，全部「外观正常、判断不可信」：
+
+| # | 假绿 | 对外看到 | 实际 |
+|---|---|---|---|
+| ① | 出站只置 `obj.encrypted = true` | 响应说加密了 | **一个字节都没加密** |
+| ② | `/health.e2e.enabled` | 绿灯 | 出站是明文 |
+| ③ | 无密钥时 `verifySignature` `return true` | 验签通过 | 任何签名都算通过 |
+
+比「明说不支持」更危险 —— 它让对接方以为可以传敏感数据。
+
+### 修复（方案「B 诚实降级」路线）
+
+- **三态取代布尔**：`enabled`（有密钥 + 出站真加密）/ `degraded`（有密钥但出站未真加密，`reason: not_implemented`）/ `disabled`（无密钥，`reason: no_master_key`）
+- **出站不置假标记**：真加密才 `encrypted:true`，否则 `encrypted:false` + `encryptionReason`
+- **验签不再默认通过**：无密钥 / 无签名 → `false`；新增 `verifySignatureDetailed()` 区分四种原因
+- **不变量硬闸**：`outboundEncrypted=true` 但无主密钥 → **构造时抛错**，杜绝「声明加密却没密钥」
+- `/capabilities.e2e` 由布尔改为三态字符串；启动日志三态化
+
+### 判据
+
+- `csb-security` `npm test` → **337/337**（e2e 单测 17/17，新增 9 条）
+- `csb-a2a-aip` `node --test tests/e2e-honest-degrade.test.js` → **4/4**（起临时实例真打 HTTP `/health`）
+- 文档 `docs/e2e-honest-degrade-p0-4.md`
+
+### 诚实边界（本版**没有**做到的）
+
+1. **出站信封级真加密未实现** —— `degraded` 的含义就是「有密钥但出站仍是明文」，不是「差一点就成」
+2. ECDH 会话密钥能力现成（`session-keys.js`），但未接入出站路径
+3. `server_v4.js` 未同步（仍是旧行为；当前生产跑 v5，v4 不在服务路径上）
+4. `scripts/csb-doctor.js` 无 e2e 检查项 —— `degraded` 不会体现在 doctor 三态里
+
+### ⚠️ 破坏性变更
+
+`/capabilities.e2e` 从布尔改成字符串（`"disabled"` 而非 `false`）。全仓核对无人读该字段，外部若读了会拿到字符串。
+
+### 已知未修（与本次无关，基线即失败）
+
+`tests/bridge-confirm.test.js` · `tests/bridge-l3-workbuddy.test.js` · `tests/remote-command.test.js` · `tests/workbuddy-adapter.test.js`
+—— `git stash` 基线对照证实在改动前就失败，且四者对 `e2e|encrypt|verifySignature` 引用数为 0。
+
 ## v5.3.12（2026-10-28）— 三处「都在撒谎，但没人报错」
 
 全部由若琢升级后反馈，共性：**外观正常，判断不可信**。
