@@ -922,6 +922,37 @@ mountOnInboundPaths(inboundAuthHook);
 
 standardAPI.registerRoutes(app);
 
+// [2026-11-04 §2.2 · K-2] 追问通道 `/v1/why/:decision_id`。
+//   为什么单独一段、放在 registerRoutes 之后：它是**只读回放**，不参与裁决，
+//   也不该被 inbound-auth 中间件拦（那个中间件只挂入站消息口，不挂这里）。
+//   鉴权复用 /tasks 的口径（内网免令牌 / 外部 Bearer），不另发明第二套。
+//   诚实边界：只覆盖 warm-reject 通道的拒绝；AAT 验签 / 论坛 403 各写各的日志。
+try {
+  const { registerWhyEndpoint } = require('./why-endpoint.js');
+  // 静默判定（不写响应）：内网免令牌；外部须带与 /tasks 相同的 Bearer 令牌。
+  // 独立写一遍而不是复用 _checkTasksAuth —— 后者会直接回 401，
+  // 而这里需要把「不合格」交给 why-endpoint 自己回成带 next_step 的形状。
+  const crypto = require('crypto');
+  const whyAuth = (req) => {
+    const ip = (req.socket && req.socket.remoteAddress) || '';
+    if (standardAPI._isInternalIp(ip)) return true;
+    const configured = standardAPI._tasksToken();
+    if (!configured) return false; // 未配令牌 → 外部一律拒（fail-safe，不静默放行）
+    const hdr = req.headers['authorization'] || '';
+    const provided = hdr.startsWith('Bearer ') ? hdr.slice(7).trim() : '';
+    try {
+      const a = Buffer.from(provided), b = Buffer.from(configured);
+      return a.length === b.length && crypto.timingSafeEqual(a, b);
+    } catch { return false; }
+  };
+  registerWhyEndpoint(app, {
+    checkAuth: whyAuth,
+  });
+  console.log('[v1/why] 追问通道已注册：GET /v1/why/:decision_id');
+} catch (e) {
+  console.warn('[v1/why] ⚠️ 追问通道加载失败（不影响主服务）:', e.message);
+}
+
 // 健康检查 (增强: 含 DHT + E2E + 指标)
 // [2026-09-17] UAC 自检（入仓版）：/health 的 `uac` 段 + `/health/uac-probe` 探针。
 //   视图逻辑在 a2a-uac-health.js（纯函数，有单测）；此处只做接线。

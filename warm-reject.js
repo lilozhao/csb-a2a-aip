@@ -178,7 +178,8 @@ function warmReject(input = {}) {
       action: input.action || 'unknown',
       request_id: input.request_id || null,
       status: 'denied',
-      context: input.context ? sanitize(input.context) : null,
+      // 结构化保存：§2.2 追问通道要按字段回放，压平成字符串就没得回了
+      context: shapeContext(input.context) === undefined ? null : shapeContext(input.context),
     }, input.auditFile);
   }
 
@@ -194,6 +195,78 @@ function sanitize(o) {
     const s = typeof o === 'string' ? o : JSON.stringify(o);
     return s.length > 500 ? s.slice(0, 500) + '…' : s;
   } catch { return String(o).slice(0, 500); }
+}
+
+/**
+ * 上下文入库前的整形（**保持对象结构**，只做有界裁剪）。
+ *
+ * 为什么不能像以前那样一律 JSON.stringify 成字符串：
+ *   §2.2 追问通道要按 `decision_chain: [{rule,value,result}]` **逐条**回放判据。
+ *   一旦压成 500 字字符串，链就被截断且无法解析 —— 端点开出来也只能查到一个残缺串，
+ *   那正是「看起来在工作」的假绿。整形必须发生在**结构化之后**，而不是之前。
+ *
+ * 有界策略（都是硬上限，不靠判断）：
+ *   · decision_chain 最多保留 32 条（规则表当前 12 条，留余量）
+ *   · 每条 value 转字符串并截到 120 字
+ *   · 每条**多余字段不丢**（最多 3 个，各截 80 字）：那些字段往往正是
+ *     「有人把 recommendation/why 这类自由文本当判据」的证据，抹掉就等于消灭现场
+ *   · 其余字段沿用 sanitize 的 500 字截断
+ *   · 整体序列化超过 4000 字 → 只保留骨架 + truncated 标记（宁可少存，不可存半条）
+ */
+const CHAIN_MAX = 32;
+const CHAIN_VALUE_MAX = 120;
+const CONTEXT_MAX_CHARS = 4000;
+const CHAIN_EXTRA_KEYS = ['recommendation', 'why', 'alternatives', 'note', 'detail'];
+
+/** 保留链步骤里「不属于三元组」的字段（有界），供追问端点指出判据不合格 */
+function chainExtras(step) {
+  const extra = {};
+  let n = 0;
+  for (const k of CHAIN_EXTRA_KEYS) {
+    if (step[k] === undefined) continue;
+    if (n++ >= 3) break;
+    extra[k] = sanitize(step[k]).slice(0, 80);
+  }
+  return extra;
+}
+
+function shapeContext(ctx) {
+  if (ctx === undefined || ctx === null) return undefined;
+  if (typeof ctx !== 'object') return sanitize(ctx);
+  const out = {};
+  for (const [k, v] of Object.entries(ctx)) {
+    if (k === 'decision_chain') continue;
+    if (k === 'warnings' && Array.isArray(v)) {
+      out.warnings = v.slice(0, 32).map((x) => sanitize(x));
+      if (v.length > 32) out.warnings_truncated = v.length - 32;
+      continue;
+    }
+    out[k] = (v && typeof v === 'object') ? sanitize(v) : v;
+  }
+  if (Array.isArray(ctx.decision_chain)) {
+    out.decision_chain = ctx.decision_chain.slice(0, CHAIN_MAX).map((s) => {
+      const step = {
+        rule: s && s.rule !== undefined ? String(s.rule) : null,
+        value: s == null || s.value == null ? null : String(s.value).slice(0, CHAIN_VALUE_MAX),
+        result: s && s.result !== undefined ? String(s.result) : null,
+      };
+      // 只对**形状可疑**的步骤保留多余字段：正常步骤留着只会让日志变胖
+      const suspect = !step.rule || !step.result
+        || !['matched', 'no_match', 'unknown', 'disabled'].includes(step.result);
+      return suspect && s && typeof s === 'object' ? { ...step, ...chainExtras(s) } : step;
+    });
+    if (ctx.decision_chain.length > CHAIN_MAX) out.decision_chain_truncated = ctx.decision_chain.length - CHAIN_MAX;
+  }
+  try {
+    if (JSON.stringify(out).length > CONTEXT_MAX_CHARS) {
+      return {
+        truncated: true,
+        keys: Object.keys(out),
+        decision_chain: out.decision_chain ? out.decision_chain.slice(0, 8) : undefined,
+      };
+    }
+  } catch { /* 循环引用等 → 保留已整形的部分 */ }
+  return out;
 }
 
 function appendJsonl(file, obj) {
