@@ -107,9 +107,14 @@ function loadUsedTopics() {
   }
 }
 
-function saveUsedTopics(used) {
+function saveUsedTopics(used, cycleStart, lastPicks) {
   try {
-    fs.writeFileSync(USED_FILE, JSON.stringify({ used, updated: new Date().toISOString() }, null, 2));
+    const payload = { used, updated: new Date().toISOString() };
+    // [2026-11-04 修复] 记录轮次起点，否则话题池用完后会永远重复前 3 个
+    if (typeof cycleStart === 'number') payload.cycleStart = cycleStart;
+    // 记录上一轮选了哪几个：回绕时用它避开「今天跟昨天同题」
+    if (Array.isArray(lastPicks)) payload.lastPicks = lastPicks;
+    fs.writeFileSync(USED_FILE, JSON.stringify(payload, null, 2));
   } catch (e) {
     console.error('⚠️ 无法保存话题使用记录:', e.message);
   }
@@ -118,18 +123,47 @@ function saveUsedTopics(used) {
 function generateTopics() {
   const pool = loadTopicsPool();
   const used = loadUsedTopics();
-  
-  // 找出未使用的话题
-  const unused = pool.filter((t, i) => !used.includes(i));
-  
-  // 如果剩余话题不足3个，重置使用记录
-  if (unused.length < 3) {
-    console.log('🔄 话题池已用完，重新开始轮换...');
-    const selected = pool.slice(0, 3);
-    saveUsedTopics([0, 1, 2]);
-    return selected;
+
+  // [2026-11-04 修复] cycleStart 必须在**两个分支**都续上。
+  //   只在新一轮那一支写，上一支会把它丢 —— 状态文件里没有 cycleStart 了，
+  //   于是 Pool 用完后又重新从 #0 开始，** 35 天后 bug 原样复发**。
+  //   这就是「修了但没完全修」的典型形状：测试只跑了刚修的那条路。
+  let cycleStart = 0;
+  let lastPicks = [];
+  try {
+    const data = JSON.parse(fs.readFileSync(USED_FILE, 'utf8'));
+    if (typeof data.cycleStart === 'number') cycleStart = data.cycleStart;
+    if (Array.isArray(data.lastPicks)) lastPicks = data.lastPicks;
+  } catch { /* 首次运行，默认值 */ }
+
+  // 找出未使用的话题（**索引**，不是话题对象：后面要按下标算 cycleStart）
+  const unusedIdx = pool.map((_, i) => i).filter((i) => !used.includes(i));
+
+  // 如果剩余话题不足3个，本轮要「先清尾巴再接新一轮」：
+  //   · 先把剩下的 0～2 个未讨论话题用完（否则它们会被跳过、甚至永远轮不到）
+  //   · 不够 3 个再从 cycleStart 往下绕，跳过本轮已选的
+  //   ⚠️ 不能直接用 cycleStart 取 3 个：那样会跳掉尾巴，且可能重复上一轮刚讨论过的。
+  if (unusedIdx.length < 3) {
+    console.log('🔄 话题池将用完，本轮清尾 + 接续新一轮...');
+    const selectedIndices = unusedIdx.slice();
+    let cursor = cycleStart, guard = 0;
+    // 回绕时跳过上一轮刚选过的：否则交界处会出现“今天的题跟昨天一样”
+    while (selectedIndices.length < 3 && guard++ < pool.length * 2) {
+      if (!selectedIndices.includes(cursor) && !lastPicks.includes(cursor)) selectedIndices.push(cursor);
+      cursor = (cursor + 1) % pool.length;
+    }
+    // 实在跳不开（池比 6 还小）才允许重复，但要说出来
+    if (selectedIndices.length < 3) {
+      for (let i = 0; i < pool.length && selectedIndices.length < 3; i++) {
+        if (!selectedIndices.includes(i)) selectedIndices.push(i);
+      }
+      console.log('⚠️ 话题池太小，无法避开上一轮，已尽量错开');
+    }
+    saveUsedTopics(selectedIndices, cursor, selectedIndices);
+    console.log(`📚 话题池: ${pool.length}个，清尾 ${unusedIdx.length} 个 + 新一轮从 #${cycleStart} 接`);
+    return selectedIndices.map((i) => pool[i]);
   }
-  
+
   // 选择前3个未使用话题
   const selectedIndices = [];
   const selected = [];
@@ -139,12 +173,12 @@ function generateTopics() {
       selected.push(pool[i]);
     }
   }
-  
-  // 更新使用记录
-  saveUsedTopics([...used, ...selectedIndices]);
-  
+
+  // 更新使用记录（**带上 cycleStart**，否则下一轮又从头开始）
+  saveUsedTopics([...used, ...selectedIndices], cycleStart, selectedIndices);
+
   console.log(`📚 话题池: ${pool.length}个，已用 ${used.length}个，剩余 ${pool.length - used.length - 3}个`);
-  
+
   return selected;
 }
 
@@ -179,37 +213,57 @@ function generateRuolanResponse(prompt) {
   return new Promise((resolve) => {
     const apiKey = resolveApiKey();
     if (!apiKey) { console.log('  ⚠️ 无 API key（apiKeyEnv/DASHSCOPE 均缺失）'); gatewayFallback(prompt, resolve); return; }
-    const payload = JSON.stringify({
+
+    // [2026-11-04 修复] qwen3.8-flash 是推理模型，reasoning_tokens 会吃掉 max_tokens 预算，
+    // 导致 content 为空串。表现为若兰在讨论里显示 "..."。措施：
+    //   1) enable_thinking:false —— 关掉思考，正文直出
+    //   2) max_tokens 提到 800 —— 留足正文余量
+    //   3) content 为空时先带 thinking=false 重试一次，再降级到 gateway
+    const attempt = (payload, label, onEmpty) => {
+      const req = https.request({
+        hostname: LLM.host, port: parseInt(LLM.port)||443,
+        path: LLM.path || '/v2/chat/completions', method: 'POST',
+        headers: { 'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`,
+          'Content-Length': Buffer.byteLength(payload) },
+      }, res => {
+        res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
+        let body = ''; res.on('data', c => body += c);
+        res.on('end', () => {
+          let parsed = null;
+          try { parsed = JSON.parse(body); } catch { /* 落到下方错误分支 */ }
+          if (parsed) {
+            const content = parsed.choices?.[0]?.message?.content?.trim();
+            // [9/9 修复] token-plan 配额耗尽（429 insufficient_quota）时 fallback gateway
+            if (content) { resolve(content); return; }
+            if (parsed.error && (res.statusCode === 429 || /quota/i.test(JSON.stringify(parsed.error)))) {
+              console.log('  ⚠️ token-plan 配额耗尽，fallback 到 gateway LLM');
+              gatewayFallback(prompt, resolve); return;
+            }
+            const rt = parsed.usage?.completion_tokens_details?.reasoning_tokens || 0;
+            console.log(`  ⚠️ ${label} 返回空正文（finish=${parsed.choices?.[0]?.finish_reason}, reasoning_tokens=${rt}）`);
+          }
+          onEmpty();
+        });
+      });
+      req.on('error', (e) => { console.log(`  ⚠️ ${label} 请求失败: ${e.message}`); onEmpty(); });
+      req.setTimeout(30000, () => { req.destroy(); console.log(`  ⚠️ ${label} 超时`); onEmpty(); });
+      req.write(payload); req.end();
+    };
+
+    const body = (maxTokens, thinking) => JSON.stringify({
       model: LLM.model || 'astron-code-latest',
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 500, temperature: 0.8,
+      max_tokens: maxTokens, temperature: 0.8,
+      enable_thinking: thinking,
     });
-    const req = https.request({
-      hostname: LLM.host, port: parseInt(LLM.port)||443,
-      path: LLM.path || '/v2/chat/completions', method: 'POST',
-      headers: { 'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`,
-        'Content-Length': Buffer.byteLength(payload) },
-    }, res => {
-      res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
-      let body = ''; res.on('data', c => body += c);
-      res.on('end', () => {
-        try {
-          const parsed = JSON.parse(body);
-          const content = parsed.choices?.[0]?.message?.content?.trim();
-          // [9/9 修复] token-plan 配额耗尽（429 insufficient_quota）时 fallback gateway
-          if (content) { resolve(content); return; }
-          if (parsed.error && (res.statusCode === 429 || /quota/i.test(JSON.stringify(parsed.error)))) {
-            console.log('  ⚠️ token-plan 配额耗尽，fallback 到 gateway LLM');
-            gatewayFallback(prompt, resolve); return;
-          }
-          resolve('...');
-        }
-        catch { gatewayFallback(prompt, resolve); }
+
+    attempt(body(800, false), '直连LLM', () => {
+      // 第一次就空 → 带 thinking 重试一次（某些网关默认不认 enable_thinking 时仍可能思考）
+      attempt(body(1500, true), '直连LLM(重试)', () => {
+        console.log('  ⚠️ 若兰 LLM 两次均空，fallback 到 gateway LLM');
+        gatewayFallback(prompt, resolve);
       });
     });
-    req.on('error', () => gatewayFallback(prompt, resolve));
-    req.setTimeout(20000, () => { req.destroy(); gatewayFallback(prompt, resolve); });
-    req.write(payload); req.end();
   });
 }
 
@@ -223,8 +277,12 @@ function gatewayFallback(prompt, resolve) {
     messages: [{ role: 'user', content: prompt }],
     max_tokens: 500, temperature: 0.8,
   });
+  const u = new URL(gatewayUrl);
+  // [2026-11-04] 端口回落按协议走：URL 不带端口时，https 应是 443、http 是 80，
+  //   一律回落 19089 只对「本机默认部署」成立，换成域名就会连错端口。
+  const gwPort = parseInt(u.port, 10) || (u.protocol === 'https:' ? 443 : (u.protocol === 'http:' ? 80 : 19089));
   const req = http.request({
-    hostname: 'localhost', port: 19089,
+    hostname: u.hostname, port: gwPort,
     path: '/v1/chat/completions', method: 'POST',
     headers: { 'Content-Type':'application/json', 'Authorization':`Bearer ${token}`,
       'Content-Length': Buffer.byteLength(payload) },
@@ -565,7 +623,8 @@ async function main() {
       const agent = AGENTS[key];
       let line;
       if (key === 'ruolan') {
-        line = `🌸 若兰: ${round.ruolan}`;
+        const empty = !round.ruolan || round.ruolan === '...';
+        line = empty ? '🌸 若兰: ⚠️ 本轮未取得有效回复' : `🌸 若兰: ${round.ruolan}`;
       } else {
         const r = round[key];
         const icon = key==='axuan'?'🔧':key==='jeason'?'💼':'📜';
@@ -586,7 +645,8 @@ async function main() {
   for (const r of allResults) {
     summary.push([{ tag:'text', text:`📌 ${r.topic}` }]);
     const okCount = ['axuan','jeason','mingde'].filter(k => r[k]?.ok).length;
-    summary.push([{ tag:'text', text:`  🌸 若兰 ✅ | ${okCount+1}/4 在线回应` }]);
+    const ruolanOk = r.ruolan && r.ruolan !== '...' ? 1 : 0;
+    summary.push([{ tag:'text', text:`  🌸 若兰 ${ruolanOk?'✅':'⚠️'} | ${okCount+ruolanOk}/4 在线回应` }]);
   }
   if (!await pushToFeishu('📊 讨论结束', summary)) pushFailCount++;
 
@@ -596,7 +656,8 @@ async function main() {
   console.log('═══════════════════════════════════════\n');
   for (const r of allResults) {
     console.log(`📌 ${r.topic}`);
-    console.log(`  🌸 若兰: ✅`);
+    const ruolanOk = r.ruolan && r.ruolan !== '...';
+    console.log(`  🌸 若兰: ${ruolanOk?'✅':'⚠️ 未取得有效回复'}`);
     for (const k of REMOTE) {
       console.log(`  ${AGENTS[k].name.split(' ')[0]}: ${r[k]?.ok ? '✅' : '❌'} ${r[k]?.ok ? '' : r[k]?.error||'离线'}`);
     }
