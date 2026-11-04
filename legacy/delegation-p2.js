@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 /**
- * delegation-p2.js — CSB-Delegation v1.2 增强模块
+ * ⚠️ LEGACY（2026-11-04 移入 legacy/）—— 本文件当前不可执行，勿当实现依据
  *
- * 实现：
- *   1. 温暖拒绝（Warm Rejection）— 符合 v1.2 §2.1
- *   2. 签字机制（Sign-on-Departure）— 符合 v1.2 §4.1
- *
- * 依赖: delegation-manager.js, audit-log.js
+ * 移入原因：
+ *   ① require('./audit-log') 直接崩（迁移 f8f4013 漏带依赖）
+ *   ② 零测试（grep -rln "delegation-p2" tests/ 空）
+ *   ③ 无生产代码引用
+ *   ④ server_v5.js 不加载
+ * 详见 ./README.md 与 docs/w51-kindness-layer-decision-2026-11-04.md
  */
 
 const crypto = require('crypto');
