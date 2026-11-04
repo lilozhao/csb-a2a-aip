@@ -144,7 +144,9 @@ function warmReject(input = {}) {
   const v = validate(input);
   if (!v.ok) {
     // 先记账再抛 —— 静默失败是最贵的故障形态（A-3 铁律）
-    recordFail(input, v.problems);
+    // failFile 可覆盖（单测必须指向临时文件）：测试噪音写进生产审计日志，
+    // 会让「按 audit_id 回查」和「数拒绝次数」全部失真。
+    recordFail(input, v.problems, input.failFile);
     throw new WarmRejectContractError(`温暖拒绝契约不满足：${v.problems.join('；')}`, {
       problems: v.problems, input: sanitize(input),
     });
@@ -230,8 +232,8 @@ function findAudit(auditId, opts = {}) {
   }
   return { found: false, scanned: tail.length, truncated: all.length > maxLines };
 }
-function recordFail(input, problems) {
-  return appendJsonl(FAIL_LOG, {
+function recordFail(input, problems, file) {
+  return appendJsonl(file || FAIL_LOG, {
     ts: new Date().toISOString(),
     event: 'warm_reject_contract_violation',
     problems,
