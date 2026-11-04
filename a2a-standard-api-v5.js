@@ -127,11 +127,34 @@ class A2AStandardAPI {
     // 内网直接放行
     if (this._isInternalIp(ip)) return true;
 
+    // [2026-11-04 §2.1] 401 不再只回一句 Unauthorized：
+    //   `/tasks` 是 Agent 与 Agent 之间最常碰到的口，一句「Unauthorized」对对方毫无用处。
+    //   五字段契约由 warm-reject 保证；万一构造失败，退到旧响应（不把我们的形状错误算成对方的错）。
+    const deny = (reason, nextStep) => {
+      try {
+        const { warmReject, CODES } = require('./warm-reject');
+        const body = warmReject({
+          code: CODES.AUTH_REQUIRED,
+          reason, next_step: nextStep,
+          agent: req.headers['x-agent-id'] || 'unknown',
+          action: `GET ${req.path}`,
+          request_id: req.headers['x-request-id'] || null,
+        });
+        res.status(401).json(body);
+      } catch (e) {
+        try { console.warn('[tasks-auth] 温暖拒绝构造失败，退到简式 401:', e.message); } catch { /* noop */ }
+        res.status(401).json({ error: 'Unauthorized', message: reason });
+      }
+      return false;
+    };
+
     const configured = this._tasksToken();
     if (!configured) {
       // 未配密钥：fail-safe——外部拒绝（不静默放行），内网不受影响
-      res.status(401).json({ error: 'Unauthorized', message: 'Bearer token required for external access (A2A_TASKS_TOKEN/A2A_GATEWAY_TOKEN not set)' });
-      return false;
+      return deny(
+        '本实例未配置 A2A_TASKS_TOKEN，外部读 /tasks 一律拒绝（内网不受影响）',
+        '从内网调用，或请本实例主人在 .env 配置 A2A_TASKS_TOKEN 后重启服务'
+      );
     }
 
     const hdr = req.headers['authorization'] || '';
@@ -145,8 +168,14 @@ class A2AStandardAPI {
       ok = a.length === b.length && crypto.timingSafeEqual(a, b);
     } catch { ok = false; }
     if (!ok) {
-      res.status(401).json({ error: 'Unauthorized', message: 'Valid Bearer token required for external access to /tasks' });
-      return false;
+      return deny(
+        provided
+          ? 'Authorization 令牌与本实例 A2A_TASKS_TOKEN 不匹配（注意：tasks token ≠ gateway token）'
+          : '缺 Authorization 头：外部访问 /tasks 需 Bearer 令牌（内网免令牌）',
+        provided
+          ? '改用 csb-a2a-aip/.env 里的 A2A_TASKS_TOKEN 重试；用 gateway 令牌会得到 401（故意的）'
+          : '在请求头加 Authorization: Bearer <A2A_TASKS_TOKEN>；只是自己人调用则从内网发起'
+      );
     }
     return true;
   }

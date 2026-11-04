@@ -872,11 +872,45 @@ const inboundAuthHook = (req, res, next) => {
       });
     }
     if (d.action === 'block') {
-      return res.status(d.httpStatus || 401).json({
-        error: 'caller_not_authenticated',
-        cls: c.cls,
-        hint: '需要带 sender（name+url）或 X-CSB-AAT；见 docs/inbound-auth-rollout.md',
-      });
+      // [2026-11-04 §2.1] 入站拦截不再只回一句 caller_not_authenticated：
+      //   被拦的人要能知道「差什么」和「怎么补」。五字段契约由 lib/warm-reject 兜底（不合格就抛，不发）。
+      //   注：中途件自身出错仍 fail-open（下方 catch），此处只处理「已确定要拦」。
+      const hintByCls = {
+        A: {
+          reason: '入站调用无身份：sender 缺 name/url，也未携带 X-CSB-AAT（A 类：无身份）',
+          next_step: '下次请求带 sender{name,url}，或向本实例身份服务申请 AAT 放在 X-CSB-AAT 头',
+        },
+        B: {
+          reason: `入站声称「${c.name || '未知'}」但${c.hasAat ? '携带的 AAT 验签未通过' : '无 url 可核'}（B 类：冒名嫌疑）`,
+          next_step: c.hasAat
+            ? '重新签发 AAT（audience 指向本实例 agentId）后重试；旧票可能已过期或被烧 jti'
+            : '补上 sender.url 使其与注册表登记一致，或改用 X-CSB-AAT 做密码学身份证明',
+        },
+      };
+      const h = hintByCls[c.cls] || {
+        reason: `入站调用被拒（分类 ${c.cls}）`,
+        next_step: '带上 sender{name,url} 与有效 X-CSB-AAT 后重试；仍不行请联系本实例主人核对名单',
+      };
+      try {
+        const { warmReject, CODES } = require('./warm-reject');
+        return res.status(d.httpStatus || 401).json(warmReject({
+          code: CODES.AUTH_REQUIRED,
+          reason: h.reason,
+          next_step: h.next_step,
+          agent: c.name || 'unknown',
+          action: (req.baseUrl || '') + (req.path === '/' ? '' : req.path),
+          request_id: req.headers['x-request-id'] || null,
+          context: { cls: c.cls, mode: effMode, why: c.why, aatError: aatError || null },
+        }));
+      } catch (we) {
+        // 契约不满足（理论上不会）→ 退到旧响应，但把异常记下来，不把「我们的形状错误」当对方的不合格
+        try { console.warn('[inbound-auth] 温暖拒绝构造失败，退到简式响应:', we.message); } catch { /* noop */ }
+        return res.status(d.httpStatus || 401).json({
+          error: 'caller_not_authenticated',
+          cls: c.cls,
+          hint: '需要带 sender（name+url）或 X-CSB-AAT；见 docs/inbound-auth-rollout.md',
+        });
+      }
     }
   } catch (e) {
     // 鉴权中间件自身出错绝不阻断业务（fail-open，并留痕）
