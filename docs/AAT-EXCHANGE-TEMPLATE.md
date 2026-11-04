@@ -265,7 +265,11 @@ curl -s http://127.0.0.1:<port>/a2a/aid | python3 -c "import sys,json;d=json.loa
 #### ① dry-run：只为一个可复现的 `PLAN_ID`
 
 ```bash
-node scripts/rotate-keys.js \
+# ⚠️ 本脚本**和它的数据都在另一个仓**：csb-security/
+# 在 csb-a2a-aip 目录下直接跑会说「文件不存在」（脚本与 aid/key 都不在这）。
+# 先切仓（推荐）：
+#   cd ../csb-security && node scripts/rotate-keys.js --aid data/ruolan-aid.json ...
+cd ../csb-security && node scripts/rotate-keys.js \
   --aid  data/ruolan-aid.json \
   --key  data/ruolan-private-key.pem \
   --name 若兰 \
