@@ -721,6 +721,19 @@ function createIdentityHandler(opts = {}) {
           return deny(400, 'capabilities_type_invalid', { hint: 'capabilities 必须是字符串数组，如 ["chat"]' });
         }
 
+        // P4（2026-11-05 硅隐拍板）：票里不许出现通配符。
+        // 域授权请在签发端展开一次，验签端永远做字面比对 —— 否则验签端要维护一套展开规则，
+        // 等于把 P4 取消。全角 ＊ 与半角 * 一并拒（先归一化再判，防绕过）。
+        // 不改「行为」只把静默失败提前：这类票在验签端本来就过不去（wildcard_global/domain）。
+        const wildcards = caps.filter(c => /[\*\uFF0A]/.test(c));
+        if (wildcards.length) {
+          return deny(400, 'capability_wildcard_unsupported', {
+            hint: '票内不允许通配符；请展开成具体能力，例如 ["forum.post","forum.reply"]',
+            wildcards,
+            mode: AAT_ISSUE_MODE,
+          });
+        }
+
         // ttl 封顶：长 ttl = 长重放窗口（此前 b.ttl||300 谁都能要长命 token）
         const ttlRaw = b.ttl === undefined || b.ttl === null ? 300 : b.ttl;
         if (typeof ttlRaw !== 'number' || !Number.isFinite(ttlRaw) || ttlRaw <= 0) {
