@@ -900,6 +900,7 @@ const inboundAuthHook = (req, res, next) => {
           agent: c.name || 'unknown',
           action: (req.baseUrl || '') + (req.path === '/' ? '' : req.path),
           request_id: req.headers['x-request-id'] || null,
+          trace_id: req.traceId || null,
           context: { cls: c.cls, mode: effMode, why: c.why, aatError: aatError || null },
         }));
       } catch (we) {
@@ -981,9 +982,20 @@ function auditHealthSection() {
     return {
       ...base,
       chainValid: ok,
-      entries: v?.count ?? v?.verified ?? null,
+      // [2026-11-05 修] 验不过时也要报行数。
+      //   旧写法 entries: v?.count ?? null —— verifyChain 早退还时 count 不存在，
+      //   于是「链断了」的实例在 /health 上只看到 entries:null，
+      //   连账本有多少行都看不到。诊断时最需要的恰恰是这个数（0 行 = 空账本，上万行 = 轮转/并发）。
+      //   现在退回 base.entries（stats() 里的真实行数），信息不丢。
+      entries: v?.count ?? v?.verified ?? base.entries ?? null,
       reason: ok ? 'chain_valid' : (v?.reason || 'chain_invalid'),
       brokenAt: v?.brokenAt ?? v?.atSeq ?? null,
+      // [2026-11-05] 验的是哪一份：disk = 与 GDI 同一口径；memory = readonly 退而验内存尾部
+      verifiedSource: v?.source ?? null,
+      brokenAtSeq: v?.brokenAtSeq ?? null,
+      // 内存只留尾部时，把「看得到的」与「账本里有的」分开报，不让人把局部当全局
+      inMemoryEntries: base.inMemoryEntries ?? null,
+      trimmedFromMemory: base.trimmedFromMemory ?? 0,
     };
   } catch (e) {
     return { chainValid: false, reason: 'audit_probe_error: ' + e.message };

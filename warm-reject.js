@@ -136,6 +136,10 @@ function validate(input) {
  * @param {string} [input.action]     被拒的动作
  * @param {object} [input.context]    额外上下文（截断后进审计）
  * @param {string} [input.request_id] 关联的请求 id
+ * @param {string} [input.trace_id]   关联的 HTTP trace（用于与请求级审计对账）
+ *   为什么需要它：Kindness Score 的 W = 温暖拒绝 / 总拒绝。分母来自请求级审计，
+ *   分子来自本文件。两边只能靠 trace 认领同一次请求 —— 否则**同一次拒绝会被计两次**，
+ *   或者因为「分母里也有温暖拒绝」而算出偏低的 W。没有 trace 就只剩「条数相减」这种粗估。
  * @param {boolean} [input.record=true] 是否落审计
  * @param {string} [input.auditFile]  覆盖审计文件（测试用）
  * @returns {object} 协议 §2.1 形状
@@ -177,6 +181,7 @@ function warmReject(input = {}) {
       agent: input.agent || 'unknown',
       action: input.action || 'unknown',
       request_id: input.request_id || null,
+      trace_id: input.trace_id || null,
       status: 'denied',
       // 结构化保存：§2.2 追问通道要按字段回放，压平成字符串就没得回了
       context: shapeContext(input.context) === undefined ? null : shapeContext(input.context),

@@ -90,7 +90,19 @@ class CompatAuditLogger {
       result: (event.status && event.status !== 'OK' && event.status !== 'success') ? 'failure' : 'success',
       ip_address: event.ip || null
     };
-    this.inner.append(entry);
+    // [2026-11-05 K-3] 追问字段：必须有**真实状态码**，否则「拒绝」不可辨识。
+    //   旧实现把 status/method/details/trace_id 塞进 core entry，但 AuditLog 只认
+    //   协议 §6.1 的白名单字段，其余一律丢弃 → 磁盘上只剩 result:failure。
+    //   结果：Kindness Score 的分子分母都只能从温暖拒绝日志里数，W 恒等于 1.0。
+    //   走 append 的第二个参数（extras），会自动纳入哈希链，不可篡改。
+    const extras = {};
+    if (typeof event.httpStatus === 'number') extras.http_status = event.httpStatus;
+    if (event.path) extras.path = String(event.path).slice(0, 200);
+    if (event.traceId && event.traceId !== 'unknown') extras.trace_id = event.traceId;
+    if (event.method) extras.method = String(event.method).slice(0, 80);
+    if (event.details) extras.details = String(event.details).slice(0, 200);
+    if (typeof event.durationMs === 'number') extras.duration_ms = event.durationMs;
+    this.inner.append(entry, extras);
   }
 
   verifyChain() { return this.inner.verifyChain(); }
@@ -107,6 +119,9 @@ class CompatAuditLogger {
       source: 'csb-security',
       algorithm: 'sha256-chain' + (this.inner.privateKey ? '+ed25519' : ''),
       entries,
+      // [2026-11-05] 内存只是尾部：账本实际行数以验链时的磁盘读数为准（见 /health 的 entries）
+      inMemoryEntries: entries,
+      trimmedFromMemory: this.inner.trimmed ? this.inner.trimmed.count : 0,
       signed: !!this.inner.privateKey,
       writeFailures: this.writeFailures || 0,
       lastWriteError: this.lastWriteError || null,

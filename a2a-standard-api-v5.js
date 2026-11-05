@@ -139,6 +139,7 @@ class A2AStandardAPI {
           agent: req.headers['x-agent-id'] || 'unknown',
           action: `GET ${req.path}`,
           request_id: req.headers['x-request-id'] || null,
+          trace_id: req.traceId || null,
         });
         res.status(401).json(body);
       } catch (e) {
