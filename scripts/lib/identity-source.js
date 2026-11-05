@@ -22,14 +22,27 @@
  *    否则新人会以为「localhost 也能用 = 这条规矩不重要」，等换台机器就炸。
  */
 
-/** 从 url / agent_id 的 @ 后半段取 host:port（小写，去协议与尾斜杠） */
+/**
+ * 从 url / agent_id 的 @ 后半段取 host:port（小写，去协议、路径、查询串）
+ *
+ * [2026-11-06 · 清漪实测] 旧实现只去协议和尾斜杠，**不去路径**：
+ *   hostOf('http://106.12.36.177:3100/a2a/json-rpc') → '106.12.36.177:3100/a2a/json-rpc'
+ * 而接收方 verifyInbound 用的 _hostOfUrl 是正则只取 authority（路径自然被丢掉）→
+ * 同一个 sender.url，出站自检说 mismatch（peerRejects=true），接收方实际「接受」。
+ * 结果是**假红**：doctor 第 5 项报「对方会拒收」，人照着改了半天配置，
+ * 而对方根本没拒（清漪就把这条当成 root cause 修了一轮）。
+ * 本文件的全部价值就是「与验证器同口径」，所以这里必须和 _hostOfUrl 一样剥路径。
+ */
 function hostOf(s) {
   const raw = String(s == null ? '' : s).trim();
   if (!raw) return '';
   // agent_id 形态：name@host:port → 取 @ 之后
   const at = raw.lastIndexOf('@');
   const tail = at !== -1 ? raw.slice(at + 1) : raw;
-  return tail.replace(/^[a-z]+:\/\//i, '').replace(/\/+$/, '').toLowerCase();
+  // 有协议头时只取 authority（与 a2a-aat.js 的 _hostOfUrl 逐字同口径）
+  const m = tail.match(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/([^/?#]+)/);
+  const host = m ? m[1] : tail.split(/[/?#]/)[0];
+  return host.trim().replace(/\/+$/, '').toLowerCase();
 }
 
 const LOOPBACK_RE = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\]|::1)(:\d+)?$/i;

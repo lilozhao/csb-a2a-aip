@@ -21,7 +21,7 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const aat = require(path.join(ROOT, 'a2a-aat.js'));
-const { checkIdentitySource } = require(path.join(ROOT, 'scripts', 'lib', 'identity-source.js'));
+const { checkIdentitySource, hostOf } = require(path.join(ROOT, 'scripts', 'lib', 'identity-source.js'));
 
 let passed = 0, failed = 0;
 function test(name, fn) {
@@ -78,6 +78,29 @@ for (const c of cases) {
   });
 }
 
+// ── 回归：sender.url 带路径（2026-11-06 清漪实测的假红）──────────────
+// 病因：hostOf 原来只去协议和尾斜杠，不去路径 → 出站自检判 mismatch，
+//       而接收方 verifyInbound 用正则只取 authority → 实际接受。假红让人白改一轮配置。
+// 判据：同一 URL，两侧结论必须同向；且必须与「不带路径」等价。
+test('sender.url 带路径：自检与验证器同向，且不许假红', () => {
+  const bare = `http://${hostOf(self.agentId)}`;
+  const withPath = `${bare}/a2a/json-rpc`;
+  const s = aat.attach({ name: self.agentId.split('@')[0], url: withPath }, AUD);
+  const r = aat.verifyInbound({ name: self.agentId, id: self.agentId, url: withPath, aat: s.aat },
+    { expectedAudience: AUD });
+  assert.strictEqual(r.ok, true, `验证器本该接受（路径不是身份线索），实际 ${r.error}`);
+  const chk = checkIdentitySource(withPath, self.agentId);
+  assert.strictEqual(chk.verdict, 'same', `带路径被误判成 ${chk.verdict} —— 与验证器不同向`);
+  assert.strictEqual(chk.peerRejects, false, '带路径被判「对方会拒收」= 假红');
+});
+
+// 路径 + 查询串 + 尾斜杠都不能影响 host 判定
+test('hostOf 剥路径/查询串/尾斜杠', () => {
+  assert.strictEqual(hostOf('http://10.1.2.3:3100/a2a/json-rpc'), '10.1.2.3:3100');
+  assert.strictEqual(hostOf('http://10.1.2.3:3100/a2a/json-rpc?x=1'), '10.1.2.3:3100');
+  assert.strictEqual(hostOf('http://10.1.2.3:3100/'), '10.1.2.3:3100');
+});
+
 // 纯函数边界：不给 agent_id 时不能崩，也不能假装「同源」
 test('参数缺失时报 missing，不报 same', () => {
   const r = checkIdentitySource('', '');
@@ -87,7 +110,6 @@ test('参数缺失时报 missing，不报 same', () => {
 
 // hostOf 必须能吃 agent_id 形态（name@host:port）——这是它唯一比 URL 解析多做的事
 test('hostOf 能吃 agent_id 形态', () => {
-  const { hostOf } = require(path.join(ROOT, 'scripts', 'lib', 'identity-source.js'));
   assert.strictEqual(hostOf('ruolan@172.28.0.214:3100'), '172.28.0.214:3100');
   assert.strictEqual(hostOf('HTTP://172.28.0.214:3100/'), '172.28.0.214:3100');
 });

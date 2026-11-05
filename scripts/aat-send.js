@@ -167,19 +167,21 @@ async function main() {
   // 否则对方会判 issuer_host_mismatch（声称来源 ≠ 签名主体）
   const selfAat = aat.getSelf();
   if (selfAat.ok) {
-    const hostOf = (s) => String(s || '').replace(/^[a-z]+:\/\//i, '').replace(/\/+$/, '').toLowerCase();
-    const issHost = hostOf(String(selfAat.agentId).split('@').slice(1).join('@'));
-    const senderHost = hostOf(self.url);
-    if (issHost && senderHost && issHost !== senderHost) {
-      const loopback = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])(:\d+)?$/i.test(senderHost);
-      if (!loopback) {
-        console.error(`❌ 身份自相矛盾，拒绝发送`);
-        console.error(`   identity.json 的 a2a_url = ${self.url}（声称来源 ${senderHost}）`);
-        console.error(`   而 AAT 的 iss        = ${selfAat.agentId}（签名主体 ${issHost}）`);
-        console.error(`   对方会判 issuer_host_mismatch。请在 identity.json 把 a2a_url 改对，或设 A2A_IDENTITY_PATH。`);
-        process.exit(4);
-      }
-      console.warn(`[aat-send] ℹ️ identity 的 a2a_url 是回环地址（${senderHost}），不作为身份线索；按签名主体认定`);
+    // [2026-11-06] 这里原来自己写了一份 hostOf（第三套口径，且不剥路径）：
+    //   a2a_url = http://h:3100/a2a/json-rpc 时 senderHost 带着路径，
+    //   与本仓 identity-source.js 和接收端 _hostOfUrl 都不同向 → 会误拒发送（exit 4）。
+    //   一份判据只能有一个实现，改为直接调 lib/identity-source.js（与 doctor 同源）。
+    const { checkIdentitySource } = require(path.join(ROOT, 'scripts', 'lib', 'identity-source.js'));
+    const chk = checkIdentitySource(self.url, selfAat.agentId);
+    if (chk.peerRejects) {
+      console.error(`❌ 身份自相矛盾，拒绝发送`);
+      console.error(`   identity.json 的 a2a_url = ${self.url}（声称来源 ${chk.senderHost}）`);
+      console.error(`   而 AAT 的 iss        = ${selfAat.agentId}（签名主体 ${chk.issHost}）`);
+      console.error(`   对方会判 issuer_host_mismatch。请在 identity.json 把 a2a_url 改对，或设 A2A_IDENTITY_PATH。`);
+      process.exit(4);
+    }
+    if (chk.verdict === 'loopback') {
+      console.warn(`[aat-send] ℹ️ identity 的 a2a_url 是回环地址（${chk.senderHost}），不作为身份线索；按签名主体认定`);
     }
   }
 

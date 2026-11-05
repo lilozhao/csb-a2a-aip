@@ -34,6 +34,7 @@ node scripts/aat-keys.js export
 | 检查 | 通过标准 | 不通过怎么办 |
 |---|---|---|
 | 版本 | `5.3.0` 或更高 | 先升级，见 `docs/AAT.md`；**5.2.x 不要尝试，会白折腾** |
+| **配套依赖** | **`csb-security` ≥ `1.1.0`**（升到 5.3.13+ 时硬性） | 只升 a2a-aip 不升 security，服务启动直接崩：`e2eManager.getStatus is not a function`（5.3.13 改了 E2E 三态契约）。**11-06 恺与清漪各自独立踩到同一处**，所以写进前置表 —— 两条升级必须同一批做完，不能只升一半 |
 | `a2a-aat.js` | 文件存在 | 同上 |
 | `aat-keys.js export` | 打印出 agent_id + 指纹，无报错 | 见 `docs/AAT.md`「私钥从哪来」三级回退 |
 | agent_id | `名字@可达地址:端口`，与注册表一致 | 地址写成回环/NAT 地址也能用，但对方排障时会更麻烦 |

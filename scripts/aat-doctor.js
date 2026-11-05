@@ -171,9 +171,25 @@ function localHealth(port) {
 
   // ── 8. 对端专项（可选）────────────────────────
   if (PEER) {
-    const hit = pinned.find(([k, v]) => k === PEER || v.name === PEER || String(v.name || '').includes(PEER));
+    // [2026-11-06 · 苏念实测] 旧实现是精确键/名匹配：
+    //   --peer 'ruolan@172.28.0.214:3100' 报「未固定」，--peer 'ruolan' 报「已固定」。
+    //   同一配置、同一枚公钥，两个问法两个结论 —— 判据落在键名而不是身份上。
+    //   上游 aat-keys.js 的 locate() 早就处理过同一类（榫那次），doctor 没跟上 = 同一仓两套口径。
+    //   现在直接复用 locate()，不再另写一份匹配逻辑。
+    let hit = pinned.find(([k, v]) => k === PEER || v.name === PEER || String(v.name || '').includes(PEER));
+    let locNote = '';
+    if (!hit) {
+      try {
+        const kt = require(path.join(ROOT, 'scripts', 'aat-keys.js'));
+        const loc = kt.__test && kt.__test.locate ? kt.__test.locate(PEER) : null;
+        if (loc) {
+          hit = pinned.find(([k]) => k === loc.key);
+          if (hit) locNote = `（经 locate() 归一：${PEER} → 键 ${loc.key}）`;
+        }
+      } catch { /* 老版本无 locate，退回旧行为 */ }
+    }
     push('peer', `对端 ${PEER} 已固定`, !!hit
-      , hit ? `${hit[0]} · ${String(hit[1].aidPublicKey?.x || hit[1].publicKey?.x || '').slice(0, 12)}…`
+      , hit ? `${hit[0]} · ${String(hit[1].aidPublicKey?.x || hit[1].publicKey?.x || '').slice(0, 12)}…${locNote}`
         : '未固定 → 对方发来的 AAT 只会得到 no_pinned_key'
       , `node scripts/aat-keys.js pin '${PEER}' '<对方JWK>' --fingerprint <64位>`);
   }
