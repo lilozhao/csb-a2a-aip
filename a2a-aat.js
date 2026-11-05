@@ -424,11 +424,11 @@ function verifyInbound(sender, { expectedAudience } = {}) {
   const s = sender || {};
 
   if (!expectedAudience) {
-    return { ok: false, error: 'missing_expected_audience', reason: '不校验受众等于允许受众混淆，拒绝验证' };
+    return _reflect('missing_expected_audience', '不校验受众等于允许受众混淆，拒绝验证');
   }
 
   const token = s.aat || s.attestation || null;
-  if (!token) return { ok: false, error: 'no_token', reason: '消息未携带 AAT' };
+  if (!token) return _reflect('no_token', '消息未携带 AAT');
 
   // 先读 iss（**未验签，仅用于选钥匙**），再用该钥匙验签 —— 见 findPinnedKeyByIssuer 注释
   let iss = null;
@@ -436,11 +436,13 @@ function verifyInbound(sender, { expectedAudience } = {}) {
     const payloadB64 = token.split('.')[1];
     iss = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8')).iss || null;
   } catch {
-    return { ok: false, error: 'malformed', reason: '无法解析 token payload（不是三段式 JWT？）' };
+    return _reflect('malformed', '无法解析 token payload（不是三段式 JWT？）');
   }
 
   const pinned = findPinnedKeyByIssuer(iss);
-  if (!pinned.ok) return { ok: false, error: 'no_pinned_key', reason: pinned.reason, issuer: iss };
+  if (!pinned.ok) {
+    return { ..._reflect(pinned.error || 'no_pinned_key', pinned.reason), issuer: iss };
+  }
 
   const r = _aatLib().verifyAAT(token, {
     publicKey: pinned.key,
@@ -452,7 +454,10 @@ function verifyInbound(sender, { expectedAudience } = {}) {
   });
 
   if (!r.valid) {
-    return { ok: false, error: r.error, reason: _explain(r.error), detail: r.detail };
+    // §3.6：拒绝必须带可执行下一步（Security v1.1.1）。
+    // remediation 与 reason 分开两个字段，而不是缝进 reason —— 缝进去的话
+    // 「对方读没读到下一步」就无法机械判定了（§3.6.1 要求它是个独立字段）。
+    return _reflect(r.error, _explain(r.error), { detail: r.detail });
   }
 
   // 交叉核对：sender.url 若指向**另一个已固定公钥的 Agent**，说明「签名主体 ≠ 声称来源」→ 拒绝
@@ -470,11 +475,12 @@ function verifyInbound(sender, { expectedAudience } = {}) {
         mapped = list.find((a) => (_hostOfUrl(a.url) || '') === senderHost && a.aidPublicKey);
       } catch { /* 忽略 */ }
       return {
-        ok: false,
-        error: 'issuer_host_mismatch',
-        reason: `签名主体是 ${r.payload.iss}，但消息声称来自 ${senderHost}`
-          + (mapped ? `（对应已固定 Agent: ${stripEmojiSafe(mapped.name)}）` : '')
-          + ' —— 声称来源与签名身份不一致，拒绝',
+        ..._reflect(
+          'issuer_host_mismatch',
+          `签名主体是 ${r.payload.iss}，但消息声称来自 ${senderHost}`
+            + (mapped ? `（对应已固定 Agent: ${stripEmojiSafe(mapped.name)}）` : '')
+            + ' —— 声称来源与签名身份不一致，拒绝',
+        ),
       };
     }
     console.warn(`[AAT] ℹ️ sender.url(${senderHost}) 是回环地址，不作为身份线索；按签名主体 ${r.payload.iss} 认定`);
@@ -507,6 +513,38 @@ function _explain(err) {
     replay_detected: '这个 jti 已用过（重放）',
     missing_jti: 'token 缺 jti',
   }[err] || err;
+}
+
+// ─────────────────────────────────────────────────────────────
+// 拒绝的可执行下一步 (§3.6 / W-54)
+// 单一真相源在 ./aat-remediation.js —— 服务层语义，不放进加密库。
+// 另有一处也要用它：csb-identity/routes.js 的 POST /aat/verify（那里直接调
+// csb.verifyAAT，不经 _explain），接线见该文件。
+// ─────────────────────────────────────────────────────────────
+const { remediationFor } = require('./aat-remediation.js');
+
+/**
+ * 构造一个**合格的拒绝**（Security v1.1.1 §3.6）。
+ *
+ * 为什么收口到一个函数：本文件有 7 处拒绝出口，散着拼字段必然有人漏
+ * —— 漏的那处照旧返回 ok:false，调用方看不出少了个 remediation，
+ * 这正是「静默的冷拒绝」（warm-reject.js 当初立模块的同一个理由）。
+ *
+ * @param {string} err       error 码
+ * @param {string} reason    人类可读原因
+ * @param {object} [extra]   额外字段（issuer/detail 等）
+ * @returns {{ok:false, error:string, reason:string, remediation:string, fixable_by:string}}
+ */
+function _reflect(err, reason, extra) {
+  const rem = remediationFor(err);
+  return {
+    ok: false,
+    error: err,
+    reason,
+    remediation: rem.next_step,
+    fixable_by: rem.fixable_by,
+    ...(extra || {}),
+  };
 }
 
 // ─────────────────────────────────────────────────────────────

@@ -23,6 +23,16 @@ const csb = require('../../csb-security/lib/index.js');
 
 const HERE = __dirname;
 
+/**
+ * 拒绝附带的两个字段（Security v1.1.1 §3.6 · W-54）。
+ * 抽成一行是因为本文件拒绝出口很多，逐个拼容易漏——而漏的那处照旧返回 4xx，
+ * 调用方看不出少了一句话，这正是「静默的冷拒绝」。
+ */
+function _withRem(remediationFor, err) {
+  const r = remediationFor(err);
+  return { remediation: r.next_step, fixable_by: r.fixable_by };
+}
+
 function readBodyRaw(req) {
   return new Promise((resolve, reject) => {
     let b = ''; req.on('data', d => { b += d; if (b.length > 1e6) { reject(new Error('body_too_large')); req.destroy(); } });
@@ -772,17 +782,27 @@ function createIdentityHandler(opts = {}) {
       }
       if (p === '/aat/verify' && m === 'POST') {
         const b = await body();
-        if (!b.token) return send(res, 400, { ok: false, error: 'token_required' }), true;
+        // §3.6：本端点的**每一个**拒绝出口都要带可执行下一步。
+        // 2026-11-05 实测抽到两处漏网（token_required / agent_not_registered）——
+        // 只接“验签失败”那条是不够的，先被拦下的拒绕同样在拒人。
+        const rem = require('../aat-remediation.js').remediationFor;
+        if (!b.token) return send(res, 400, { ok: false, error: 'token_required', ..._withRem(rem, 'token_required') }), true;
         let pub = SVC.aid.public_key, expectedAudience = b.expect_audience || SVC.agentId;
         if (b.agent_id) {
           const rec = identities.get(b.agent_id);
-          if (!rec) return send(res, 404, { ok: false, error: 'agent_not_registered' }), true;
+          if (!rec) return send(res, 404, { ok: false, error: 'agent_not_registered', ..._withRem(rem, 'agent_not_registered') }), true;
           pub = rec.aid.public_key; expectedAudience = b.expect_audience || b.agent_id;
         }
         const v = csb.verifyAAT(b.token, { publicKey: pub, expectedAudience, jtiCache: b.check_replay === false ? null : jtiCache });
         if (v.valid) stats.aat_verified++;
         audit.append({ event_type: 'aat_verify', caller_id: (v.payload && v.payload.sub) || 'unknown', callee_id: SVC.agentId, ip_address: ipSrc, ip_direct: ip, result: v.valid ? 'success' : 'denied', scopes_denied: v.valid ? [] : [v.error] });
-        return send(res, v.valid ? 200 : 401, v), true;
+        // 这里直接调 csb.verifyAAT（不经 a2a-aat.js 的 _explain），所以得单独接一次。
+        // 补救文案与 a2a-aat.js 共用同一个真相源（`../aat-remediation.js`，注意在 csb-identity/ 子目录）——
+        // 两处各写一份必然漂移，而漂移时两边都「看起来在工作」。
+        if (!v.valid) {
+          return send(res, 401, { ...v, ..._withRem(rem, v.error) }), true;
+        }
+        return send(res, 200, v), true;
       }
 
       if (p === '/breach' && m === 'POST') {
