@@ -203,6 +203,11 @@ function traceMiddleware(options = {}) {
           agent: String(agentName),
           method: method.toString(),
           status: status,
+          // [2026-11-05 K-3] 必须把真实 HTTP 状态码带下去。
+          //   过去只传 'OK'/'error'，落盘后 "拒绝(401)" 与 "服务器崩了(500)" 无法区分，
+          //   Kindness Score 的分母（总拒绝）因此数不出来 —— 那时算出的 W 恒等于 1.0，是假绿。
+          httpStatus: res.statusCode,
+          path: req.originalUrl || req.url || '',
           durationMs: duration,
           ip: req.ip || req.socket?.remoteAddress || null,
           details: body?.params?.message?.parts?.[0]?.text?.substring(0, 50) || '',

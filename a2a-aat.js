@@ -37,11 +37,80 @@ const AAT_TTL = 300;              // 5 分钟
 const AAT_MAX_DRIFT = 300;        // iat 偏差上限
 const AAT_MAX_CACHE = 5000;       // jti 缓存上限（防内存膨胀）
 
+/**
+ * 已见 jti（防重放）—— [2026-11-09 W-51] 从「进程内 Set」改为「进程内存 + 磁盘持久化」。
+ *
+ * 为什么必须持久化：原实现重启即清空，且 verifyAAT 只在 exp 未过期时查 jti
+ * （见 csb-security/lib/identity/aat.js 第 3 步 exp 校验在 jti 之前），
+ * 所以重启后、旧 token 还在 TTL 内的那段窗口里，重放是**可行的**。
+ * 这不是理论问题：A2A 一天重启数次（保活脚本 + 手动重启）。
+ *
+ * 落盘时机：jti 变动即 append 一行（JSONL），不做全量重写 ——
+ *   ① 崩溃安全：最多丢最后一行，不丢整表
+ *   ② 写放大可控：每条 AAT 只追加 ~50 字节
+ * 载入时机：进程启动时读一次，只保留**尚未过期**的 jti（按 exp 过滤，表不会无限长）。
+ */
+const AAT_JTI_FILE = process.env.AAT_JTI_FILE
+  || path.join(process.env.A2A_DATA_DIR || path.join(__dirname, 'data'), 'aat-jti.jsonl');
+
 /** 已见 jti（防重放）。进程内共享。 */
 const _jtiCache = new Set();
 const _jtiOrder = [];
 
-function _rememberJti(jti) {
+/**
+ * 启动时载入历史 jti（只保留未过期的）。
+ * 坏行跳过并告警，绝不因为状态文件损坏而拒绝启动（与 learned-state 同策略）。
+ */
+function _loadJtiFromDisk(now = Date.now()) {
+  let raw = '';
+  try {
+    raw = fs.readFileSync(AAT_JTI_FILE, 'utf8');
+  } catch (e) {
+    if (e.code !== 'ENOENT') {
+      process.stderr.write(`[aat] jti 状态读取失败（${e.message}），按空状态处理: ${AAT_JTI_FILE}\n`);
+    }
+    return { loaded: 0, skipped: 0 };
+  }
+  const nowSec = Math.floor(now / 1000);
+  let loaded = 0;
+  let skipped = 0;
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const rec = JSON.parse(line);
+      // 只留还有可能被重放的（未过期 + 在 drift 容忍内）
+      if (!rec.jti || !Number.isFinite(rec.exp)) { skipped++; continue; }
+      if (rec.exp + AAT_MAX_DRIFT < nowSec) { skipped++; continue; }
+      if (_jtiCache.has(rec.jti)) continue;
+      _jtiCache.add(rec.jti);
+      _jtiOrder.push(rec.jti);
+      loaded++;
+    } catch {
+      skipped++;
+    }
+  }
+  // 载入后仍受内存上限约束
+  while (_jtiOrder.length > AAT_MAX_CACHE) {
+    _jtiCache.delete(_jtiOrder.shift());
+  }
+  return { loaded, skipped };
+}
+
+/** 把一条 jti 追加到磁盘（失败不阻断鉴权，但必须留痕） */
+let _jtiWriteFailures = 0;
+let _jtiLastWriteError = null;
+function _persistJti(jti, exp) {
+  try {
+    fs.mkdirSync(path.dirname(AAT_JTI_FILE), { recursive: true });
+    fs.appendFileSync(AAT_JTI_FILE, JSON.stringify({ jti, exp, at: new Date().toISOString() }) + '\n');
+  } catch (e) {
+    _jtiWriteFailures++;
+    _jtiLastWriteError = e.message;
+    process.stderr.write(`[aat] ⚠️ jti 落盘失败（累计 ${_jtiWriteFailures} 次）: ${e.message}\n`);
+  }
+}
+
+function _rememberJti(jti, exp) {
   if (_jtiCache.has(jti)) return false;
   _jtiCache.add(jti);
   _jtiOrder.push(jti);
@@ -49,8 +118,22 @@ function _rememberJti(jti) {
     const old = _jtiOrder.shift();
     _jtiCache.delete(old);
   }
+  if (Number.isFinite(exp)) _persistJti(jti, exp);
   return true;
 }
+
+/** 从（已验签的）token 里取 exp（秒）。解不出返回 NaN —— 此时不落盘，只留内存。 */
+function _expOfToken(token) {
+  try {
+    const p = JSON.parse(Buffer.from(String(token).split('.')[1], 'base64url').toString('utf8'));
+    return Number.isFinite(p.exp) ? p.exp : NaN;
+  } catch {
+    return NaN;
+  }
+}
+
+// 模块加载即恢复（进程启动时）
+const _jtiRestored = _loadJtiFromDisk();
 
 /** 读取 csb-security 的 AAT 实现（唯一事实源，不复制逻辑） */
 function _aatLib() {
@@ -424,11 +507,11 @@ function verifyInbound(sender, { expectedAudience } = {}) {
   const s = sender || {};
 
   if (!expectedAudience) {
-    return { ok: false, error: 'missing_expected_audience', reason: '不校验受众等于允许受众混淆，拒绝验证' };
+    return _reflect('missing_expected_audience', '不校验受众等于允许受众混淆，拒绝验证');
   }
 
   const token = s.aat || s.attestation || null;
-  if (!token) return { ok: false, error: 'no_token', reason: '消息未携带 AAT' };
+  if (!token) return _reflect('no_token', '消息未携带 AAT');
 
   // 先读 iss（**未验签，仅用于选钥匙**），再用该钥匙验签 —— 见 findPinnedKeyByIssuer 注释
   let iss = null;
@@ -436,23 +519,30 @@ function verifyInbound(sender, { expectedAudience } = {}) {
     const payloadB64 = token.split('.')[1];
     iss = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8')).iss || null;
   } catch {
-    return { ok: false, error: 'malformed', reason: '无法解析 token payload（不是三段式 JWT？）' };
+    return _reflect('malformed', '无法解析 token payload（不是三段式 JWT？）');
   }
 
   const pinned = findPinnedKeyByIssuer(iss);
-  if (!pinned.ok) return { ok: false, error: 'no_pinned_key', reason: pinned.reason, issuer: iss };
+  if (!pinned.ok) {
+    return { ..._reflect(pinned.error || 'no_pinned_key', pinned.reason), issuer: iss };
+  }
 
   const r = _aatLib().verifyAAT(token, {
     publicKey: pinned.key,
     expectedAudience,
     jtiCache: {
       has: (j) => _jtiCache.has(j),
-      add: (j) => _rememberJti(j),
+      // 把 exp 一起带下去：持久化时要靠它做「过期即淘汰」，否则表会无限长。
+      // verifyAAT 的 add 回调只传 jti，所以这里先解一次 payload 取 exp（已验签通过才会走到这）。
+      add: (j) => _rememberJti(j, _expOfToken(token)),
     },
   });
 
   if (!r.valid) {
-    return { ok: false, error: r.error, reason: _explain(r.error), detail: r.detail };
+    // §3.6：拒绝必须带可执行下一步（Security v1.1.1）。
+    // remediation 与 reason 分开两个字段，而不是缝进 reason —— 缝进去的话
+    // 「对方读没读到下一步」就无法机械判定了（§3.6.1 要求它是个独立字段）。
+    return _reflect(r.error, _explain(r.error), { detail: r.detail });
   }
 
   // 交叉核对：sender.url 若指向**另一个已固定公钥的 Agent**，说明「签名主体 ≠ 声称来源」→ 拒绝
@@ -470,11 +560,12 @@ function verifyInbound(sender, { expectedAudience } = {}) {
         mapped = list.find((a) => (_hostOfUrl(a.url) || '') === senderHost && a.aidPublicKey);
       } catch { /* 忽略 */ }
       return {
-        ok: false,
-        error: 'issuer_host_mismatch',
-        reason: `签名主体是 ${r.payload.iss}，但消息声称来自 ${senderHost}`
-          + (mapped ? `（对应已固定 Agent: ${stripEmojiSafe(mapped.name)}）` : '')
-          + ' —— 声称来源与签名身份不一致，拒绝',
+        ..._reflect(
+          'issuer_host_mismatch',
+          `签名主体是 ${r.payload.iss}，但消息声称来自 ${senderHost}`
+            + (mapped ? `（对应已固定 Agent: ${stripEmojiSafe(mapped.name)}）` : '')
+            + ' —— 声称来源与签名身份不一致，拒绝',
+        ),
       };
     }
     console.warn(`[AAT] ℹ️ sender.url(${senderHost}) 是回环地址，不作为身份线索；按签名主体 ${r.payload.iss} 认定`);
@@ -507,6 +598,38 @@ function _explain(err) {
     replay_detected: '这个 jti 已用过（重放）',
     missing_jti: 'token 缺 jti',
   }[err] || err;
+}
+
+// ─────────────────────────────────────────────────────────────
+// 拒绝的可执行下一步 (§3.6 / W-54)
+// 单一真相源在 ./aat-remediation.js —— 服务层语义，不放进加密库。
+// 另有一处也要用它：csb-identity/routes.js 的 POST /aat/verify（那里直接调
+// csb.verifyAAT，不经 _explain），接线见该文件。
+// ─────────────────────────────────────────────────────────────
+const { remediationFor } = require('./aat-remediation.js');
+
+/**
+ * 构造一个**合格的拒绝**（Security v1.1.1 §3.6）。
+ *
+ * 为什么收口到一个函数：本文件有 7 处拒绝出口，散着拼字段必然有人漏
+ * —— 漏的那处照旧返回 ok:false，调用方看不出少了个 remediation，
+ * 这正是「静默的冷拒绝」（warm-reject.js 当初立模块的同一个理由）。
+ *
+ * @param {string} err       error 码
+ * @param {string} reason    人类可读原因
+ * @param {object} [extra]   额外字段（issuer/detail 等）
+ * @returns {{ok:false, error:string, reason:string, remediation:string, fixable_by:string}}
+ */
+function _reflect(err, reason, extra) {
+  const rem = remediationFor(err);
+  return {
+    ok: false,
+    error: err,
+    reason,
+    remediation: rem.next_step,
+    fixable_by: rem.fixable_by,
+    ...(extra || {}),
+  };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -597,6 +720,14 @@ module.exports = {
   exportPublicKey,
   _resetSelf,
   _jtiCache,
+  // [2026-11-09 W-51] jti 持久化：文件路径 / 恢复统计 / 落盘失败计数（供 /health 与单测消费）
+  _jtiState: {
+    file: AAT_JTI_FILE,
+    restored: _jtiRestored,
+    writeFailures: () => _jtiWriteFailures,
+    lastWriteError: () => _jtiLastWriteError,
+    reload: _loadJtiFromDisk,
+  },
   // 仅供测试：同 host 多条目时的选取策略（顺序不该决定成败）
   __test: { _pickPinnedEntry },
 };

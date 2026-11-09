@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * federation.js — CSB-Federation 协作层（P3）
+ * ⚠️ LEGACY（2026-11-04 移入 legacy/）—— 本文件当前不可执行，勿当实现依据
  *
- * 实现 CSB Open Protocol v1.0 §3：
- *   1. 协作模式选择矩阵
- *   2. 联邦生命周期（创建→运行→解散）
- *   3. 联邦证书
- *
- * 依赖: audit-log.js, delegation-p2.js（温暖拒绝）
+ * 移入原因：
+ *   ① require('./audit-log') 直接崩
+ *   ② 依赖同目录 legacy/delegation-p2.js（同样崩）
+ *   ③ 无人引用（csb-identity/routes.js 引的是 csb-identity/federation.js）
+ *   ④ 真正的身份联邦在 csb-identity/federation.js（明德 B1 推取式）
+ * 详见 ./README.md 与 docs/w51-kindness-layer-decision-2026-11-04.md
  */
 
 const crypto = require('crypto');

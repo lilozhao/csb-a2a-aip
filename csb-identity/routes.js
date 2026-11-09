@@ -23,6 +23,16 @@ const csb = require('../../csb-security/lib/index.js');
 
 const HERE = __dirname;
 
+/**
+ * 拒绝附带的两个字段（Security v1.1.1 §3.6 · W-54）。
+ * 抽成一行是因为本文件拒绝出口很多，逐个拼容易漏——而漏的那处照旧返回 4xx，
+ * 调用方看不出少了一句话，这正是「静默的冷拒绝」。
+ */
+function _withRem(remediationFor, err) {
+  const r = remediationFor(err);
+  return { remediation: r.next_step, fixable_by: r.fixable_by };
+}
+
 function readBodyRaw(req) {
   return new Promise((resolve, reject) => {
     let b = ''; req.on('data', d => { b += d; if (b.length > 1e6) { reject(new Error('body_too_large')); req.destroy(); } });
@@ -723,6 +733,19 @@ function createIdentityHandler(opts = {}) {
           return deny(400, 'capabilities_type_invalid', { hint: 'capabilities 必须是字符串数组，如 ["chat"]' });
         }
 
+        // P4（2026-11-05 硅隐拍板）：票里不许出现通配符。
+        // 域授权请在签发端展开一次，验签端永远做字面比对 —— 否则验签端要维护一套展开规则，
+        // 等于把 P4 取消。全角 ＊ 与半角 * 一并拒（先归一化再判，防绕过）。
+        // 不改「行为」只把静默失败提前：这类票在验签端本来就过不去（wildcard_global/domain）。
+        const wildcards = caps.filter(c => /[\*\uFF0A]/.test(c));
+        if (wildcards.length) {
+          return deny(400, 'capability_wildcard_unsupported', {
+            hint: '票内不允许通配符；请展开成具体能力，例如 ["forum.post","forum.reply"]',
+            wildcards,
+            mode: AAT_ISSUE_MODE,
+          });
+        }
+
         // ttl 封顶：长 ttl = 长重放窗口（此前 b.ttl||300 谁都能要长命 token）
         const ttlRaw = b.ttl === undefined || b.ttl === null ? 300 : b.ttl;
         if (typeof ttlRaw !== 'number' || !Number.isFinite(ttlRaw) || ttlRaw <= 0) {
@@ -761,17 +784,27 @@ function createIdentityHandler(opts = {}) {
       }
       if (p === '/aat/verify' && m === 'POST') {
         const b = await body();
-        if (!b.token) return send(res, 400, { ok: false, error: 'token_required' }), true;
+        // §3.6：本端点的**每一个**拒绝出口都要带可执行下一步。
+        // 2026-11-05 实测抽到两处漏网（token_required / agent_not_registered）——
+        // 只接“验签失败”那条是不够的，先被拦下的拒绕同样在拒人。
+        const rem = require('../aat-remediation.js').remediationFor;
+        if (!b.token) return send(res, 400, { ok: false, error: 'token_required', ..._withRem(rem, 'token_required') }), true;
         let pub = SVC.aid.public_key, expectedAudience = b.expect_audience || SVC.agentId;
         if (b.agent_id) {
           const rec = identities.get(b.agent_id);
-          if (!rec) return send(res, 404, { ok: false, error: 'agent_not_registered' }), true;
+          if (!rec) return send(res, 404, { ok: false, error: 'agent_not_registered', ..._withRem(rem, 'agent_not_registered') }), true;
           pub = rec.aid.public_key; expectedAudience = b.expect_audience || b.agent_id;
         }
         const v = csb.verifyAAT(b.token, { publicKey: pub, expectedAudience, jtiCache: b.check_replay === false ? null : jtiCache });
         if (v.valid) stats.aat_verified++;
         audit.append({ event_type: 'aat_verify', caller_id: (v.payload && v.payload.sub) || 'unknown', callee_id: SVC.agentId, ip_address: ipSrc, ip_direct: ip, result: v.valid ? 'success' : 'denied', scopes_denied: v.valid ? [] : [v.error] });
-        return send(res, v.valid ? 200 : 401, v), true;
+        // 这里直接调 csb.verifyAAT（不经 a2a-aat.js 的 _explain），所以得单独接一次。
+        // 补救文案与 a2a-aat.js 共用同一个真相源（`../aat-remediation.js`，注意在 csb-identity/ 子目录）——
+        // 两处各写一份必然漂移，而漂移时两边都「看起来在工作」。
+        if (!v.valid) {
+          return send(res, 401, { ...v, ..._withRem(rem, v.error) }), true;
+        }
+        return send(res, 200, v), true;
       }
 
       if (p === '/breach' && m === 'POST') {

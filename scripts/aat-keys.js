@@ -238,7 +238,7 @@ function cmdPin(argv) {
     console.error('   这可能是三种情况之一，脚本不替你猜：');
     console.error('   a) 对端真的换了钥 → 确认后加 --rotate（建议附 --reason "..."）');
     console.error('   b) 你贴错了别人的公钥 → 别加 --rotate，先核对来源');
-    console.error('   c) 同一 agent 有多把钥并存 → 先查清「哪把在服役」再动（见 docs/key-rotation-drill.md）');
+    console.error('   c) 同一 agent 有多把钥并存 → 先查清「哪把在服役」再动（见 docs/AAT-EXCHANGE-TEMPLATE.md §7.1）');
     console.error('');
     console.error('   ⚠️ 轮换顺序：先让对端通知全部已 pin 邻居 → 邻居侧逐个 --rotate → 最后才撤旧钥。');
     process.exit(4);

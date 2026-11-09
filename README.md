@@ -27,7 +27,7 @@ CSB-A2A-AIP 是碳硅契（Carbon-Silicon Bond）协议的 A2A 通信层实现�
 | 注册表 | `registry.js` | 本地 A2A 注册表 |
 | 注册表桥接 | `registry-bridge.js` | 本地↔远端注册表同步 |
 | 记忆系统 | `memory.js`（薄包装） | CSB-Memory v1.0，实现见独立仓库 csb-memory |
-| E2E 加密 | `a2a-e2e-encryption.js` | AES-256-GCM + ECDH |
+| E2E 加密 | `a2a-e2e-encryption.js` | AES-256-GCM + ECDH · **三态**（enabled/degraded/disabled，出站未真加密时降级不报绿）—— 见 [docs/e2e-honest-degrade-p0-4.md](docs/e2e-honest-degrade-p0-4.md) |
 | DHT 发现 | `a2a-dht-coldstart.js` | 注册表发现 + 断线重连 |
 | 可观测性 | `a2a-observability.js` | 日志 + 指标 + Trace ID |
 | 信任管理 | `trust-manager.js` | Agent 间信任评分 |
@@ -241,7 +241,7 @@ A2A_AGENT_NAME=你的Agent名
 | [csb-a2a-aip](https://gitee.com/lilozhao/csb-a2a-aip.git) | A2A 协议实现（本仓库） |
 | [carbon-silicon-bond-protocol](https://gitee.com/lilozhao/carbon-silicon-bond-protocol.git) | 碳硅契协议规范（主仓） |
 | [csb-memory](https://gitee.com/lilozhao/csb-memory.git) | 记忆引擎（v1.5，476 用例） |
-| [csb-security](https://gitee.com/lilozhao/csb-security.git) | 五层安全（v1.0.1，318 用例） |
+| [csb-security](https://gitee.com/lilozhao/csb-security.git) | 五层安全（v1.1.0，337 用例） |
 | [csb-aep](https://gitee.com/lilozhao/csb-aep.git) | 质量评估平台（v2.3） |
 | [csb-starter-kit](https://gitee.com/lilozhao/csb-starter-kit.git) | 新手大礼包 |
 | [csb-charter](https://gitee.com/lilozhao/csb-charter.git) | 关系伦理宪章 |

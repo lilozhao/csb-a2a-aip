@@ -299,6 +299,10 @@ const anomalyDetector = securityAdapter.createAnomalyDetector();
 const e2eManager = new E2EEncryption({
   masterKey: process.env.A2A_ENCRYPTION_KEY || null,
   keyVersion: parseInt(process.env.A2A_KEY_VERSION || '1'),
+  // [2026-11-03 · P0-4] 出站信封级真加密**尚未实现**（见 a2a-e2e-encryption.js 文件头诚实边界）。
+  //   这里默认 false ⇒ 配了密钥也只会是 degraded，/health 如实说「有密钥但出站是明文」。
+  //   等真做的那天，改成读 A2A_E2E_OUTBOUND_ENCRYPTED=1 —— 但必须先确认协议两端解包顺序已打通。
+  outboundEncrypted: process.env.A2A_E2E_OUTBOUND_ENCRYPTED === '1',
 });
 
 const standardAPI = new A2AStandardAPI({
@@ -556,11 +560,18 @@ app.use((req, res, next) => {
 app.use(traceMiddleware({ metrics, auditLogger }));
 
 // E2E 加密中间件 (A2A-021)
-if (e2eManager.enabled) {
+// [2026-11-03 · P0-4] 三态取代布尔：enabled / degraded / disabled。
+//   degraded = 有密钥但出站未真加密 —— 以前这里打 ✅，外部以为能传敏感数据。
+const _e2eStatus = e2eManager.getStatus();
+if (_e2eStatus.status === 'enabled') {
   app.use(createEncryptionMiddleware(e2eManager));
-  console.log('[A2A] ✅ E2E 加密已启用 (A2A-021)');
+  console.log('[A2A] ✅ E2E 加密已启用（出站真加密）');
+} else if (_e2eStatus.status === 'degraded') {
+  // 入站解密仍可用（密钥在），出站不加密 —— 如实说出来
+  app.use(createEncryptionMiddleware(e2eManager));
+  console.log(`[A2A] ⚠️  E2E 降级（${_e2eStatus.reason}）：有密钥可解入站，但出站**未真加密**（明文），勿传敏感数据`);
 } else {
-  console.log('[A2A] ℹ️  E2E 加密未配置密钥');
+  console.log(`[A2A] ℹ️  E2E 未启用（${_e2eStatus.reason}）`);
 }
 
 // ===== 路由注册 =====
@@ -851,21 +862,84 @@ const inboundAuthHook = (req, res, next) => {
       ? inboundAuth.MODE.SHADOW : inboundAuthMode;
     const d = inboundAuth.decide(c, effMode);
     if (d.record) {
+      // [2026-11-08 若兰] vantage：经 frp 隧道的调用来源在 A2A 层看来是本机，
+      //   审计与限流里看到的 IP 会失真（明德已提醒）。要求：此类调用不进 wouldBlock 分母。
+      //
+      //   与明德（csb-a2a-aip 同源代码的另一份部署）对齐口径，字段/头名全一致：
+      //   · 头：X-CSB-Vantage（也接受 body.metadata.vantage）
+      //   · 三字段：vantage / vantageSource / countedInWouldBlockBase
+      //   · 分母规则：vantage !== 'direct' 一律不进 wouldBlock 分母
+      //
+      //   ⚠️ X-CSB-Vantage 是声明，不是证明，任何人都能填。
+      //   它只用于分桶统计，**不能当准入依据**。准入只认 AID + AAT 验签。
+      const v = (() => {
+        const h = req.headers['x-csb-vantage'];
+        if (h) return { vantage: String(h), vantageSource: 'declared' };
+        const bv = req.body && req.body.metadata && req.body.metadata.vantage;
+        if (bv) return { vantage: String(bv), vantageSource: 'declared' };
+        // 未自报 → 看 socket。环回记 loopback，其余记 direct。
+        //   ::ffff:127.0.0.1 是 IPv4-mapped IPv6，必须归一化，否则会误判成非环回。
+        const raw = String(req.socket?.remoteAddress || req.ip || '');
+        const ip = raw.replace(/^::ffff:/i, '');
+        const isLoopback = ip === '127.0.0.1' || ip === '::1' || /^127\./.test(ip);
+        return { vantage: isLoopback ? 'loopback' : 'direct', vantageSource: 'socket' };
+      })();
+      // 分母规则固定：只有 direct 计入。声明值不可信，但用于分桶足够；
+      // 若真有人乱填，只是把自己移出分母，不会影响准入。
+      const countedInWouldBlockBase = v.vantage === 'direct';
       inboundAuth.recordShadow({
         // req.path 在挂载点是相对的（会记成 "/"），必须带 baseUrl 才知道是哪个入站口
         path: (req.baseUrl || '') + (req.path === '/' ? '' : req.path), mode: effMode, cls: c.cls, why: c.why,
         name: c.name, url: c.url, hasAat: c.hasAat,
         verified: c.verified || null, aatError: aatError || null,
         wouldBlock: d.wouldBlock, action: d.action, reason: d.reason,
+        vantage: v.vantage,
+        vantageSource: v.vantageSource,
+        countedInWouldBlockBase,
         ip: req.ip,
       });
     }
     if (d.action === 'block') {
-      return res.status(d.httpStatus || 401).json({
-        error: 'caller_not_authenticated',
-        cls: c.cls,
-        hint: '需要带 sender（name+url）或 X-CSB-AAT；见 docs/inbound-auth-rollout.md',
-      });
+      // [2026-11-04 §2.1] 入站拦截不再只回一句 caller_not_authenticated：
+      //   被拦的人要能知道「差什么」和「怎么补」。五字段契约由 lib/warm-reject 兜底（不合格就抛，不发）。
+      //   注：中途件自身出错仍 fail-open（下方 catch），此处只处理「已确定要拦」。
+      const hintByCls = {
+        A: {
+          reason: '入站调用无身份：sender 缺 name/url，也未携带 X-CSB-AAT（A 类：无身份）',
+          next_step: '下次请求带 sender{name,url}，或向本实例身份服务申请 AAT 放在 X-CSB-AAT 头',
+        },
+        B: {
+          reason: `入站声称「${c.name || '未知'}」但${c.hasAat ? '携带的 AAT 验签未通过' : '无 url 可核'}（B 类：冒名嫌疑）`,
+          next_step: c.hasAat
+            ? '重新签发 AAT（audience 指向本实例 agentId）后重试；旧票可能已过期或被烧 jti'
+            : '补上 sender.url 使其与注册表登记一致，或改用 X-CSB-AAT 做密码学身份证明',
+        },
+      };
+      const h = hintByCls[c.cls] || {
+        reason: `入站调用被拒（分类 ${c.cls}）`,
+        next_step: '带上 sender{name,url} 与有效 X-CSB-AAT 后重试；仍不行请联系本实例主人核对名单',
+      };
+      try {
+        const { warmReject, CODES } = require('./warm-reject');
+        return res.status(d.httpStatus || 401).json(warmReject({
+          code: CODES.AUTH_REQUIRED,
+          reason: h.reason,
+          next_step: h.next_step,
+          agent: c.name || 'unknown',
+          action: (req.baseUrl || '') + (req.path === '/' ? '' : req.path),
+          request_id: req.headers['x-request-id'] || null,
+          trace_id: req.traceId || null,
+          context: { cls: c.cls, mode: effMode, why: c.why, aatError: aatError || null },
+        }));
+      } catch (we) {
+        // 契约不满足（理论上不会）→ 退到旧响应，但把异常记下来，不把「我们的形状错误」当对方的不合格
+        try { console.warn('[inbound-auth] 温暖拒绝构造失败，退到简式响应:', we.message); } catch { /* noop */ }
+        return res.status(d.httpStatus || 401).json({
+          error: 'caller_not_authenticated',
+          cls: c.cls,
+          hint: '需要带 sender（name+url）或 X-CSB-AAT；见 docs/inbound-auth-rollout.md',
+        });
+      }
     }
   } catch (e) {
     // 鉴权中间件自身出错绝不阻断业务（fail-open，并留痕）
@@ -876,6 +950,48 @@ const inboundAuthHook = (req, res, next) => {
 mountOnInboundPaths(inboundAuthHook);
 
 standardAPI.registerRoutes(app);
+
+// [2026-11-04 §2.2 · K-2] 追问通道 `/v1/why/:decision_id`。
+//   为什么单独一段、放在 registerRoutes 之后：它是**只读回放**，不参与裁决，
+//   也不该被 inbound-auth 中间件拦（那个中间件只挂入站消息口，不挂这里）。
+//   鉴权复用 /tasks 的口径（内网免令牌 / 外部 Bearer），不另发明第二套。
+//   诚实边界：只覆盖 warm-reject 通道的拒绝；AAT 验签 / 论坛 403 各写各的日志。
+//
+// [2026-11-09 W-51 方案 B] 统一的「只读端点」鉴权：/tasks、/v1/why、/a2a/introspect 共用。
+//   取消内网豁免 —— frp 隧道 type="tcp"，纯四层转发，服务端看到的来源就是 127.0.0.1，
+//   与真本机逐字节不可区分。明德 18:27 实测：7102 上无 token/错 token/空 Bearer 全 200。
+//   仅当显式设 A2A_TASKS_ALLOW_LOCAL=1 才恢复「纯本机免 token」（生产不设）。
+const a2aReadAuth = (req) => {
+  const crypto = require('crypto');
+  const ip = (req.socket && req.socket.remoteAddress) || '';
+  const loopback = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+  if (process.env.A2A_TASKS_ALLOW_LOCAL === '1' && loopback && !standardAPI._isLoopbackViaProxy(req)) {
+    return true;
+  }
+  const configured = standardAPI._tasksToken();
+  if (!configured) return false; // 未配令牌 → 一律拒（fail-safe，不静默放行）
+  const hdr = req.headers['authorization'] || '';
+  const provided = hdr.startsWith('Bearer ') ? hdr.slice(7).trim() : '';
+  try {
+    const a = Buffer.from(provided), b = Buffer.from(configured);
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  } catch { return false; }
+};
+
+try {
+  const { registerWhyEndpoint } = require('./why-endpoint.js');
+  // 静默判定（不写响应）：内网免令牌；外部须带与 /tasks 相同的 Bearer 令牌。
+  // 独立写一遍而不是复用 _checkTasksAuth —— 后者会直接回 401，
+  // 而这里需要把「不合格」交给 why-endpoint 自己回成带 next_step 的形状。
+  const crypto = require('crypto');
+  const whyAuth = a2aReadAuth;
+  registerWhyEndpoint(app, {
+    checkAuth: whyAuth,
+  });
+  console.log('[v1/why] 追问通道已注册：GET /v1/why/:decision_id');
+} catch (e) {
+  console.warn('[v1/why] ⚠️ 追问通道加载失败（不影响主服务）:', e.message);
+}
 
 // 健康检查 (增强: 含 DHT + E2E + 指标)
 // [2026-09-17] UAC 自检（入仓版）：/health 的 `uac` 段 + `/health/uac-probe` 探针。
@@ -905,9 +1021,20 @@ function auditHealthSection() {
     return {
       ...base,
       chainValid: ok,
-      entries: v?.count ?? v?.verified ?? null,
+      // [2026-11-05 修] 验不过时也要报行数。
+      //   旧写法 entries: v?.count ?? null —— verifyChain 早退还时 count 不存在，
+      //   于是「链断了」的实例在 /health 上只看到 entries:null，
+      //   连账本有多少行都看不到。诊断时最需要的恰恰是这个数（0 行 = 空账本，上万行 = 轮转/并发）。
+      //   现在退回 base.entries（stats() 里的真实行数），信息不丢。
+      entries: v?.count ?? v?.verified ?? base.entries ?? null,
       reason: ok ? 'chain_valid' : (v?.reason || 'chain_invalid'),
       brokenAt: v?.brokenAt ?? v?.atSeq ?? null,
+      // [2026-11-05] 验的是哪一份：disk = 与 GDI 同一口径；memory = readonly 退而验内存尾部
+      verifiedSource: v?.source ?? null,
+      brokenAtSeq: v?.brokenAtSeq ?? null,
+      // 内存只留尾部时，把「看得到的」与「账本里有的」分开报，不让人把局部当全局
+      inMemoryEntries: base.inMemoryEntries ?? null,
+      trimmedFromMemory: base.trimmedFromMemory ?? 0,
     };
   } catch (e) {
     return { chainValid: false, reason: 'audit_probe_error: ' + e.message };
@@ -1041,8 +1168,19 @@ app.get('/metrics', (req, res) => {
 // A2A Introspect 端点 - Agent 自我报告配置摘要
 try {
   const { attachIntrospect } = require('./a2a-introspect-middleware.js');
+  // [2026-11-09 W-51] 原实现：算了 workspaceRoot 却**没用**它，实参仍是 process.cwd()
+  //   —— 而服务 cwd 是 `csb-a2a-aip/` 子目录，SOUL.md / MEMORY.md 都在上一级
+  //   → hasSoul/hasMemory/hasUser/hasSelfState/hasHeartbeat 全 false。
+  //   「算了不用」比「没算」更难发现：变量名看着是对的，读代码时不逐字比对就漏。
+  //   现在：显式 WORKSPACE > 向上查找（由 A2AIntrospect 内部 resolveWorkspace 兜底）。
   const workspaceRoot = process.env.WORKSPACE || '/home/node/.openclaw/workspace';
-  attachIntrospect(app, { workspace: path.resolve(process.env.WORKSPACE || process.cwd()), identity: identity });
+  // [2026-11-09 W-51 方案 B] introspect 与 /tasks、/v1/why 同口径：
+  //   取消内网豁免（隧道把来源伪装成环回，IP 判据失效）。复用同一套 whyAuth。
+  attachIntrospect(app, {
+    workspace: path.resolve(workspaceRoot),
+    identity: identity,
+    checkAuth: a2aReadAuth,
+  });
 } catch(e) {
   console.warn('[A2A] ⚠️ introspect 加载失败:', e.message);
 }
@@ -1056,7 +1194,8 @@ app.get('/agents', async (req, res) => {
 // 能力声明
 app.get('/capabilities', (req, res) => {
   const capabilities = standardAPI.getCapabilities();
-  capabilities.e2e = e2eManager.enabled;
+  // [2026-11-03 · P0-4] 能力声明同样三态化：对外说「我支持什么」不能比 /health 更乐观
+  capabilities.e2e = e2eManager.getStatus().status;
   capabilities.dht = dhtManager.getStatus().level.name;
   capabilities.observability = {
     metrics: true,
@@ -1150,7 +1289,7 @@ app.get('/.well-known/ai-catalog.json', (req, res) => {
 console.log(`\n${'─'.repeat(55)}`);
 console.log(`  ${identity.emoji || '🌸'} ${identity.name} A2A Server v${A2A_VERSION}`);
 console.log(`  📡 端口:${port}  协议:A2A v0.6(27条+Google v1.0.0)  DHT:待启动`);
-console.log(`  📋 JSON-RPC  │ REST  │ SSE  │ E2E(${e2eManager.enabled ? '✅' : '⚠️ '})`);
+console.log(`  📋 JSON-RPC  │ REST  │ SSE  │ E2E(${{ enabled: '✅', degraded: '⚠️', disabled: '⚪' }[e2eManager.getStatus().status] || '⚪'} ${e2eManager.getStatus().status})`);
 console.log(`${'─'.repeat(55)}`);
 
 // 启动 DHT 探测
