@@ -47,11 +47,25 @@ function main() {
   const perName = new Map();
   let wouldBlock = 0;
   let withAat = 0;
+  // [2026-11-08] 与明德部署对齐的口径（两边同名仓各自的副本，必须同源）：
+  //   · 分母规则：vantage !== 'direct' 一律不进 wouldBlock 分母
+  //   · 旧日志无 vantage 字段 → 视为 direct（历史即事实，不追溯改写）
+  //   为什么这是对的：经隧道的流量来源 IP 已失真，不能代表社区真实调用；
+  //   把它计入分母会让放量决策被一条隧道带偏。
+  //   ⚠️ vantage 是声明不是证明，只能分桶，不能当准入依据。
+  const frpRows = [];
+  const scopedRows = [];
 
   for (const r of rows) {
     if (byCls[r.cls] !== undefined) byCls[r.cls]++;
-    if (r.wouldBlock) wouldBlock++;
     if (r.hasAat) withAat++;
+    // 无 vantage 字段的旧记录 → 按 direct 计入（不追溯）
+    const counted = r.countedInWouldBlockBase !== undefined
+      ? !!r.countedInWouldBlockBase
+      : (r.vantage === undefined || r.vantage === 'direct');
+    if (!counted) { frpRows.push(r); continue; }
+    scopedRows.push(r);
+    if (r.wouldBlock) wouldBlock++;
     const key = r.name || '(无名)';
     const cur = perName.get(key) || { name: key, total: 0, wouldBlock: 0, cls: r.cls, url: r.url || '' };
     cur.total++; if (r.wouldBlock) cur.wouldBlock++;
@@ -64,8 +78,10 @@ function main() {
     range: rows.length ? [rows[0].ts, rows[rows.length - 1].ts] : [],
     observe: { start: OBSERVE_START, end: OBSERVE_END, daysLeft: daysLeft() },
     classes: byCls,
+    inScope: scopedRows.length,
     wouldBlock,
-    wouldBlockPct: rows.length ? Math.round((wouldBlock / rows.length) * 1000) / 10 : null,
+    wouldBlockPct: scopedRows.length ? Math.round((wouldBlock / scopedRows.length) * 1000) / 10 : null,
+    frpExcluded: frpRows.length,
     withAat,
     top,
   };
@@ -75,6 +91,7 @@ function main() {
   console.log(`\n📊 入站鉴权 shadow 观察期日报`);
   console.log(`   日志：${path.relative(ROOT, logFile)}  ${rows.length} 条`);
   console.log(`   观察期：${OBSERVE_START} → ${OBSERVE_END}（剩 ${daysLeft()} 天）\n`);
+  console.log(`   计入分母：${scopedRows.length} 条${frpRows.length ? `（另剔除非 direct vantage ${frpRows.length} 条，不计入）` : ''}`);
   console.log(`   本会被拦（wouldBlock）：${wouldBlock} 条  ${out.wouldBlockPct}%`);
   console.log(`   带 AAT 头：${withAat} 条\n`);
   for (const k of ['A', 'B', 'C', 'D']) console.log(`   ${k}  ${String(byCls[k]).padStart(4)} 条`);

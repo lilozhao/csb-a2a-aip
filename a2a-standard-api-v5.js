@@ -121,11 +121,73 @@ class A2AStandardAPI {
     return process.env.A2A_TASKS_TOKEN || process.env.A2A_GATEWAY_TOKEN || '';
   }
 
+  /**
+   * 请求是否「真的来自本机」—— 而非经隧道/反代伪装成的环回。
+   *
+   * [2026-11-09 W-51 事故] 苏念/明德实测：47.121.28.125:7102（frp 隧道）
+   *   带错 token / 不带 token 都是 200，而同一台 3100 直连是 401。
+   *   根因：frpc 未启用 proxy_protocol → 隧道转发 localIP=127.0.0.1
+   *   → req.socket.remoteAddress = 127.0.0.1 → 命中「内网免令牌」→ 鉴权被短路。
+   *   一句「127.0.0.1 是内网」把「本机真实调用」和「隧道伪装的本机」混为一谈，
+   *   与 L-2026-11-04-03「代码里有 ≠ 跑在服务路径上」同族：判据没错，前提错了。
+   *
+   * 判据（可机械核对）：
+   *   环回来源（127.0.0.0/8 / ::1）**只有在没有任何转发痕迹时**才算内网。
+   *   转发痕迹 = X-Forwarded-For / X-Real-IP / Forwarded / Via 任一存在。
+   *   · 真本机调用（curl 127.0.0.1、同容器进程）→ 无这些头 → 仍放行（内网互读不断）
+   *   · 隧道/反代进来 → 即使 remoteAddress 是环回，也判为外部 → 必须带 token
+   *
+   * 诚实边界：若隧道**完全不注入任何转发头**，本判据无法识别，仍会放行。
+   *   届时必须在入口层解决（frpc 开 proxy_protocol，或代理层改写来源）。
+   *   本判据只做「能认出来的那一半」，不假装全覆盖。
+   *
+   * @param {object} req express request
+   * @returns {boolean}
+   */
+  _isLoopbackViaProxy(req) {
+    if (!req || !req.headers) return false;
+    const h = req.headers;
+    const ip = (req.socket && req.socket.remoteAddress) || (req.connection && req.connection.remoteAddress) || '';
+    let v4 = ip;
+    if (v4.startsWith('::ffff:')) v4 = v4.slice(7);
+    const isLoop = v4 === '127.0.0.1' || v4 === '::1' || v4.startsWith('127.');
+    if (!isLoop) return false;
+    // 环回 + 任一转发头 → 不是「真的本机」
+    const fwd = h['x-forwarded-for'] || h['x-real-ip'] || h['forwarded'] || h['via']
+      || h['x-forwarded-host'] || h['x-original-forwarded-for'];
+    return !!(fwd && String(fwd).trim());
+  }
+
   // 返回 true = 放行；false = 已回 401（调用方直接 return）
   _checkTasksAuth(req, res) {
     const ip = (req.socket && req.socket.remoteAddress) || '';
-    // 内网直接放行
-    if (this._isInternalIp(ip)) return true;
+    // ══════════════════════════════════════════════════════════════════
+    // [2026-11-09 W-51 事故 · 方案 B] 取消内网豁免 —— /tasks 一律要 token。
+    //
+    // 为什么不再按来源 IP 判内外：
+    //   方案 A（环回+转发头判据）已被实测证伪 —— frp 隧道是 **type="tcp"**，
+    //   纯四层转发，不可能注入 X-Forwarded-For/Via。隧道进来的请求
+    //   在服务端就是 127.0.0.1，与真本机**逐字节无法区分**。
+    //   明德 18:27 实测：7102 上 /tasks 无 token / 错 token / 空 Bearer 全是
+    //   200 + 41.7KB 全量对话历史。任何基于「来源 IP」的判据在这里都失效。
+    //
+    // 代价评估（改动前实测）：近 48 次 /tasks 调用 100% 来自本机自测
+    //   （127.0.0.1 ×44 + 今日探针），**外部 Agent 主动拉取 0 次**。
+    //   所以「一律要 token」对现有互操作的实际影响接近于零。
+    //
+    // 诚实边界：内网 Agent 若真要读 /tasks，现在必须带 token。
+    //   分发方式：A2A_TASKS_TOKEN 走既有私下渠道（同 frp token 的规矩）。
+    //   这是**有意的行为变更**，不是回归。
+    // ══════════════════════════════════════════════════════════════════
+    const proxiedLoopback = this._isLoopbackViaProxy(req);
+    // 仍保留一个例外：**显式 opt-in** 的本地运维通道（默认关闭）。
+    //   设 A2A_TASKS_ALLOW_LOCAL=1 才恢复「纯本机无 token」，
+    //   且仍排除带转发头的请求。生产不设 → 一律要 token。
+    if (process.env.A2A_TASKS_ALLOW_LOCAL === '1'
+        && !proxiedLoopback
+        && (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1')) {
+      return true;
+    }
 
     // [2026-11-04 §2.1] 401 不再只回一句 Unauthorized：
     //   `/tasks` 是 Agent 与 Agent 之间最常碰到的口，一句「Unauthorized」对对方毫无用处。
@@ -168,14 +230,21 @@ class A2AStandardAPI {
       const b = Buffer.from(configured);
       ok = a.length === b.length && crypto.timingSafeEqual(a, b);
     } catch { ok = false; }
+    if (proxiedLoopback && !provided) {
+      // [2026-11-09] 隧道进来的请求，先说清「你是外部」，别让对方误以为内网免令牌
+      return deny(
+        '本请求带转发头（X-Forwarded-For / X-Real-IP / Via ≥ 1 个），说明经隧道或反向代理进来，按外部处理：/tasks 需 Bearer 令牌（401）',
+        '在请求头加 Authorization: Bearer <A2A_TASKS_TOKEN>；若确实是从本机调用，请直连 127.0.0.1:3100 而不经隧道/反代'
+      );
+    }
     if (!ok) {
       return deny(
         provided
           ? 'Authorization 令牌与本实例 A2A_TASKS_TOKEN 不匹配（注意：tasks token ≠ gateway token）'
-          : '缺 Authorization 头：外部访问 /tasks 需 Bearer 令牌（内网免令牌）',
+          : '缺 Authorization 头：/tasks 一律需 Bearer 令牌（2026-11-09 起取消内网豁免 —— 隧道会把来源伪装成环回，IP 判据不可靠）',
         provided
           ? '改用 csb-a2a-aip/.env 里的 A2A_TASKS_TOKEN 重试；用 gateway 令牌会得到 401（故意的）'
-          : '在请求头加 Authorization: Bearer <A2A_TASKS_TOKEN>；只是自己人调用则从内网发起'
+          : '在请求头加 Authorization: Bearer <A2A_TASKS_TOKEN>（向本实例主人私下索取）'
       );
     }
     return true;

@@ -862,12 +862,40 @@ const inboundAuthHook = (req, res, next) => {
       ? inboundAuth.MODE.SHADOW : inboundAuthMode;
     const d = inboundAuth.decide(c, effMode);
     if (d.record) {
+      // [2026-11-08 若兰] vantage：经 frp 隧道的调用来源在 A2A 层看来是本机，
+      //   审计与限流里看到的 IP 会失真（明德已提醒）。要求：此类调用不进 wouldBlock 分母。
+      //
+      //   与明德（csb-a2a-aip 同源代码的另一份部署）对齐口径，字段/头名全一致：
+      //   · 头：X-CSB-Vantage（也接受 body.metadata.vantage）
+      //   · 三字段：vantage / vantageSource / countedInWouldBlockBase
+      //   · 分母规则：vantage !== 'direct' 一律不进 wouldBlock 分母
+      //
+      //   ⚠️ X-CSB-Vantage 是声明，不是证明，任何人都能填。
+      //   它只用于分桶统计，**不能当准入依据**。准入只认 AID + AAT 验签。
+      const v = (() => {
+        const h = req.headers['x-csb-vantage'];
+        if (h) return { vantage: String(h), vantageSource: 'declared' };
+        const bv = req.body && req.body.metadata && req.body.metadata.vantage;
+        if (bv) return { vantage: String(bv), vantageSource: 'declared' };
+        // 未自报 → 看 socket。环回记 loopback，其余记 direct。
+        //   ::ffff:127.0.0.1 是 IPv4-mapped IPv6，必须归一化，否则会误判成非环回。
+        const raw = String(req.socket?.remoteAddress || req.ip || '');
+        const ip = raw.replace(/^::ffff:/i, '');
+        const isLoopback = ip === '127.0.0.1' || ip === '::1' || /^127\./.test(ip);
+        return { vantage: isLoopback ? 'loopback' : 'direct', vantageSource: 'socket' };
+      })();
+      // 分母规则固定：只有 direct 计入。声明值不可信，但用于分桶足够；
+      // 若真有人乱填，只是把自己移出分母，不会影响准入。
+      const countedInWouldBlockBase = v.vantage === 'direct';
       inboundAuth.recordShadow({
         // req.path 在挂载点是相对的（会记成 "/"），必须带 baseUrl 才知道是哪个入站口
         path: (req.baseUrl || '') + (req.path === '/' ? '' : req.path), mode: effMode, cls: c.cls, why: c.why,
         name: c.name, url: c.url, hasAat: c.hasAat,
         verified: c.verified || null, aatError: aatError || null,
         wouldBlock: d.wouldBlock, action: d.action, reason: d.reason,
+        vantage: v.vantage,
+        vantageSource: v.vantageSource,
+        countedInWouldBlockBase,
         ip: req.ip,
       });
     }
@@ -928,24 +956,35 @@ standardAPI.registerRoutes(app);
 //   也不该被 inbound-auth 中间件拦（那个中间件只挂入站消息口，不挂这里）。
 //   鉴权复用 /tasks 的口径（内网免令牌 / 外部 Bearer），不另发明第二套。
 //   诚实边界：只覆盖 warm-reject 通道的拒绝；AAT 验签 / 论坛 403 各写各的日志。
+//
+// [2026-11-09 W-51 方案 B] 统一的「只读端点」鉴权：/tasks、/v1/why、/a2a/introspect 共用。
+//   取消内网豁免 —— frp 隧道 type="tcp"，纯四层转发，服务端看到的来源就是 127.0.0.1，
+//   与真本机逐字节不可区分。明德 18:27 实测：7102 上无 token/错 token/空 Bearer 全 200。
+//   仅当显式设 A2A_TASKS_ALLOW_LOCAL=1 才恢复「纯本机免 token」（生产不设）。
+const a2aReadAuth = (req) => {
+  const crypto = require('crypto');
+  const ip = (req.socket && req.socket.remoteAddress) || '';
+  const loopback = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+  if (process.env.A2A_TASKS_ALLOW_LOCAL === '1' && loopback && !standardAPI._isLoopbackViaProxy(req)) {
+    return true;
+  }
+  const configured = standardAPI._tasksToken();
+  if (!configured) return false; // 未配令牌 → 一律拒（fail-safe，不静默放行）
+  const hdr = req.headers['authorization'] || '';
+  const provided = hdr.startsWith('Bearer ') ? hdr.slice(7).trim() : '';
+  try {
+    const a = Buffer.from(provided), b = Buffer.from(configured);
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  } catch { return false; }
+};
+
 try {
   const { registerWhyEndpoint } = require('./why-endpoint.js');
   // 静默判定（不写响应）：内网免令牌；外部须带与 /tasks 相同的 Bearer 令牌。
   // 独立写一遍而不是复用 _checkTasksAuth —— 后者会直接回 401，
   // 而这里需要把「不合格」交给 why-endpoint 自己回成带 next_step 的形状。
   const crypto = require('crypto');
-  const whyAuth = (req) => {
-    const ip = (req.socket && req.socket.remoteAddress) || '';
-    if (standardAPI._isInternalIp(ip)) return true;
-    const configured = standardAPI._tasksToken();
-    if (!configured) return false; // 未配令牌 → 外部一律拒（fail-safe，不静默放行）
-    const hdr = req.headers['authorization'] || '';
-    const provided = hdr.startsWith('Bearer ') ? hdr.slice(7).trim() : '';
-    try {
-      const a = Buffer.from(provided), b = Buffer.from(configured);
-      return a.length === b.length && crypto.timingSafeEqual(a, b);
-    } catch { return false; }
-  };
+  const whyAuth = a2aReadAuth;
   registerWhyEndpoint(app, {
     checkAuth: whyAuth,
   });
@@ -1129,8 +1168,19 @@ app.get('/metrics', (req, res) => {
 // A2A Introspect 端点 - Agent 自我报告配置摘要
 try {
   const { attachIntrospect } = require('./a2a-introspect-middleware.js');
+  // [2026-11-09 W-51] 原实现：算了 workspaceRoot 却**没用**它，实参仍是 process.cwd()
+  //   —— 而服务 cwd 是 `csb-a2a-aip/` 子目录，SOUL.md / MEMORY.md 都在上一级
+  //   → hasSoul/hasMemory/hasUser/hasSelfState/hasHeartbeat 全 false。
+  //   「算了不用」比「没算」更难发现：变量名看着是对的，读代码时不逐字比对就漏。
+  //   现在：显式 WORKSPACE > 向上查找（由 A2AIntrospect 内部 resolveWorkspace 兜底）。
   const workspaceRoot = process.env.WORKSPACE || '/home/node/.openclaw/workspace';
-  attachIntrospect(app, { workspace: path.resolve(process.env.WORKSPACE || process.cwd()), identity: identity });
+  // [2026-11-09 W-51 方案 B] introspect 与 /tasks、/v1/why 同口径：
+  //   取消内网豁免（隧道把来源伪装成环回，IP 判据失效）。复用同一套 whyAuth。
+  attachIntrospect(app, {
+    workspace: path.resolve(workspaceRoot),
+    identity: identity,
+    checkAuth: a2aReadAuth,
+  });
 } catch(e) {
   console.warn('[A2A] ⚠️ introspect 加载失败:', e.message);
 }

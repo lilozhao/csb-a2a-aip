@@ -11,9 +11,34 @@
 const fs = require('fs');
 const path = require('path');
 
+/**
+ * 从起点逐级向上，找到「带 SOUL.md 或 MEMORY.md」的那一级作为 workspace。
+ * 找不到就回退到起点本身（保持可预测，不静默跑飞）。
+ * [2026-11-09 W-51] 服务 cwd 是 `csb-a2a-aip/`，工作区根在上一级。
+ * @param {string} start
+ * @returns {string}
+ */
+function resolveWorkspace(start) {
+  let dir = path.resolve(start);
+  for (let i = 0; i < 6; i++) {
+    try {
+      if (fs.existsSync(path.join(dir, 'SOUL.md')) || fs.existsSync(path.join(dir, 'MEMORY.md'))) {
+        return dir;
+      }
+    } catch { /* 权限问题继续向上 */ }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return path.resolve(start);
+}
+
 class A2AIntrospect {
   constructor(options = {}) {
-    this.workspace = options.workspace || process.cwd();
+    // [2026-11-09 W-51] 原来直接吃 process.cwd()，而服务 cwd 是 `csb-a2a-aip/` 子目录
+    //   → SOUL.md / MEMORY.md 都在上一级 → hasSoul/hasMemory 全 false（苏念 10-27 修过同款病）。
+    //   现在从给定起点逐级向上，找到「带 SOUL.md 或 MEMORY.md」的那一级作为 workspace。
+    this.workspace = options.workspace || resolveWorkspace(process.cwd());
     this.identity = options.identity || {};
     this.exposeLevel = options.exposeLevel || 'standard'; // minimal | standard | full
   }
