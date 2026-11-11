@@ -308,12 +308,80 @@ function createFederation(deps) {
   }
 
   // ---------------- 读侧辅助（R3 / R5） ----------------
+  // 2026-11-11 硅隐批：此前只要不是 federated 就返 reachable:true —— 与地址无关，
+  // 对 `kan@kan.invalid:0`、`qingzhu@127.0.0.1:3400`、`yansuan@192.168.0.104:3101` 与真公网
+  // 三者输出完全同值，字段零信息量。现按「门牌」计算，并显式标明这是算的不是探的。
+  const PLACEHOLDER_TLDS = ['.invalid', '.local', '.localhost', '.example', '.test', '.internal'];
+
+  function parseEndpoint(rec) {
+    // endpoint 优先；缺失时退回 agent_id 的 host:port 部分
+    let raw = (rec && rec.aid && rec.aid.endpoint) || '';
+    let src = 'aid.endpoint';
+    if (!raw && rec && typeof rec.agent_id === 'string') {
+      const at = rec.agent_id.indexOf('@');
+      if (at > -1) { raw = 'http://' + rec.agent_id.slice(at + 1); src = 'agent_id'; }
+    }
+    if (!raw) return null;
+    let u;
+    try { u = new URL(/^[a-z]+:\/\//i.test(raw) ? raw : 'http://' + raw); } catch (e) { return { raw, src, bad: true }; }
+    let host = String(u.hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+    let port = u.port === '' ? null : Number(u.port);
+    return { raw, src, host, port, bad: false };
+  }
+
+  function classifyHost(host) {
+    if (!host) return { scope: 'none', reason: 'no_host' };
+    if (host === 'localhost' || host.endsWith('.localhost')) return { scope: 'loopback', reason: 'loopback_endpoint' };
+    for (const tld of PLACEHOLDER_TLDS) {
+      if (host.endsWith(tld)) return { scope: 'placeholder', reason: 'placeholder_endpoint' };
+    }
+    const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+    if (v4) {
+      const a = Number(v4[1]), b = Number(v4[2]);
+      if (a === 127) return { scope: 'loopback', reason: 'loopback_endpoint' };
+      if (a === 0) return { scope: 'unspecified', reason: 'unspecified_address' };
+      if (a === 10) return { scope: 'private', reason: 'private_network_endpoint' };
+      if (a === 192 && b === 168) return { scope: 'private', reason: 'private_network_endpoint' };
+      if (a === 172 && b >= 16 && b <= 31) return { scope: 'private', reason: 'private_network_endpoint' };
+      if (a === 169 && b === 254) return { scope: 'private', reason: 'link_local_endpoint' };
+      return { scope: 'public', reason: null };
+    }
+    if (host === '::1' || /^f[cd][0-9a-f]{2}:/.test(host) || /^fe80:/.test(host)) {
+      return { scope: 'private', reason: 'ipv6_non_public' };
+    }
+    return { scope: 'public', reason: null };
+  }
+
   function reachabilityOf(rec) {
     if (!rec) return null;
+    const now = new Date().toISOString();
     if (rec.federated) {
-      return { reachable: false, reason: 'private_network', endpoint_scope: 'private', source: rec.federated.source, fetched_at: rec.federated.fetched_at };
+      return { reachable: false, reason: 'private_network', endpoint_scope: 'private', source: rec.federated.source, fetched_at: rec.federated.fetched_at, basis: 'computed_from_endpoint', probe: 'not_performed', observed_at: now };
     }
-    return { reachable: true, reason: null, endpoint_scope: 'public' };
+    const ep = parseEndpoint(rec);
+    if (!ep) {
+      return { reachable: false, reason: 'no_endpoint', endpoint_scope: 'none', basis: 'computed_from_endpoint', probe: 'not_performed', observed_at: now };
+    }
+    if (ep.bad) {
+      return { reachable: false, reason: 'unparsable_endpoint', endpoint_scope: 'unknown', endpoint: ep.raw, basis: 'computed_from_endpoint', probe: 'not_performed', observed_at: now };
+    }
+    const cls = classifyHost(ep.host);
+    const isPublicScope = cls.scope === 'public';
+    // 端口 0 / 缺端口：地址本身不指向服务，公网域名也一样够不着
+    const portBad = (ep.port === null || ep.port === 0);
+    const reachable = isPublicScope && !portBad;
+    // 端口缺失/为 0：即便主机是公网，也不是一个可拨的 A2A 门牌（A2A 走 host:port 的 json-rpc）
+    const reason = !isPublicScope ? cls.reason : (portBad ? 'endpoint_without_port' : null);
+    return {
+      reachable,
+      reason,
+      endpoint_scope: portBad && isPublicScope ? 'declared_only' : cls.scope,
+      endpoint: ep.raw,
+      endpoint_source: ep.src,
+      basis: 'computed_from_endpoint',
+      probe: 'not_performed',
+      observed_at: now,
+    };
   }
   function isStale(id) { const r = identities.get(id); return !!(r && r.stale); }
   function aidExpired(id) {
