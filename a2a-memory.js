@@ -163,6 +163,12 @@ ${existingMemory ? existingMemory.substring(0, 1500) : '（首次对话，无已
  * @param {string} message - 发送的消息
  * @param {string} reply - 收到的回复
  */
+// [美硅 2026-10-24] 蒸馏互斥：同一时刻只允许一个蒸馏在跑。
+// 背景：蒸馏自己也要打一次 LLM，和正常应答共用同一个 API key；并发时两边一起变慢
+//（实测应答从 3.7s 被拖到 13s，AEP 性能项因此判失败）。后来的请求用「后到覆盖」合并到下一轮。
+let _distillRunning = false;
+let _pendingDistill = null;
+
 async function processConversation(agentName, message, reply) {
   // [2026-10-24] BID 信号实时抽取（opt-in）。
   //   放在**蒸馏之前**：即使这条对话因"不值得蒸馏"被跳过，关系信号也该被记下 ——
@@ -182,6 +188,32 @@ async function processConversation(agentName, message, reply) {
   
   const conversation = `若兰发送：${message}\n${agentName}回复：${reply}`;
 
+  // ── 蒸馏互斥体（见 _distillRunning 声明处的说明）──
+  if (_distillRunning) {
+    _pendingDistill = { agentName, message, reply };
+    console.log(`⏳ 蒸馏进行中，与 ${agentName} 的本次对话合并到下一轮`);
+    return false;
+  }
+  _distillRunning = true;
+  try {
+    return await _distillNow(agentName, message, reply, conversation);
+  } finally {
+    _distillRunning = false;
+    const pending = _pendingDistill;
+    _pendingDistill = null;
+    if (pending) {
+      setTimeout(() => {
+        processConversation(pending.agentName, pending.message, pending.reply)
+          .catch((e) => console.warn('[A2A-Memory] ⚠️ 合并蒸馏失败:', e.message));
+      }, 200);
+    }
+  }
+}
+
+/**
+ * 真正执行蒸馏（调用方需自行处理并发互斥）
+ */
+async function _distillNow(agentName, message, reply, conversation) {
   // 加载已有记忆
   const existingMemory = loadAgentMemory(agentName);
 

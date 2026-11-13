@@ -273,6 +273,10 @@ register('openai', async (identity, systemPrompt, userMessage, options = {}) => 
 
 // ── 直连外部 LLM（兼容旧 identity.llm 配置） ─────────────────
 register('direct', async (identity, systemPrompt, userMessage, options = {}) => {
+  return _withSlot(() => _directCall(identity, systemPrompt, userMessage, options));
+});
+
+async function _directCall(identity, systemPrompt, userMessage, options = {}) {
   const llmConfig = identity?.llm || {};
   if (!llmConfig.host) {
     console.error('[LLM-Router] direct 模式需要 identity.llm 配置');
@@ -304,6 +308,10 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
 
   return new Promise((resolve) => {
     const transport = String(llmConfig.port) === '443' ? https : http;
+    const _t0 = Date.now();
+    // [美硅 2026-10-24] 429 限流：云网关限流时旧行为是「静默降级到模板回复」——
+    // 日志看着像「LLM 没接」，实则是频率/额度问题。现在显式报出来并退避重试一次。
+    const attempt = (retryLeft) => {
     const req = transport.request({
       hostname: llmConfig.host,
       port: parseInt(llmConfig.port) || 80,
@@ -316,12 +324,25 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
         'Content-Length': Buffer.byteLength(payload),
       },
     }, res => {
+      if (process.env.A2A_LLM_DEBUG === '1') console.log('[LLM-Router][debug] HTTP', res.statusCode, '耗时', Date.now() - _t0, 'ms remote=' + (req.socket && req.socket.remoteAddress));
       const chunks = [];
       const isSSE = String(res.headers['content-type'] || '').includes('text/event-stream');
       res.on('data', c => chunks.push(c));
       res.on('end', () => {
         try {
           const body = Buffer.concat(chunks).toString('utf8');
+          // [美硅 2026-10-24 + 上游 37ff87d 合并] 两边都要：
+          //   ① 429 是限流，值得按 Retry-After 退避重试一次（我的本地修法）
+          //   ② 其余非 2xx 必须留痕 —— 静默降级是最贵的 bug（上游修法）
+          // 顺序：先判 429（可重试），再交给 noteUpstreamFailure 记失败原因。
+          if (res.statusCode === 429 && retryLeft > 0) {
+            const retryAfter = parseInt(res.headers['retry-after'] || '', 10);
+            const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+              ? Math.min(retryAfter * 1000, 15000) : 3000;
+            console.warn(`[LLM-Router] Direct 命中 429 限流：${body.slice(0, 120)} → ${waitMs}ms 后重试一次`);
+            setTimeout(() => attempt(retryLeft - 1), waitMs);
+            return;
+          }
           // 先看状态码：429/401/5xx 的响应体里没有 choices，只有 error。
           // 不看这行就会「静默跳过」，让降级看起来像正常的适配器轮换。
           if (noteUpstreamFailure('Direct', res.statusCode, body)) { resolve(null); return; }
@@ -363,11 +384,43 @@ register('direct', async (identity, systemPrompt, userMessage, options = {}) => 
         }
       });
     });
-    req.on('error', e => { console.error('[LLM-Router] Direct 连接失败:', e.message); resolve(null); });
-    req.setTimeout(timeout, () => { req.destroy(); console.error('[LLM-Router] Direct 超时'); resolve(null); });
+    req.on('error', e => { console.error('[LLM-Router] Direct 连接失败:', e.message, `(耗时 ${Date.now() - _t0}ms)`); resolve(null); });
+    req.on('socket', (s) => {
+      if (process.env.A2A_LLM_DEBUG === '1') console.log('[LLM-Router][debug] socket 分配', Date.now() - _t0, 'ms');
+      s.on('connect', () => { if (process.env.A2A_LLM_DEBUG === '1') console.log('[LLM-Router][debug] 已连接 remote=' + s.remoteAddress, Date.now() - _t0, 'ms'); });
+    });
+    req.setTimeout(timeout, () => { req.destroy(); console.error(`[LLM-Router] Direct 超时 (${timeout}ms, 已耗 ${Date.now() - _t0}ms)`); resolve(null); });
     req.write(payload); req.end();
+    };
+    attempt(1);
   });
-});
+}
+
+// [美硅 2026-10-24] 直连并发闸门：最多 2 个请求在飞，其余排队。
+// 起因：连续压测 + 自评会把 360 网关打成 429，429 触发退避重试，延迟反而堆到 7.7s。
+// 排队把突发摊平，429 自然少；也避免蒸馏与应答互相抢额度。
+const MAX_INFLIGHT = 2;
+let _inFlight = 0;
+const _waiters = [];
+function _withSlot(fn) {
+  return new Promise((resolve, reject) => {
+    const release = () => {
+      _inFlight -= 1;
+      const next = _waiters.shift();
+      if (next) next();
+    };
+    const run = () => {
+      _inFlight += 1;
+      Promise.resolve()
+        .then(() => fn())
+        .then(
+          (v) => { release(); resolve(v); },
+          (e) => { release(); reject(e); }
+        );
+    };
+    if (_inFlight < MAX_INFLIGHT) run(); else _waiters.push(run);
+  });
+}
 
 // ── 本地降级适配器（无 LLM 时的诚实回复） ──────────────────────
 register('local', async (identity, systemPrompt, userMessage, options = {}) => {

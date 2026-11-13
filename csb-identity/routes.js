@@ -44,7 +44,9 @@ function createIdentityHandler(opts = {}) {
   const DATA_DIR = path.resolve(opts.dataDir || path.join(HERE, 'data'));
   const LIMITS = { agent: 60, ip: 200, global: 1200, ...(opts.limits || {}) };
   const REGISTRY_URL = opts.registryUrl || 'http://127.0.0.1:3099';
-  const FORUM_REGISTRY_URL = opts.forumRegistryUrl || 'http://127.0.0.1:3500/api/agents';
+  // 2026-10-29: 默认值原为 http://127.0.0.1:3500/api/agents —— 该端口已不对外开（中文论坛改走 443），
+  // 本机也没有任何进程监听 3500 → 默认值指向空处，在册盘点会静默少一块。改为公网 443 入口。
+  const FORUM_REGISTRY_URL = opts.forumRegistryUrl || 'https://csbc.lilozkzy.top/api/agents';
   const log = opts.log || ((...a) => console.log(new Date().toISOString(), '[identity]', ...a));
 
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -465,7 +467,19 @@ function createIdentityHandler(opts = {}) {
       }
 
       if (p === '/identity' && m === 'GET') {
-        return send(res, 200, { ok: true, count: identities.size, identities: [...identities.values()].map(x => ({ agent_id: x.agent_id, name: x.name, passport_uri: x.passport_uri, reserved_claimed: x.reserved_claimed, covenant: !!x.covenant, federated: x.federated || null, stale: x.stale || false, endpoint_scope: x.endpoint_scope || 'public' })) }), true;
+        return send(res, 200, { ok: true, count: identities.size, identities: [...identities.values()].map(x => {
+          const r2 = federation.reachabilityOf(x);
+          return {
+            agent_id: x.agent_id, name: x.name, passport_uri: x.passport_uri,
+            reserved_claimed: x.reserved_claimed, covenant: !!x.covenant,
+            federated: x.federated || null, stale: x.stale || false,
+            // 2026-11-11：改为算出来的门牌口径（原为声明值，环回/私网也报 public）
+            endpoint_scope: (r2 && r2.endpoint_scope) || x.endpoint_scope || 'public',
+            endpoint_scope_declared: x.endpoint_scope || null,
+            reachable: !!(r2 && r2.reachable),
+            reachability_reason: (r2 && r2.reason) || null,
+          };
+        }) }), true;
       }
 
       // ===== 身份联邦（B1 · 2026-10-29）：源登记 / 快照摄入 / 状态 =====
@@ -524,6 +538,7 @@ function createIdentityHandler(opts = {}) {
         const rec = identities.get(id);
         if (!rec) return send(res, 404, { ok: false, error: 'agent_not_registered' }), true;
         const tl = computeTrustLevel(id);
+        const reach = federation.reachabilityOf(rec);
         return send(res, 200, {
           ok: true,
           identity: {
@@ -536,12 +551,15 @@ function createIdentityHandler(opts = {}) {
             breach: breach.isBlocked(id) ? 'effective' : null,
             connections_band: conn.band(conn.count(id)), // 粗粒度：连接数本身是隐私（若兰反馈）
             // R3：可达性显式 —— 「在册但不可直连」与「在册且可达」一眼能分
-            endpoint_scope: rec.endpoint_scope || 'public',
+            // 2026-11-11：endpoint_scope 改为**算出来的**（此前直接回声明值，环回/私网也报 public）；
+            // 原声明值另存 endpoint_scope_declared，声明与读数分开摆。
+            endpoint_scope: (reach && reach.endpoint_scope) || rec.endpoint_scope || 'public',
+            endpoint_scope_declared: rec.endpoint_scope || null,
             federated: rec.federated || null,
             stale: rec.stale || false,
             stale_since: rec.stale_since || null,
             owner_unverified: !!rec.owner_unverified,
-            reachability: federation.reachabilityOf(rec),
+            reachability: reach,
             aid_expires_at: (rec.aid && rec.aid.expires_at) || null,
             aid_expired: federation.aidExpired(id),
             federated_breach: federation.federatedBreach(id),
