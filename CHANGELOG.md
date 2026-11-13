@@ -1,5 +1,95 @@
 # CHANGELOG · csb-a2a-aip
 
+## v5.3.15（2026-11-09）— 🔴 安全补丁：取消内网豁免（W-51 隧道鉴权绕过）
+
+### 背景
+
+**2026-11-09 16:50**，明德与苏念从公网实测 `47.121.28.125:7102/tasks`：
+**不带 token / 带错 token / 空 Bearer —— 全部 200，返回 41,669 字节全量对话历史（419 条）。**
+同一台机器直连 `3100` 却是 401。同一主机、同一 IP、同版本，**一台放行一台拒绝**。
+
+### 根因（三层，逐层证伪）
+
+1. frpc 未启用 `proxy_protocol`，`localIP = "127.0.0.1"` → 隧道转发后 `req.socket.remoteAddress = 127.0.0.1`
+2. `_isInternalIp()` 把环回判为内网 → `/tasks` **直接放行**，鉴权被短路
+3. **`~/.frp/frpc.toml` 是 `type = "tcp"`** —— 纯四层转发，**不可能注入 X-Forwarded-For / Via 等 HTTP 头**
+
+> 第 3 条推翻了第一版修复（方案 A：靠转发头判外网）。本地 `curl -H "X-Forwarded-For"` 能拦，
+> 是因为那个头是**手写的**，不是隧道加的 —— 验了「代码会不会拦」，没验「输入会不会到」。
+> 用 `socat` 起纯 TCP 裸转发（与 frp 同行为）复现 → `/tasks` **200**，方案 A 当场证伪。
+
+### 修复（方案 B：取消内网豁免，一律要 token）
+
+| 文件 | 改动 |
+|---|---|
+| `a2a-standard-api-v5.js` | `_checkTasksAuth` 删除 `if (this._isInternalIp(ip)) return true;` |
+| `server_v5.js` | 抽出模块级 `a2aReadAuth`，`/v1/why` 与 `/a2a/introspect` 共用同一口径 |
+| `a2a-introspect-middleware.js` | 挂 `checkAuth`；拒绝走 `warm-reject` 唯一出口，文案与实现同步 |
+| `a2a-introspect.js` | `resolveWorkspace()` 逐级向上找 SOUL.md/MEMORY.md（原 `process.cwd()` 是子目录 → 全部探测失败） |
+| `a2a-aat.js` | jti 防重放：进程内 Set → **内存 + 磁盘 JSONL**（重启后旧 token 仍在 TTL 内的重放窗口被关闭） |
+| `scripts/inbound-auth-shadow-report.js` | 同步新口径 |
+
+配套（workspace 仓）：`scripts/a2a-delegate.js` 读对方 `/tasks` 时带 token（`--token` > `A2A_TASKS_TOKEN`）。
+
+### 为什么必须升级（不是「建议」）
+
+这是一次**入站**漏洞：任何把 A2A 端口映射到公网的实例，在 5.3.14 及以下**均无鉴权保护**。
+暴露面 = 「公网可达 + 跑 5.3.14 及以下」，与是否启用隧道无关 —— **有公网入口就要升。**
+
+### 代价评估（改动前实测）
+
+近 48 次 `/tasks` 调用 **100% 来自本机自测**（`127.0.0.1` ×44 + 当日探针），**外部 Agent 主动拉取 0 次**；
+本机 cron 调 `/tasks` **0 处**（watchdog / hourly_check / mon-v7 / morning-greeting / cross-test 全部只用 `/health`）。
+→ 「一律要 token」实际影响接近零，不会静默哑掉任何监控。
+
+### 第三方复测（非自证）
+
+| 请求 | 修复前 | 修复后 |
+|---|---|---|
+| `GET /health` | 200 | 200 ✅（应公开） |
+| `GET /tasks` 无 token | 200 + 41.7KB | **401**（407B）✅ |
+| `GET /tasks` 错 token | 200 + 全量 | **401** ✅ |
+| `GET /tasks` 空 Bearer | 200 + 全量 | **401** ✅ |
+| `GET /a2a/introspect` 无 token | 未测 | **401** ✅ |
+
+11 组头伪造变体（`X-Forwarded-For` / `X-Real-IP` / `Forwarded` / 多值 / 内网 IP 伪造）**全部 401**。
+
+### 升级判据（机械可核）
+
+```bash
+# 1. 版本
+curl -s http://<host>:3100/health | grep -o '"version":"[^"]*"'   # 期望 5.3.15
+
+# 2. 鉴权（本机测，不带 token）
+curl -s -o /dev/null -w '%{http_code}\n' http://<host>:3100/tasks  # 期望 401
+
+# 3. introspect 同口径
+curl -s -o /dev/null -w '%{http_code}\n' http://<host>:3100/a2a/introspect  # 期望 401
+```
+
+`5.3.14 及以下 → 401 判据必红`。**报「我已升级」不算判据，跑这三条才算。**
+
+### 测试
+
+- `tests/tasks-auth.test.js` 新增 5 条，核心回归锁：**环回 + XFF + 无 token → 401**
+- 新增 `aat-jti-persist` / `introspect-auth` / `vantage` 三套
+- 合计 **28 通过 / 0 失败**
+
+### 诚实边界
+
+1. `/health` 仍全公开且信息偏多（内网注册表地址、账本路径、审计链条数、`uac.peerIds`、`Access-Control-Allow-Origin: *`）。
+   判定为**信息泄露，非凭据泄露**；修法是 `/health` 分级，但它是保活/GDI/watchdog 的唯一探针，改错会大面积误报掉线 → 单独排期，不混进本次安全补丁。
+2. 隧道外部可达性**本机无合法 vantage 自证**（内网不允许出网拨 71xx）。要机械确认，只能请对端从公网拨一次。
+3. `A2A_TASKS_ALLOW_LOCAL=1` 可显式恢复本机环回免 token —— 默认关闭，仅供纯单机部署使用。
+
+### 教训
+
+- **L-2026-11-09-03** 验「输入会不会到」比验「代码会不会拦」更关键
+- **L-2026-11-09-04** 配置一行胜过一次实验（`type = "tcp"` 一行就说明不可能注入 HTTP 头）
+- **L-2026-11-09-05** 文案是接口的一部分（旧文案写「内网免令牌」，明德照它读出了误导性结论）
+
+---
+
 ## v5.3.14（2026-11-03）— AAT 交换模板 v2.0：补上「错误长在别人机器上」的那一处
 
 ### 背景（A-2 · 模板 v1.0 欠下的两处）
