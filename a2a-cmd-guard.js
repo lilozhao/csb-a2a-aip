@@ -203,8 +203,17 @@ function checkCommand(senderInfo = {}, command = '') {
   if (command.trim().startsWith('{') || command.trim().startsWith('[')) {
     try {
       const parsed = JSON.parse(command);
-      const t = (parsed && (parsed.type || parsed.command)) || '';
-      if (t) cmdName = String(t).toLowerCase().trim();
+      // [2026-11-11 若兰] 修复「格式断层」：remote-command 的信封形如
+      //   {sender:{...}, command:{type:'health',command:'health'}, signature:...}
+      //   原写法 parsed.type || parsed.command 取到的是**对象**（command 字段是对象），
+      //   String(object) === '[object Object]' → 永远匹配不上白名单，
+      //   于是「带签名的标准 JSON 命令」100% 被拦（实测 W-27 ① 复现）。
+      //   现在逐层取到字符串为止；非字符串 / 取不到 → 留空，回退文本首词匹配。
+      let t = parsed && (parsed.type != null ? parsed.type : parsed.command);
+      for (let i = 0; i < 3 && t && typeof t === 'object'; i++) {
+        t = t.type != null ? t.type : t.command;
+      }
+      if (typeof t === 'string' && t) cmdName = t.toLowerCase().trim();
     } catch { /* 非 JSON 或解析失败：回退文本首词匹配 */ }
   }
 
