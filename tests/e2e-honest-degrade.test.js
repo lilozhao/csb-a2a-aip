@@ -101,6 +101,8 @@ function startInstance({ port, env }) {
         A2A_SHARED_SECRET: 'a'.repeat(64),
         // 测试实例绝不写注册表（10-26 事故：临时实例覆盖生产「若兰」条目 16 小时）
         A2A_SKIP_REGISTER: '1',
+        // [2026-11-13 W-57 连带] 审计账本也不许写生产（同天 10:04 并发分叉事故）
+        A2A_AUDIT_PATH: path.join(fixture.dir, 'audit.jsonl'),
         ...env,
       },
       stdio: ['ignore', 'pipe', 'pipe'],

@@ -70,6 +70,11 @@ function startInstance({ port, env }) {
         //   条目覆盖成死地址，且心跳不修 host/port → 注册表广播死地址 16 小时。
         //   症状：邻居按注册表来敲，connection refused，双方都以为对方不理人。
         A2A_SKIP_REGISTER: '1',
+        // [2026-11-13 W-57 连带] 审计账本必须隔离到临时目录。
+        //   事故：本文件起的临时实例写的是**生产** `data/audit/security-audit.jsonl`。
+        //   多条测试并发 append → 锁超时降级直写 → 2026-11-13 10:04 生产账本分叉
+        //   （两个 seq=2584），/health 报 degraded。测试写生产账本 = 拿真实承诺当沙箱。
+        A2A_AUDIT_PATH: path.join(fixture.dir, 'audit.jsonl'),
         ...env,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -112,10 +117,10 @@ function startInstance({ port, env }) {
   });
 }
 
-function getJson(port, p) {
+function getJson(port, p, headers) {
   return new Promise((resolve, reject) => {
     const req = http.request(
-      { hostname: '127.0.0.1', port, path: p, method: 'GET', timeout: 3000 },
+      { hostname: '127.0.0.1', port, path: p, method: 'GET', timeout: 3000, headers: headers || {} },
       res => {
         let d = '';
         res.on('data', c => d += c);
@@ -171,16 +176,24 @@ test('I3: 注册表正常 → status=ok（不能永远报警）', async () => {
 });
 
 test('配置自检字段必须齐全（不靠猜）', async () => {
+  // [2026-11-13 W-57] 判据变了：`effective` 是内网注册表地址（A 类），
+  //   已移出公开 /health，只在带令牌的 /health/detail 里。
+  //   所以这条测试拆成两段：公开版核 ok/source，详细版核 effective。
+  const TOKEN = 'w57-test-token-' + Date.now();
   const inst = await startInstance({
     port: 3313,
-    env: { A2A_REGISTRY_URL: 'http://127.0.0.1:9999' },
+    env: { A2A_REGISTRY_URL: 'http://127.0.0.1:9999', A2A_TASKS_TOKEN: TOKEN },
   });
   try {
     const h = await getJson(inst.port, '/health');
     assert.ok(h.checks.configResolved, '必须有 configResolved');
     assert.ok(typeof h.checks.configResolved.source === 'string',
       'configResolved.source 要说明配置来自哪（env / agents.local.json / 占位符）');
-    assert.ok(h.checks.configResolved.effective, 'configResolved.effective 要给出实际生效值');
+    assert.strictEqual(h.checks.configResolved.effective, undefined,
+      '公开 /health 不得再返回 effective（内网注册表地址）—— W-57');
+
+    const d = await getJson(inst.port, '/health/detail', { Authorization: 'Bearer ' + TOKEN });
+    assert.ok(d.checks.configResolved.effective, '详细版 configResolved.effective 要给出实际生效值');
   } finally {
     inst.stop();
   }

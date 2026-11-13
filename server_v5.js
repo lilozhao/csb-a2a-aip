@@ -547,9 +547,13 @@ app.use((req, res, next) => {
   const allowed = ['http://localhost:19089', 'http://127.0.0.1:19089', 'http://localhost:3000'];
   if (allowed.includes(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
-  } else if (!origin || origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) {
-    res.header('Access-Control-Allow-Origin', origin || '*');
+  } else if (origin && (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1'))) {
+    res.header('Access-Control-Allow-Origin', origin);
   }
+  // [2026-11-13 W-57] 删掉 `origin || '*'` 的回退：无 Origin 的请求（curl / 服务端探针）
+  //   本来就不参与 CORS，回 `*` 只是给任何抓包的人一个「这端点欢迎跨域」的信号。
+  //   诚实边界：这条**不是**真的 CORS 漏洞 —— 带 Origin 的非白名单来源此前也拿不到 ACAO，
+  //   浏览器侧一直读不到。改的是「对外宣称的形状」，别把它当成修了一个可利用洞。
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, A2A-Version, X-Trace-Id');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
@@ -998,6 +1002,8 @@ try {
 //   视图逻辑在 a2a-uac-health.js（纯函数，有单测）；此处只做接线。
 //   缘起：阿轩侧的这两个自检面是**本地未提交改动**，共享仓缺失 → 标准操作单不可移植。
 const uacHealth = require('./a2a-uac-health');
+// [2026-11-13 W-57] /health 公开视图（纯函数，单测锁「故意造错会红」）
+const { buildPublicHealth } = require('./a2a-health-public');
 // [2026-09-18] 信任证据自检：/health 的 `trust` 段 + /health/trust-probe 探针。
 //   缘起：舟楫部署后 data/trust/trust-evidence.jsonl 未落盘 —— 免确认"可审计"只成立一半。
 //   外部只读侧要能核"账本在不在 + 最后一条什么时候"。
@@ -1081,7 +1087,30 @@ app.get('/health', (req, res) => {
   const auditStatus = auditHealthSection();
   if (!auditStatus.chainValid) { status = 'degraded'; degradedReason.push(`审计链${auditStatus.reason || '不可验'}`); }
 
-  res.json({
+  // [2026-11-13 W-57] 公开版 /health 收敛（一澜 09:55 拍板：方案 A + 局部 C）。
+  //
+  // 起因：公开 /health 一次交出 2300B / 105 个字段 —— 内网注册表地址、4 条本地绝对路径、
+  //   邻居名单（uac.peerIds）、knownAgents 规模、`e2e.reason=no_master_key`（自曝明文）、
+  //   trust/audit 行数与链尾哈希、任务状态分布，且对无 Origin 请求回 `ACAO: *`。
+  //   它同时是保活 / watchdog / GDI 的**唯一探针**，所以不能关，只能分级。
+  //
+  // 依赖矩阵（逐脚本核过，见 docs/w57-health-disclosure-plan-2026-11-13.md §五）：
+  //   保活三链只判 HTTP 200；probe-batch.js 读 identity / dht.level.name / dht.onlineAgents；
+  //   a2a-knock-test.js 读 version。**A 类字段没有任何消费方** → 删除风险为零。
+  //
+  // 判据（可机械核对）：公开版不含任何 IPv4 字面量、任何绝对路径、任何邻居名字；
+  //   仍含 status/version/protocol/identity/dht.level.name。详细版须 Bearer 令牌。
+  const e2eStats = e2eManager.getStats();
+  const rateStats = rateLimiter.getStats();
+  const trustStats = trustHealthSection();
+  const uacStats = uacHealth.uacHealthSnapshot(process.env, {
+    assembled: _uacRuntime.assembled,
+    error: _uacRuntime.error,
+    guardWarned: _uacGuardWarned,
+  });
+
+  // 详细版（鉴权）：保持 W-57 前的完整形状，一项不少 —— 诊断能力不因收敛而丢失。
+  const detail = {
     status,
     ...(degradedReason.length ? { degradedReason: degradedReason.join('; ') } : {}),
     checks,
@@ -1090,18 +1119,15 @@ app.get('/health', (req, res) => {
     identity: identity.name,
     uptime: Math.floor(process.uptime()),
     dht: dhtStatus,
-    e2e: e2eManager.getStats(),
-    rateLimit: rateLimiter.getStats(),
+    e2e: e2eStats,
+    rateLimit: rateStats,
     tasks: taskStore.getStats(),
-    trust: trustHealthSection(),
+    trust: trustStats,
     audit: auditStatus,
-    uac: uacHealth.uacHealthSnapshot(process.env, {
-      assembled: _uacRuntime.assembled,
-      error: _uacRuntime.error,
-      guardWarned: _uacGuardWarned,
-    }),
+    uac: uacStats,
     // [2026-11-02 P0-5] 入站鉴权灰度状态：mode 与「记录没记录」都要能外部核。
     //   只报状态，不在 /health 里读日志（无 IO，保持 /health 便宜）。
+    //   [2026-11-13 W-57] 整段移入详细版，字段不动（P0-5 11-16 到点要改 `mode` 语义，避免两次改同一处）。
     inboundAuth: {
       mode: inboundAuthMode,
       knownAgents: inboundKnown.size,
@@ -1112,7 +1138,35 @@ app.get('/health', (req, res) => {
           ? 'shadow：只记不打回，观察期至 2026-11-16'
           : 'enforce：A/B 类返回 401'),
     },
-  });
+  };
+  _healthDetail = detail;
+
+  // 公开版：白名单式逐字段挑（不是删字段）—— 默认安全，将来给 detail 加字段不会自动泄出去。
+  //   视图逻辑在 a2a-health-public.js（纯函数，有单测锁「故意造错会红」）。
+  res.json(buildPublicHealth(detail));
+});
+
+// [2026-11-13 W-57] 详细版：与 /tasks、/v1/why、/a2a/introspect **同一把锁**（a2aReadAuth）。
+//   不另发明第二套鉴权口径 —— 两套口径一定会漂移，漂移的表现是「一处要令牌、一处不用」。
+let _healthDetail = null;
+app.get('/health/detail', (req, res) => {
+  if (!a2aReadAuth(req)) {
+    try {
+      const { warmReject, CODES } = require('./warm-reject');
+      return res.status(401).json(warmReject({
+        code: CODES.AUTH_REQUIRED,
+        reason: '详细健康数据与 /tasks 同口径：一律需 Bearer 令牌，本请求未携带有效令牌（401）',
+        next_step: '在请求头加 Authorization: Bearer <A2A_TASKS_TOKEN>（向本实例主人私下索取）后重试；只验活请用公开 /health',
+        agent: req.headers['x-agent-id'] || 'unknown',
+        action: 'GET /health/detail',
+        request_id: req.headers['x-request-id'] || null,
+      }));
+    } catch (e) {
+      return res.status(401).json({ error: 'auth_required', _warm: false, reason: '鉴权未通过', next_step: '加 Bearer 令牌后重试' });
+    }
+  }
+  if (!_healthDetail) return res.status(503).json({ error: 'detail_not_ready' });
+  res.json(_healthDetail);
 });
 
 // [2026-09-18] UAC 自检探针：**无 UAC 信封时必须 fail-safe**（hit:false, reason=no_uac）
@@ -1123,10 +1177,18 @@ app.get('/health/uac-probe', (req, res) => {
 
 // [2026-09-18] 信任证据自检探针：账本在不在 / 几条 / 最后一条时间
 //   ok=true 仅当账本文件存在且至少一条 —— "免确认可审计"的硬前提。
+// [2026-11-13 W-57] 推己及人：本探针也挂公开（无鉴权），此前会把 `ledgerPath`
+//   （绝对路径 + 用户名）与 `lastHash` / `keyFingerprint` 一并交出去 —— 与刚修好的
+//   `/health` 是**同一个病**。修一处不修同类，等于没修。
+//   保留：exists / entries / lastEntryAt / stale / signed / verified / auditReady / degraded / ok / reason
+//   —— 「账本在不在、最后一条什么时候」这个对外可核能力一点不丢。
+const TRUST_PROBE_PRIVATE = ['ledgerPath', 'lastHash', 'keyFingerprint', 'hookStats', 'pathSource'];
 app.get('/health/trust-probe', (req, res) => {
   const h = trustHealthSection();
+  const pub = { ...h };
+  for (const k of TRUST_PROBE_PRIVATE) delete pub[k];
   res.json({
-    ...h,
+    ...pub,
     ok: !!h.exists && (h.entries || 0) > 0 && !h.readError,
     reason: h.readError ? 'ledger_unreadable' : (h.exists ? ((h.entries || 0) > 0 ? 'ledger_present' : 'ledger_empty') : 'ledger_missing'),
   });

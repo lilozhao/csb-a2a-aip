@@ -148,7 +148,17 @@ class CompatAuditLogger {
  */
 function createAuditLogger(options = {}) {
   const path = require('path');
-  const logPath = options.logPath || path.join(__dirname, 'data', 'audit', 'security-audit.jsonl');
+  // [2026-11-13 W-57 连带] 支持 `A2A_AUDIT_PATH` 覆盖。
+  //
+  // 事故：测试实例（tests/*.test.js 起的临时 server）cwd 都是仓库根，
+  //   于是全部写同一份 `data/audit/security-audit.jsonl`。多实例并发 append
+  //   → 锁等待 2s 超时后**降级直写** → 实测 2026-11-13 10:04 生产账本分叉：
+  //   两个 seq=2584 各自 prev_hash 相同，链在第 2584 行断开，/health 报 degraded。
+  //   根因是「没有隔离路径」+「锁超时默认 fail-open」两件事叠在一起。
+  //   现在：测试可用本变量把账本指到临时目录，生产不设则行为完全不变。
+  const logPath = options.logPath
+    || process.env.A2A_AUDIT_PATH
+    || path.join(__dirname, 'data', 'audit', 'security-audit.jsonl');
   const legacy = process.env.A2A_SECURITY_AUDIT === '0'; // 显式关闭才退 legacy
 
   if (source === 'csb-security' && !legacy) {
