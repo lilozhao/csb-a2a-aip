@@ -1,5 +1,63 @@
 # CHANGELOG · csb-a2a-aip
 
+## v5.3.16（2026-11-13）— 🔴 安全收敛：`/health` 分级（W-57）
+
+### 背景
+
+公开 `/health` 一次交出 **2300B / 105 个字段**：内网注册表地址、4 条本地绝对路径、
+邻居名单 `uac.peerIds`、`knownAgents` 规模、`e2e.reason=no_master_key`（自曝明文）、
+`trust`/`audit` 行数与链尾哈希、任务状态分布，且对无 `Origin` 的请求回 `ACAO: *`。
+
+判定：信息泄露，非凭据泄露 —— 无密钥、无对话正文、无可用凭据，
+但拼起来是完整内网拓扑 + 运行画像。
+
+难点在于它同时是**保活 / watchdog / GDI 的唯一探针**，不能关，只能分级。
+
+### 改动
+
+| 端点 | 变化 |
+|---|---|
+| `GET /health` | 公开版：10 个字段 / **约 460B**，只留验活 + 版本协商 + 可审计结论 |
+| `GET /health/detail` | **新增**，与 `/tasks`、`/v1/why`、`/a2a/introspect` 同一把锁（Bearer）；形状与 v5.3.15 的 `/health` 逐字段一致 |
+| `GET /health/trust-probe` | 去掉 `ledgerPath` / `lastHash` / `keyFingerprint` / `hookStats`（同一病的另一处） |
+| CORS | 删除「无 Origin 时回通配」的回退 |
+
+### 公开版保留什么 / 为什么
+
+- `status` `version` `protocol` `identity` `dht.level.name` `dht.onlineAgents` `checks` `audit.chainValid` `trust.{signed,verified,auditReady,degraded}` `e2e.encrypted` `rateLimit.{suspended,suspicious}`
+- `identity` **必须保留**：它是「验活不看状态码」这条判据的基石（任何 A2A 实例都回 200）。
+  名字本来就写在注册表里，不是秘密。
+- `audit` / `trust` **给结论不给细节**：对外承诺「可审计」= 给布尔，不给行数与链尾哈希。
+- `e2e` 只给 `encrypted` 布尔：原 `reason` 字符串等于对任何人自曝「这段链路明文」。
+- `rateLimit` 只给计数：原数组暴露「谁被盯上了」。
+
+### 依赖矩阵（逐脚本核过，删 A 类风险为零）
+
+保活三链（`keepalive-frp.sh` / `a2a-watchdog.sh` / `a2a-health-watch.sh`）只判 HTTP 200；
+`probe-batch.js` 读 `identity` / `dht.level.name` / `dht.onlineAgents`；
+`a2a-knock-test.js` 读 `version`。**A 类字段没有任何消费方。**
+
+### 验证
+
+- `tests/health-disclosure.test.js` 5/5：泄露扫描 / 必备字段 / 白名单默认安全 /
+  **负向**（注入假 IP 与假路径，扫描器必须红）/ 真实例三态鉴权
+- `tests/health-degraded.test.js` + `tests/e2e-honest-degrade.test.js` 全绿
+- 生产实测：2300B → 462B；`leaks: []`；无令牌/错令牌 401，正确令牌 200
+
+### 连带修（非计划内，实测发现）
+
+1. **测试实例写生产审计账本** → 并发 append 锁超时降级直写 → 2026-11-13 10:04
+   生产账本分叉（两个 `seq=2584`），`/health` 报 degraded。
+   已修账本（移除分叉侧一条，原行存 `data/audit/fork-2026-11-13-removed.jsonl`），
+   并新增 `A2A_AUDIT_PATH` 覆盖 + 三个测试文件改为写临时目录。
+2. `security-adapter.js` 审计路径硬编码不可覆盖 —— 上条修法的前提。
+
+### 升级提示
+
+- 若你的探针读 `checks.configResolved.effective` / `dht.registries` / `trust.ledgerPath` 等
+  A 类字段，改用 `GET /health/detail` + `Authorization: Bearer $A2A_TASKS_TOKEN`。
+- 只判 200 / 读 `identity` / `version` / `dht.level` 的探针**无需改动**。
+
 ## v5.3.15（2026-11-09）— 🔴 安全补丁：取消内网豁免（W-51 隧道鉴权绕过）
 
 ### 背景
