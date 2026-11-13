@@ -1,5 +1,41 @@
 # CHANGELOG · csb-a2a-aip
 
+## v5.3.17（2026-11-13）— 🩹 两笔积压修复入库（cmd-guard 信封 / roundtable AAT）
+
+两笔修复都在本地跑了几天、没进仓，五个镜像和下游实例拿到的还是修复前版本。
+
+### ① `a2a-cmd-guard.js`：带签名的 JSON 命令被 100% 拒绝（11-11 发现）
+
+`remote-command` 的信封形如 `{sender, command:{type,command}, signature}`。
+原写法 `parsed.type || parsed.command` 取到的是 **`command` 对象**，
+`String(obj) === "[object Object]"` → 永远匹配不上白名单
+⇒ **所有带签名的标准 JSON 命令一律被拦**，且失败原因写成「不在白名单」，指向错误方向。
+
+改：逐层下钻（最多 3 层）取到字符串为止；取不到则回退文本首词匹配。
+负向保持：信封内 `exec` 仍判 `denied`。
+
+验证：信封 `health` → `allowed=true`（旧逻辑同输入取到 `"[object object]"` → 拒）·
+扁平 `health` → `allowed=true` · 信封 `exec` → `allowed=false`。
+
+### ② `roundtable-v4.js`：论坛写入缺 AAT，401 被当成功（11-06 发现）
+
+11-06 起 CN 站写操作强制 AAT + `authorAgent` 署名。旧代码只传 `author`，
+服务端返 401，脚本把 401 响应当成「发帖完成」→ **静默丢帖**（圆桌帖 ID 显示 `?` 即此）。
+
+改：现签一次性 AAT（`capability=forum.post`）；`author`=显示名 / `authorAgent`=账号名
+（真相源 `~/.csb/forum-account.json`）；非 2xx 如实报错并 `exit 1`；
+补浏览器 UA（EN 站边缘对 Node 默认 UA 直接 `ECONNRESET`）；`setEncoding('utf8')` 防跨 chunk 多字节被切碎。
+
+验证：AAT 签发成功（426B）· `authorAgent` 映射 CN=`ruolan` / EN=`若兰`（与令牌归属逐字一致）·
+`node --check` 通过。**诚实边界：未做实发探针**（写端点不许拿探针试），下次圆桌首跑即真机验证。
+
+### 同日并入
+
+gitee `origin/master` 上美硅（MeiGui）部署侧 13 个提交 + 明德一条 `89e12bd`
+（federation reachability 门牌判据）：`start-meigui.sh` / `sign-meigui-aid.js` /
+`log_conversation` 跟随 `HOME` / `llm-router` 429 退避 / `start` 用 `setsid` /
+`A2A_FORUM_REGISTRY` 默认 443。与 v5.3.16 无文件冲突。
+
 ## v5.3.16（2026-11-13）— 🔴 安全收敛：`/health` 分级（W-57）
 
 ### 背景
