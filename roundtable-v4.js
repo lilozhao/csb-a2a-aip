@@ -9,6 +9,13 @@ const https = require('https');
 const path = require('path');
 const fs = require('fs');
 const { sendMessageWithContext } = require('./client-v2.js');
+// 论坛写入需要 AAT（CN 站强制）/ 正确 authorAgent（见下方 postToCommunity）
+let csbAat = null;
+try {
+  csbAat = require('../scripts/lib/csb-aat.js');
+} catch (e) {
+  console.warn('⚠️  AAT 模块不可用，论坛发帖将被拒:', e.message);
+}
 
 // ===== 飞书配置（env → openclaw.json → .env；见 feishu-creds.js）=====
 const { resolveFeishuCreds } = require('./feishu-creds.js');
@@ -338,8 +345,72 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 // ===== 论坛发帖（旧版已合并到下面，此函数已移除）=====
 
 // ===== 社区论坛发帖 =====
+// 2026-11-06 起 CN 站写操作强制 AAT + authorAgent 署名；旧代码只传 author，
+// 服务端返 401，脚本却把 401 的响应体当成「发帖完成」——静默丢帖。
+// 现在：现签 AAT、写 authorAgent、并在 HTTP != 200 时如实报错。
 const COMMUNITY_URL = 'https://csbc.lilozkzy.top';
 const COMMUNITY_URL_EN = 'https://encsbc.lilozkzy.top';
+
+// 论坛账号真相源 ~/.csb/forum-account.json（CN=ruolan，EN=若兰）
+function forumAccount() {
+  try {
+    const p = require('os').homedir() + '/.csb/forum-account.json';
+    return JSON.parse(fs.readFileSync(p, 'utf8'));
+  } catch (e) {
+    return {};
+  }
+}
+
+// 每次写入现签一枚 AAT（一次性，用完即烧）
+async function aatHeaders() {
+  if (!csbAat) return {};
+  try {
+    const h = await csbAat.headers({ capabilities: ['forum.post'], script: 'roundtable-v4.js' });
+    if (!h['X-CSB-AAT']) console.warn('⚠️  AAT 未签出（已记账 logs/aat-mint-fail.jsonl）');
+    return h;
+  } catch (e) {
+    console.warn('⚠️  AAT 签发异常:', e.message);
+    return {};
+  }
+}
+
+// 通用 POST：返回 {ok, statusCode, body}
+// 注意：EN 站前置边缘会对 Node 默认 User-Agent（无 UA 头）直接 ECONNRESET，
+// 表现为 socket hang up。必须带一个浏览器式 UA。
+const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+async function httpPostJson(url, data, extraHeaders = {}) {
+  const u = new URL(url);
+  const mod = u.protocol === 'https:' ? https : http;
+  const postData = JSON.stringify(data);
+  return new Promise((resolve) => {
+    const req = mod.request({
+      hostname: u.hostname,
+      path: u.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Length': Buffer.byteLength(postData),
+        'User-Agent': UA,
+        'Accept': '*/*',
+        ...extraHeaders
+      },
+      timeout: 15000
+    }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
+      res.on('data', chunk => body += chunk);
+      res.on('end', () => resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, statusCode: res.statusCode, body }));
+    });
+    req.on('error', (e) => resolve({ ok: false, statusCode: 0, body: `${e.code || ''} ${e.message}`.trim() }));
+    req.setTimeout(15000, () => {
+      req.destroy();
+      resolve({ ok: false, statusCode: 0, body: 'timeout' });
+    });
+    req.write(postData);
+    req.end();
+  });
+}
 
 async function postToCommunity(allResults) {
   const dateStr = new Date().toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
@@ -376,55 +447,30 @@ async function postToCommunity(allResults) {
   content += `- **总回应数**：${totalResponses + allResults.length}（含若兰）\n\n`;
   content += `> 🌸 碳硅契 · 对话不是数据的搬运，是灵魂的共振。\n`;
   
-  // 发帖
-  const url = new URL('/api/posts', COMMUNITY_URL);
-  const postData = JSON.stringify({
+  // 发帖（CN 站：强制 AAT + authorAgent 署名）
+  const acct = forumAccount();
+  const h = await aatHeaders();
+  const res = await httpPostJson(`${COMMUNITY_URL}/api/posts`, {
     title: title,
     content: content,
-    author: '若兰',
-    category: '锵锵四人行'
-  });
-  
-  return new Promise((resolve) => {
-    const mod = url.protocol === 'https:' ? https : http;
-    const req = mod.request({
-      hostname: url.hostname,
-      // 不传 port 让 Node.js 使用协议默认端口（HTTPS=443）
-      path: url.pathname,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Content-Length': Buffer.byteLength(postData)
-      },
-      timeout: 10000  // 10s 超时
-    }, (res) => {
-      let body = '';
-      res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
-      res.on('data', chunk => body += chunk);
-      res.on('end', () => {
-        try {
-          const result = JSON.parse(body);
-          const postId = result.post?.id || result.id || '?';
-          console.log(`\n📝 碳硅契论坛发帖成功: ${title} (ID: ${postId})`);
-          resolve({ ok: true, postId });
-        } catch(e) {
-          console.log(`\n📝 碳硅契论坛发帖完成 (响应: ${body.substring(0,100)})`);
-          resolve({ ok: true });
-        }
-      });
-    });
-    req.on('error', (e) => {
-      console.log(`\n📝 碳硅契论坛发帖失败: ${e.message}`);
-      resolve({ ok: false, error: e.message });
-    });
-    req.setTimeout(10000, () => {
-      req.destroy();
-      console.log(`\n⚠️ 碳硅契论坛发帖超时`);
-      resolve({ ok: false, error: 'timeout' });
-    });
-    req.write(postData);
-    req.end();
-  });
+    author: acct.authorDisplay || '若兰',
+    authorAgent: acct.authorAgent || 'ruolan',
+    forum: 'a2a'
+  }, h);
+
+  if (!res.ok) {
+    console.log(`\n📝 碳硅契论坛发帖失败 (HTTP ${res.statusCode}): ${String(res.body).substring(0, 200)}`);
+    return { ok: false, error: `HTTP ${res.statusCode}` };
+  }
+  try {
+    const parsed = JSON.parse(res.body);
+    const postId = parsed.post?.id || parsed.id || '?';
+    console.log(`\n📝 碳硅契论坛发帖成功: ${title} (ID: ${postId})`);
+    return { ok: true, postId };
+  } catch (e) {
+    console.log(`\n📝 碳硅契论坛发帖完成 (响应: ${String(res.body).substring(0,100)})`);
+    return { ok: true };
+  }
 }
 
 // ===== 英文论坛发帖 =====
@@ -460,53 +506,29 @@ async function postToCommunityEn(allResults) {
   content += `- **Total Responses**: ${totalResponses + allResults.length} (incl. Ruolan)\n\n`;
   content += `> 🌸 Carbon-Silicon Bond · Dialogue is not data transfer, it is soul resonance.\n`;
 
-  const url = new URL('/api/posts', COMMUNITY_URL_EN);
-  const postData = JSON.stringify({
+  // 发帖（EN 站：无 AAT 中间件，但需 authorAgent 署名，否则作者无法收回自己的帖）
+  const acct = forumAccount();
+  const enAgent = acct.enAuthorAgent || acct.enUsername || '若兰';
+  const res = await httpPostJson(`${COMMUNITY_URL_EN}/api/posts`, {
     title: title,
     content: content,
-    author: 'Ruolan',
-    category: 'Roundtable'
+    author: acct.authorDisplay || 'Ruolan',
+    authorAgent: enAgent
   });
 
-  return new Promise((resolve) => {
-    const mod = url.protocol === 'https:' ? https : http;
-    const req = mod.request({
-      hostname: url.hostname,
-      path: url.pathname,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Content-Length': Buffer.byteLength(postData)
-      },
-      timeout: 10000
-    }, (res) => {
-      let body = '';
-      res.setEncoding('utf8');   // [10-25] 逐 chunk 解码会把跨界的多字节字符切成 U+FFFD
-      res.on('data', chunk => body += chunk);
-      res.on('end', () => {
-        try {
-          const result = JSON.parse(body);
-          const postId = result.post?.id || result.id || '?';
-          console.log(`\n📝 英文论坛发帖成功: ${title} (ID: ${postId})`);
-          resolve({ ok: true, postId });
-        } catch(e) {
-          console.log(`\n📝 英文论坛发帖完成 (响应: ${body.substring(0,100)})`);
-          resolve({ ok: true });
-        }
-      });
-    });
-    req.on('error', (e) => {
-      console.log(`\n📝 英文论坛发帖失败: ${e.message}`);
-      resolve({ ok: false, error: e.message });
-    });
-    req.setTimeout(10000, () => {
-      req.destroy();
-      console.log(`\n⚠️ 英文论坛发帖超时`);
-      resolve({ ok: false, error: 'timeout' });
-    });
-    req.write(postData);
-    req.end();
-  });
+  if (!res.ok) {
+    console.log(`\n📝 英文论坛发帖失败 (HTTP ${res.statusCode}): ${String(res.body).substring(0, 200)}`);
+    return { ok: false, error: `HTTP ${res.statusCode}` };
+  }
+  try {
+    const parsed = JSON.parse(res.body);
+    const postId = parsed.post?.id || parsed.id || '?';
+    console.log(`\n📝 英文论坛发帖成功: ${title} (ID: ${postId})`);
+    return { ok: true, postId };
+  } catch (e) {
+    console.log(`\n📝 英文论坛发帖完成 (响应: ${String(res.body).substring(0,100)})`);
+    return { ok: true };
+  }
 }
 
 // ===== 构建飞书富文本段落 =====
@@ -667,8 +689,11 @@ async function main() {
   console.log(pushFailCount === 0 ? '📨 全部话题已推送飞书群 ✅' : `⚠️ 有 ${pushFailCount} 条飞书推送失败（检查 FEISHU 凭据）`);
 
   // 📝 推送完整总结到碳硅契社区论坛（中文+英文）
-  await postToCommunity(allResults);
-  await postToCommunityEn(allResults);
+  const cnPost = await postToCommunity(allResults);
+  const enPost = await postToCommunityEn(allResults);
+  console.log(cnPost.ok && enPost.ok
+    ? '🏛️  中英文论坛均已发帖 ✅'
+    : `🏛️  论坛发帖部分失败（CN: ${cnPost.ok ? '✅' : cnPost.error} / EN: ${enPost.ok ? '✅' : enPost.error}）`);
 }
 
 main().catch(e => { console.error('FATAL:', e); process.exit(1); });
