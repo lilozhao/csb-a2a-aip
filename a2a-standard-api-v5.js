@@ -908,7 +908,25 @@ class A2AStandardAPI {
 
     // [2026-10-08 明德] **防承诺约束**（针对"自动回复替你作承诺/表态"的根因）
     //   它是自动应答，不是主人本人；因此不得代表主人承诺、同意、拒绝或表态。
-    systemPrompt += '\n' + [
+    //
+    // [2026-11-16 W-64] `tone` 标志位（一澜观察引出）：
+    //   现象：agent 之间敲门几乎每次都先撞上「这事要主人确认，我先转达」——
+    //     澈的早安、知微的串门都被同一条约束当成待办处理。
+    //   根因不在标志位，在这 9 条对**全部入站**无条件生效；标志位只是缺一个显式出口。
+    //   解法：加 `metadata.tone = chat | notify | task`。**不翻默认**——翻默认等于
+    //     替几十个主人放开承诺权，且会让下游实例静默行为漂移（服务活着、就是口气变了，最难查）。
+    //   铁律：只有显式 tone=chat 才追加放宽语；空值/非法值一律按未填处理（不猜、不降级、不升级）。
+    //   口径不变项：防承诺/防编造验证结论（约束 2、8、9）在任何档位都不放宽。
+    // [W-64] 判定与文案均在 a2a-tone.js（单一真相源，可单测）；本处只做接入
+    const { resolveTone, buildToneClause } = require('./a2a-tone');
+    const _tone = resolveTone(metadata);
+    const TONE = _tone.tone;
+    if (_tone.invalid) {
+      console.warn(`[A2A] 🎚️ tone 非法值 "${_tone.raw.slice(0, 24)}" → 按未填处理（不猜意图）`);
+    }
+    console.log(`[A2A] 🎚️ tone=${TONE}${_tone.invalid ? ` (raw=${_tone.raw})` : ''} task=${taskId || '-'}`);
+
+    const antiPromiseRules = [
       '【自动应答约束（必须遵守）】',
       '1. 你此刻是在做**自动应答**，并不等于主人本人已经看到、确认或同意。',
       '2. **不得**代表主人作出任何承诺、同意、拒绝、授权、时间安排或立场表态。',
@@ -930,7 +948,13 @@ class A2AStandardAPI {
       '   「这类结论我无法在自动应答里确认，需要查日志原始行/独立验签，由本人回复。」',
       '9. 同理，**不得**把对方的说法复述成你的确认（例如「收到，你已升级／你已验签」）。',
       '   正确写法：只确认「消息已收到、内容已记录」，不确认其内容的真实性。'
-    ].join('\n');
+    ];
+
+    // [W-64] 分档追加：只在显式 tone 下生效，未填/非法 = 上面 9 条一字不变
+    const _toneClause = buildToneClause(TONE, { senderName });
+    if (_toneClause) antiPromiseRules.push(_toneClause);
+
+    systemPrompt += '\n' + antiPromiseRules.join('\n');
 
     // [v5] 通过 llm-router 调用（多适配器 + identity.llm 兜底）
     try {
