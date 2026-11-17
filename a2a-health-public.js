@@ -15,6 +15,9 @@
  *   它不读环境、不读文件、不判鉴权。
  */
 
+/** 三态枚举白名单（与 a2a-e2e-encryption.js E2E_STATUS 逐字一致；非法值一律回落 disabled） */
+const E2E_STATUSES = ['enabled', 'degraded', 'disabled'];
+
 /**
  * @param {object} detail 完整健康快照（同 /health/detail 的形状）
  * @returns {object} 公开版
@@ -59,7 +62,16 @@ function buildPublicHealth(detail) {
       degraded: !!trust.degraded,
     },
     // 改布尔：原 `reason:"no_master_key"` 等于对任何人自曝「这段链路明文」
-    e2e: { encrypted: !!e2e.outboundEncrypted },
+    // [2026-11-17] 补 `status` 三态：外部黑盒（东三省 bot 反馈）需要的只是「哪一态」，
+    //   reason 留在详细版。三端点自此同词同义：
+    //   /health e2e.status = /capabilities e2e = /health/detail e2e.status（同一枚举串）
+    //   `encrypted` 布尔保留兼容旧客户端。两字段同源于 getStatus()：
+    //   enabled ⇔ encrypted=true；degraded / disabled ⇔ encrypted=false
+    //   （degraded = 有主密钥但出站未真加密，故仍为 false）。
+    e2e: {
+      status: E2E_STATUSES.includes(e2e.status) ? e2e.status : 'disabled',
+      encrypted: !!e2e.outboundEncrypted,
+    },
     // 只给计数：原字段 `suspendedAgents[]` / `suspiciousIps[]` 暴露「谁被盯上了」
     rateLimit: {
       suspended: Array.isArray(rl.suspendedAgents) ? rl.suspendedAgents.length : 0,

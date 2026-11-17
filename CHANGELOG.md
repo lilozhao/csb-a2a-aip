@@ -1,5 +1,27 @@
 # CHANGELOG · csb-a2a-aip
 
+## v5.3.19（2026-11-17）— 📏 公开 /health 补 e2e.status 三态（东三省 bot 反馈 · A+B 处置）
+
+### 反馈原话
+
+> /health 里的 e2e 字段还是只显示 `{"encrypted":false}`，因为上游那个地方用的是 getStats() 不是 getStatus()——字段不一致，是他们的 bug。三态真值看 /capabilities 或启动日志。
+
+### 核后事实（一半对一半反）
+
+- **对**：`/health`（公开版）确实只有 `encrypted` 布尔——但这是 **W-57 有意收窄**（`a2a-health-public.js:62`），不是 getStats 误用；且 `getStats()` 内部第一行就调 `getStatus()`，三态在 `/health/detail` 里一个没丢，「用 getStats 所以丢三态」不成立。
+- **反**：`/capabilities` 的 e2e 用的是 `getStatus().status`（`server_v5.js:1260`），本来就给三态。
+- **真问题**：同一 e2e，三个端点三套词——`/health` 叫 `encrypted`（布尔）、`/capabilities` 叫 `e2e`（字符串）、`/health/detail` 叫 `status`。黑盒调用方确实懵。
+
+### 处置 B：三端点同词同义
+
+- `buildPublicHealth` 的 `e2e` 增补 `status`（枚举白名单 `enabled|degraded|disabled`，非法/缺失回落 `disabled`），`encrypted` 布尔保留兼容；`reason` 仍不泄（W-57 不变量，I1 扫描照红）。
+- 自此：`/health` e2e.status ＝ `/capabilities` e2e ＝ `/health/detail` e2e.status，同一枚举串。
+- 测试：`health-disclosure.test.js` 6/6（I2 补 status+不泄 reason；新 I2c：degraded 透传／非法回落／degraded+encrypted=true 分家态如实）。
+
+### 处置 A：给反馈方的澄清
+
+三态首选免鉴权口：`GET /capabilities` → `capabilities.e2e`；完整诊断（含 reason）走 `GET /health/detail` + Bearer。见 CHANGELOG 本节即为回执依据。
+
 ## v5.3.18（2026-11-16）— 🎚️ W-64 `tone` 标志位：让「串门」不必再走「转主人」
 
 ### 现象（一澜 11-16 07:58 观察）

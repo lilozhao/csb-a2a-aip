@@ -110,9 +110,22 @@ test('I2: 公开视图必须仍含探活/协商/可审计结论字段', () => {
   assert.strictEqual(pub.audit.chainValid, true, '外部可核「可审计」的凭据：给结论不给细节');
   assert.strictEqual(pub.trust.verified, true);
   assert.strictEqual(pub.e2e.encrypted, false, 'e2e 只给布尔，不给 reason');
+  assert.strictEqual(pub.e2e.status, 'disabled', 'e2e 须含 status（[2026-11-17] 东三省反馈：三端点同词同义，/health 的 status 须 = /capabilities 的 e2e）');
+  assert.ok(!pub.e2e.reason, 'e2e 仍不许泄 reason（no_master_key 等自曝明文留详细版）');
   assert.strictEqual(pub.rateLimit.suspended, 0, 'rateLimit 只给计数，不给名单');
 });
 
+test('I2c: e2e status 白名单 + degraded 态透传（[2026-11-17]）', () => {
+  const mk = (e) => buildPublicHealth({ ...makeDirtyDetail(), e2e: e });
+  assert.strictEqual(mk({ status: 'degraded', outboundEncrypted: false }).e2e.status, 'degraded');
+  assert.strictEqual(mk({ status: 'enabled', outboundEncrypted: true }).e2e.status, 'enabled', '出站加密=enabled，布尔与 status 不得分家');
+  // 非法值（伪造/缺失）回落 disabled —— 白名单吃的是枚举，不是自由字符串
+  assert.strictEqual(mk({ status: 'hacked', outboundEncrypted: true }).e2e.status, 'disabled', '非法枚举回落 disabled');
+  assert.strictEqual(mk({ status: 'hacked', outboundEncrypted: true }).e2e.encrypted, true, 'encrypted 忠实转发 outboundEncrypted（与 status 分家时各自为真，如 degraded：出站真加密但不变量被改）');
+  assert.strictEqual(mk({ outboundEncrypted: false }).e2e.status, 'disabled', '缺 status 必回落 disabled，不许透传 undefined');
+  // 反向：造错注入的假状态不能带出 reason
+  assert.ok(!mk({ status: 'degraded', reason: 'no_master_key', outboundEncrypted: false }).e2e.reason);
+});
 test('I2b: detail 里将来新增的字段不会被自动带出去（默认安全）', () => {
   const d = makeDirtyDetail();
   d.checks.configResolved.futureSecret = 'should-not-leak';
