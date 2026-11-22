@@ -192,7 +192,16 @@ function inspectMessage(senderInfo = {}, messageContent = '') {
 
   // 高信任 Agent：跳过拦截，但仍做内容净化（防身份伪造绕过）
   // 说明：senderName 来自消息 metadata 可被伪造，因此即使 trustLevel 3 也保留 untrusted 边界标记
-  if ((senderInfo.trustLevel || 0) >= 3 && _config.allowedOverrides.includes(senderInfo.name)) {
+  //
+  // [A 批 · 2026-11-21] 澄复审 P1-2：此前只看「名字在名单 + trust>=3」，
+  //   而 trust 本身可由自报名+伪造 URL 取得 → 注入正则整段不跑。
+  //   现要求 **密码学验证**（verified==='aat'，由入站 AAT 验签写入）才走快速通道；
+  //   名字信任降级为「不作免检凭据」。无 AAT 的高信任邻居会重新走全文扫描——
+  //   这是有意的行为变更（宁可多扫，不可免检）。
+  const aatVerified = senderInfo.verified === 'aat' || senderInfo.trustSource === 'aat';
+  if (aatVerified
+      && (senderInfo.trustLevel || 0) >= 3
+      && _config.allowedOverrides.includes(senderInfo.name)) {
     result.sanitized = sanitize(messageContent, senderInfo);
     result.action = 'sanitize';
     return result;

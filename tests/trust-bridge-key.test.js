@@ -34,6 +34,9 @@ const mkSession = (over = {}) => ({
   session_id: 'sess-test-1',
   ...over,
 });
+// [B 批 · 2026-11-21] 会话令牌：握手信任的唯一凭据
+const TOKEN = 'tok-abc-123';
+const mkSessionTok = (over = {}) => mkSession({ access_token: TOKEN, ...over });
 
 console.log('=== 握手信任桥接测试 ===\n');
 
@@ -54,33 +57,56 @@ test('stripEmoji / localPart', () => {
 });
 
 // ── 核心回归：旧 bug（按名字查不到）──
-test('★ 回归：注册后按完整 caller_id 查得到', () => {
+test('★ 回归：注册后带会话令牌查得到（2026-11-21 后的唯一凭据）', () => {
   const tb = new TrustBridge();
-  tb.registerHandshakeSession(mkSession());
-  const r = tb.resolveTrustLevel(MINGDE_ID);
-  assert.ok(r, '按 caller_id 必须命中');
+  tb.registerHandshakeSession(mkSessionTok());
+  const r = tb.resolveTrustLevel(MINGDE_ID, { session_token: TOKEN });
+  assert.ok(r, '令牌必须命中');
   assert.strictEqual(r.trustLevel, 1);
-  assert.strictEqual(r.matchedBy, 'senderName:id');
+  assert.strictEqual(r.matchedBy, 'session_token');
 });
 
-test('★ 按 sender.url 的 host 查得到（强匹配，主路径）', () => {
+test('🛡️ host 单独不再授予信任（2026-11-21 收紧：host 是自述字段）', () => {
   const tb = new TrustBridge();
-  tb.registerHandshakeSession(mkSession());
+  tb.registerHandshakeSession(mkSessionTok());
   const r = tb.resolveTrustLevel('随便什么名字', {
     sender: { name: '随便什么名字', url: 'http://csbc.lilozkzy.top:3100/a2a/json-rpc' },
   });
-  assert.ok(r, 'host 匹配必须命中');
-  assert.strictEqual(r.source, 'handshake');
-  assert.strictEqual(r.matchedBy, 'sender.url');
+  assert.strictEqual(r, null, '知道对方 host:port 不等于有凭据');
+});
+
+test('★ 令牌 + host 同时带 → 命中（令牌是凭据，host 只是附带）', () => {
+  const tb = new TrustBridge();
+  tb.registerHandshakeSession(mkSessionTok());
+  const r = tb.resolveTrustLevel('x', { session_token: TOKEN, sender: { id: MINGDE_ID } });
+  assert.ok(r);
+  assert.strictEqual(r.matchedBy, 'session_token');
   assert.deepStrictEqual(r.scopes, ['a2a:send']);
 });
 
-test('★ 按 sender.id 的 host 查得到', () => {
+test('🛡️ 假令牌不命中，且不会回落到 host 自述', () => {
   const tb = new TrustBridge();
-  tb.registerHandshakeSession(mkSession());
-  const r = tb.resolveTrustLevel('x', { sender: { id: MINGDE_ID } });
+  tb.registerHandshakeSession(mkSessionTok());
+  const r = tb.resolveTrustLevel('x', {
+    session_token: 'forged',
+    sender: { id: MINGDE_ID, url: 'http://csbc.lilozkzy.top:3100' },
+  });
+  assert.strictEqual(r, null);
+});
+
+test('allowHostOnly=true 时恢复旧行为（仅调试）', () => {
+  const tb = new TrustBridge({ allowHostOnly: true });
+  tb.registerHandshakeSession(mkSessionTok());
+  const r = tb.resolveTrustLevel('x', { sender: { url: 'http://csbc.lilozkzy.top:3100' } });
   assert.ok(r);
-  assert.strictEqual(r.matchedBy, 'sender.id');
+  assert.strictEqual(r.matchedBy, 'sender.url');
+});
+
+test('🛡️ 无令牌的会话不授予信任（令牌缺失即无效会话）', () => {
+  const tb = new TrustBridge();
+  tb.registerHandshakeSession(mkSession()); // 没有 access_token
+  assert.strictEqual(tb.resolveTrustLevel('x', { sender: { id: MINGDE_ID } }), null);
+  assert.strictEqual(tb.resolveByToken('anything'), null);
 });
 
 // ── 安全：仅凭名字不给信任 ──
@@ -100,7 +126,7 @@ test('🛡️ 伪造者填「明德」但没有 url → 拿不到信任', () => 
 
 test('allowNameOnly=true 时才允许按名字（调试用，且标 weak）', () => {
   const tb = new TrustBridge({ allowNameOnly: true });
-  tb.registerHandshakeSession(mkSession(), { names: ['明德'] });
+  tb.registerHandshakeSession(mkSessionTok(), { names: ['明德'] });
   const r = tb.resolveTrustLevel('明德', {});
   assert.ok(r);
   assert.strictEqual(r.matchedBy, 'name(weak)');
@@ -119,10 +145,11 @@ test('🛡️ 不同主机的同名 agent 不会互相冒用', () => {
 // ── TTL ──
 test('会话过期后查不到，且别名一并清除', () => {
   const tb = new TrustBridge();
-  tb.registerHandshakeSession(mkSession({ ttl: 0 }));
-  const r = tb.resolveTrustLevel(MINGDE_ID);
+  tb.registerHandshakeSession(mkSessionTok({ ttl: 0 }));
+  const r = tb.resolveTrustLevel(MINGDE_ID, { session_token: TOKEN });
   assert.strictEqual(r, null, 'ttl=0 应立即过期');
   assert.strictEqual(tb.aliases.size, 0, '孤儿别名必须清掉');
+  assert.strictEqual(tb.tokenIndex.size, 0, '过期会话的令牌也要清掉');
 });
 
 test('过期后该 host 也不再命中', () => {
@@ -142,13 +169,15 @@ test('没有任何会话时返回 null（不抛异常）', () => {
 // ── 重新握手覆盖 ──
 test('重新握手后旧别名不残留（指向新会话）', () => {
   const tb = new TrustBridge();
-  tb.registerHandshakeSession(mkSession({ session_id: 'old' }));
-  tb.registerHandshakeSession(mkSession({ session_id: 'new' }));
-  const r = tb.resolveTrustLevel('x', { sender: { url: 'http://csbc.lilozkzy.top:3100/' } });
+  tb.registerHandshakeSession(mkSessionTok({ session_id: 'old', access_token: 'tok-old' }));
+  tb.registerHandshakeSession(mkSessionTok({ session_id: 'new', access_token: 'tok-new' }));
+  const r = tb.resolveTrustLevel('x', { session_token: 'tok-new' });
   assert.strictEqual(r.sessionId, 'new');
+  // 旧票必须失效：重握手即换票
+  assert.strictEqual(tb.resolveTrustLevel('x', { session_token: 'tok-old' }), null);
   // 别名数量应保持稳定（不因重复注册而膨胀）
   const before = tb.aliases.size;
-  tb.registerHandshakeSession(mkSession({ session_id: 'newer' }));
+  tb.registerHandshakeSession(mkSessionTok({ session_id: 'newer', access_token: 'tok-newer' }));
   assert.strictEqual(tb.aliases.size, before, '重复注册不得让别名无限膨胀');
 });
 

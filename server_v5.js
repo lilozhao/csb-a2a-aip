@@ -834,6 +834,30 @@ if (inboundAuthMode !== inboundAuth.MODE.OFF) {
 }
 const inboundAuthHook = (req, res, next) => {
   try {
+    // ══════════════════════════════════════════════════════════════════
+    // [B 批 · 2026-11-21] 会话令牌透传（握手信任的唯一凭据）
+    //   放在 mode 判定之前：即使 inbound-auth 关闭，令牌也要能到达
+    //   _resolveSenderInfo / trust-bridge，否则「握手信任」又会退化成 host 自述。
+    //   令牌本身即证明（须与签发的票逐字节相符），故允许客户端放在 header 或 sender 内。
+    // ══════════════════════════════════════════════════════════════════
+    const sessToken = req.headers['x-a2a-session-token'];
+    if (sessToken) {
+      const s = req.body?.sender;
+      if (s && typeof s === 'object' && !s.session_token) s.session_token = sessToken;
+      for (const md of [
+        req.body?.params?.metadata,
+        req.body?.params?.message?.metadata,
+        req.body?.params?.configuration?.metadata,
+        req.body?.metadata,
+      ]) {
+        if (md && typeof md === 'object' && !md.session_token) md.session_token = sessToken;
+      }
+      // READ 路径（REST /message:send、/message:stream）不带 params，
+      // 其 metadata 是 handler 内现拼的 { sender } —— 由 API 层从 req 取。
+      if (req.body && typeof req.body === 'object' && !req.body.session_token) {
+        req.body.session_token = sessToken;
+      }
+    }
     if (inboundAuthMode === inboundAuth.MODE.OFF) return next();
     const sender = inboundAuth.extractSender(req.body, req.headers);
     // AAT 验签（P0-5 第二段 · 「一次性重新握手续期」的凭据一侧）
@@ -860,6 +884,23 @@ const inboundAuthHook = (req, res, next) => {
       }
     }
     const c = inboundAuth.classify(sender, inboundKnown, { aatVerified, aatVerifiable, aatError, hasAat: !!sender.aat });
+    // ══════════════════════════════════════════════════════════════════
+    // [A 批 · 2026-11-21] 澄复审 P1-2：验签结论必须能传到下游（message-guard /
+    //   cmd-guard / 委托信任），否则「以 AAT 为前提」就只是一句注释。
+    //   用 Symbol 键透传：客户端 JSON 造不出 Symbol，无法伪造免检资格。
+    // ══════════════════════════════════════════════════════════════════
+    if (aatVerified) {
+      const { AAT_VERIFIED } = require('./a2a-verified-flag.js');
+      const mdCandidates = [
+        req.body?.params?.metadata,
+        req.body?.params?.message?.metadata,
+        req.body?.params?.configuration?.metadata,
+        req.body?.metadata,
+      ];
+      for (const md of mdCandidates) {
+        if (md && typeof md === 'object') md[AAT_VERIFIED] = true;
+      }
+    }
     // 名单为空（注册表没读到）时，enforce 一律降为 shadow：
     //   宁可少拦，不可把「我们看不见名单」变成「把所有人关在门外」。
     const effMode = (inboundAuthMode === inboundAuth.MODE.ENFORCE && inboundKnown.size === 0)
@@ -1374,8 +1415,18 @@ const shutdown = async () => {
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
-const server = app.listen(port, async () => {
+// ══════════════════════════════════════════════════════════════════
+// [A 批 · 2026-11-21] 澄复审 P0-A 附带项：app.listen(port) 不指定地址 = 默认
+//   绑 0.0.0.0，容器里意味着**所有 docker 网络**（实测 172.28.0.x 与 172.18.0.2）都能打。
+//   现支持 A2A_BIND 显式指定监听地址；**默认保持 0.0.0.0 不变**——
+//   本机注册表里有 7 个邻居不在 172.28 网段（192.168.0.x / 192.168.65.x），
+//   贸然绑单网卡会拆掉 A2A 互通（可用性回归比暴露面更难被发现）。
+//   想收窄就设 A2A_BIND=172.28.0.214（只服务本 docker 网络）。
+// ══════════════════════════════════════════════════════════════════
+const BIND_HOST = process.env.A2A_BIND || '0.0.0.0';
+const server = app.listen(port, BIND_HOST, async () => {
   console.log(`  ✅ 服务已启动: http://localhost:${port}/health`);
+  console.log(`  🔌 监听地址: ${BIND_HOST}:${port}${BIND_HOST === '0.0.0.0' ? '（全接口 · 想收窄设 A2A_BIND）' : ''}`);
   console.log(`  ✅ 指标端点:   http://localhost:${port}/metrics`);
   // 启动向注册表的自动注册 + 心跳
   startHeartbeatLoop();

@@ -90,7 +90,14 @@ class TrustBridge {
     this.sessions = new Map();
     /** @type {Map<string, {callerId: string, kind: 'id'|'host'|'name'}>} 别名 -> callerId */
     this.aliases = new Map();
+    /** @type {Map<string, string>} [B 批 · 2026-11-21] 会话令牌 -> callerId
+     *  令牌是「这条消息确实出自那个已验证会话」的唯一凭据；
+     *  没有它，握手信任就只能靠 sender.url 自述 → 谁都能顶替刚握过手的邻居。 */
+    this.tokenIndex = new Map();
     this.allowNameOnly = opts.allowNameOnly === true;
+    /** [B 批] 是否允许仅凭 host 自述（无令牌）授予握手信任。默认关。
+     *  开 = 回到「知道对方 host:port 就能冒充」的旧行为，仅限调试。 */
+    this.allowHostOnly = opts.allowHostOnly === true;
     // 定期清理过期会话（unref 避免阻塞进程退出）
     this._cleanupTimer = setInterval(() => this._cleanup(), 60000);
     if (this._cleanupTimer.unref) this._cleanupTimer.unref();
@@ -115,6 +122,14 @@ class TrustBridge {
     this._dropAliasesOf(callerId);
 
     this.sessions.set(callerId, { ...session, _registeredAt: Date.now() });
+
+    // [B 批 · 2026-11-21] 令牌索引：先清掉该 caller 的旧令牌（重握手即换票）
+    for (const [tok, owner] of this.tokenIndex.entries()) {
+      if (owner === callerId) this.tokenIndex.delete(tok);
+    }
+    if (session.access_token) {
+      this.tokenIndex.set(String(session.access_token), callerId);
+    }
 
     // ── 建别名 ──
     const host = hostFromAgentId(callerId);
@@ -154,6 +169,7 @@ class TrustBridge {
     console.log(
       `[TrustBridge] 🔐 握手信任已注册: ${callerId} → L${level} `
       + `(${scopes.join(',') || '无 scope'}) TTL=${session.ttl ?? 300}s`
+      + ` | 令牌=${session.access_token ? '已绑定' : '⚠️缺（消息层将不授予信任）'}`
       + ` | 别名: host=${host || '—'}${nameSet.size ? ' name=' + [...nameSet].join('/') : ''}`
     );
     return true;
@@ -195,6 +211,23 @@ class TrustBridge {
     for (const [alias, v] of this.aliases.entries()) {
       if (v.callerId === callerId) this.aliases.delete(alias);
     }
+    for (const [tok, owner] of this.tokenIndex.entries()) {
+      if (owner === callerId) this.tokenIndex.delete(tok);
+    }
+  }
+
+  /**
+   * [B 批 · 2026-11-21] 按会话令牌解析信任（唯一可信的握手通道）
+   * @param {string} token
+   * @returns {object|null} 同 _asResult
+   */
+  resolveByToken(token) {
+    if (!token || typeof token !== 'string') return null;
+    const callerId = this.tokenIndex.get(token);
+    if (!callerId) return null;
+    const hit = this._lookup(callerId); // 复用过期判定
+    if (!hit) { this.tokenIndex.delete(token); return null; }
+    return this._asResult(hit, 'handshake', 'session_token');
   }
 
   /**
@@ -208,9 +241,25 @@ class TrustBridge {
     const sender = metadata?.sender && typeof metadata.sender === 'object' ? metadata.sender : {};
     const senderStr = typeof metadata?.sender === 'string' ? metadata.sender : '';
 
-    // ── 1. 强匹配：按 host 锚定（url / id / caller_id）──
-    //    sender.url 或 sender.id 是「主机级」自述，配合握手（该主机确曾通过验证）使用；
-    //    比纯名字强得多，但仍非密码学证明（见文件头残余风险）。
+    // ── 0. 会话令牌（唯一的握手凭据）──
+    // [B 批 · 2026-11-21] 顺序很重要：令牌在 host 之前判定。
+    //   此前只有 host 锚定，而 host 是自述字段、公网注册表可知 → 可顶替。
+    const sessionToken = metadata?.session_token
+      || metadata?.sessionToken
+      || sender.session_token
+      || sender.sessionToken;
+    if (sessionToken) {
+      const byToken = this.resolveByToken(String(sessionToken));
+      if (byToken) return byToken;
+      // 带了令牌但对不上：明确记一笔（可能是过期，也可能是有人拿假票来试）
+      console.warn(`[TrustBridge] 🛡️ 会话令牌未命中: ${senderName || '?'} —— 不授予握手信任`);
+      return null;
+    }
+
+    // ── 1. host 锚定（默认**不再**单独授予信任）──
+    //    sender.url 或 sender.id 是「主机级」自述，非密码学证明。
+    //    历史行为：知道对方 host:port 就能拿 L 级 —— 这正是本轮要堵的口子。
+    //    allowHostOnly=true 仅用于调试排查（会在启动日志外每次命中打 warn）。
     const strongCandidates = [];
     if (sender.url) strongCandidates.push({ key: hostFromUrl(sender.url), how: 'sender.url' });
     for (const f of ['id', 'agentId', 'agent_id', 'caller_id', 'callerId']) {
@@ -221,14 +270,23 @@ class TrustBridge {
     for (const c of strongCandidates) {
       if (!c.key) continue;
       const hit = this._lookup(c.key);
-      if (hit) return this._asResult(hit, 'handshake', c.how);
+      if (hit) {
+        if (this.allowHostOnly) {
+          console.warn(`[TrustBridge] ⚠️ 仅凭 host 授予握手信任（allowHostOnly=true · 调试用）: ${c.key} via ${c.how}`);
+          return this._asResult(hit, 'handshake', c.how);
+        }
+        console.warn(
+          `[TrustBridge] 🛡️ 拒绝仅凭 host 授予信任: "${c.key}"（via ${c.how}）命中会话 ${hit.session.caller_id}`
+          + ` —— host 是自述字段，需会话令牌 X-A2A-Session-Token 或 AAT`
+        );
+      }
     }
 
     // 也允许直接传完整的 caller_id 作为 senderName（服务端内部调用）
     const nameAsId = hostFromAgentId(stripEmoji(senderName));
     if (nameAsId) {
       const hit = this._lookup(nameAsId);
-      if (hit) return this._asResult(hit, 'handshake', 'senderName:id');
+      if (hit && this.allowHostOnly) return this._asResult(hit, 'handshake', 'senderName:id');
     }
 
     // ── 2. 弱匹配：仅凭名字 ──

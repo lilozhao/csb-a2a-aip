@@ -13,6 +13,8 @@ const { TaskStore, TASK_STATE, ROLE, createMessage, createArtifact, createPart, 
 const minInfo = require('./a2a-min-info.js');
 // [2026-09-11] 自环调用守卫：自己发给自己 → 快速拒绝，不再挂起等超时
 const selfGuard = require('./a2a-self-guard.js');
+// [A 批 · 2026-11-21] 入站 AAT 验签的不可伪造标记（Symbol，JSON 无法构造）
+const { AAT_VERIFIED } = require('./a2a-verified-flag.js');
 // [2026-09-11] 信任证据接线：消息链事件 → 证据账本（信任升级 P0 最后一环）
 // fail-safe：csb-security 不可用时全部 no-op，绝不影响消息处理
 const trustEvidence = require('./a2a-trust-evidence.js');
@@ -282,6 +284,29 @@ class A2AStandardAPI {
         return res.json({ jsonrpc: '2.0', error: a2aError('VersionNotSupportedError', { requested: verHeader, supported: this.supportedVersion }), id });
       }
 
+      // ══════════════════════════════════════════════════════════════════
+      // 🔄 向下兼容旧版方法名（v3 client → v4 server）——**单一真源**，
+      //   鉴权判定与后续分发都读这一张表，不许各建一份。
+      const METHOD_ALIASES = {
+        'message/send': 'SendMessage',
+        'tasks/send':   'SendMessage',
+        'tasks/get':    'GetTask',
+        'tasks/list':   'ListTasks',
+        'tasks/cancel': 'CancelTask',
+      };
+
+      // ══════════════════════════════════════════════════════════════════
+      // [A 批 · 2026-11-21] 澄复审 P0-A：W-51 只锁了 REST /tasks，同一份数据的
+      //   JSON-RPC 孪生通道（tasks/list|get|cancel + RequestExpansion）全程无鉴权。
+      //   实测 200 + 38KB 全量任务与对话正文；也能无凭据取消在途任务。
+      //   修法：在分发器入口按**方法**收口（不能一刀切——SendMessage 是消息入口，
+      //   有自己的一层 AAT/入站鉴权，锁了会把整个 A2A 打瘫）。
+      //   鉴权判据复用 _checkTasksAuth（单一真源：A2A_TASKS_TOKEN + 隧道判据）。
+      // ══════════════════════════════════════════════════════════════════
+      const guardedMethod = METHOD_ALIASES[method] || method;
+      const DATA_METHODS = new Set(['GetTask', 'ListTasks', 'CancelTask', 'RequestExpansion']);
+      if (DATA_METHODS.has(guardedMethod) && !this._checkTasksAuth(req, res)) return;
+
       // 流量控制 — 修复 IP 提取（A2A-019）
       // 双模式: csb-security RateLimiter 有 check({agentId, ip}) → 按 Agent+IP+全局限流
       //         legacy RateLimiter 只有 allow(clientId) → 按 IP 限流（行为不变）
@@ -298,14 +323,6 @@ class A2AStandardAPI {
         }
       }
 
-      // 🔄 向下兼容旧版方法名（v3 client → v4 server）
-      const METHOD_ALIASES = {
-        'message/send': 'SendMessage',
-        'tasks/send':   'SendMessage',
-        'tasks/get':    'GetTask',
-        'tasks/list':   'ListTasks',
-        'tasks/cancel': 'CancelTask',
-      };
       const normalizedMethod = METHOD_ALIASES[method] || method;
 
       // 🔁 [2026-09-11] 自环调用快速拒绝 —— 自己发给自己没有任何语义，
@@ -484,6 +501,9 @@ class A2AStandardAPI {
   // ================= SSE 流式 =================
 
   _handleSSESubscribe(req, res) {
+    // [A 批 · 2026-11-21] P0-A 同族：SSE 两口（GET /a2a/stream/:taskId、
+    //   POST /tasks/:id/subscribe）此前直接推全量 task，无鉴权。与 REST /tasks 同源数据，同一把锁。
+    if (!this._checkTasksAuth(req, res)) return;
     const task = this.taskStore.getTask(req.params.taskId);
     if (!task) return res.status(404).json({ error: 'Task not found' });
 
@@ -580,13 +600,16 @@ class A2AStandardAPI {
     const msg = req.body.message;
     if (!msg) { res.write(`event: error\ndata: ${JSON.stringify({ error: 'Missing message' })}\n\n`); return res.end(); }
 
-    const task = this.taskStore.createTask({ contextId: msg.contextId, metadata: { sender: req.body.sender } });
+    // [B 批 · 2026-11-21] 会话令牌随 metadata 进任务（_resolveSenderInfo 要用它认握手）
+    const restMeta = { sender: req.body.sender };
+    if (req.body?.session_token) restMeta.session_token = req.body.session_token;
+    const task = this.taskStore.createTask({ contextId: msg.contextId, metadata: restMeta });
     this.taskStore.addHistory(task.id, { role: msg.role, parts: msg.parts, messageId: msg.messageId || `msg_${Date.now()}` });
     this.taskStore.updateTaskStatus(task.id, TASK_STATE.WORKING);
     res.write(`data: ${JSON.stringify({ task: this.taskStore.getTask(task.id) })}\n\n`);
 
     try {
-      const resp = await this._processTask(task.id, msg, { sender: req.body.sender });
+      const resp = await this._processTask(task.id, msg, restMeta);
       if (resp?.artifacts) {
         for (const art of resp.artifacts) {
           this.taskStore.addArtifact(task.id, art);
@@ -1081,6 +1104,9 @@ class A2AStandardAPI {
           url,
           trustSource: bridge.source,
           sessionId: bridge.sessionId || null,
+          // [B 批 · 2026-11-21] 只有 AAT 才算「每消息密码学验证」；
+          //   握手令牌是会话级凭据（可能泄露/被转发），故不给注入检测免检。
+          verified: bridge.source === 'aat' ? 'aat' : 'session',
         };
       }
     } catch { /* trust-bridge 不可用时回退 */ }
@@ -1097,8 +1123,19 @@ class A2AStandardAPI {
       if (agent) {
         // [安全加固] URL 校验：消息提供了发送者 URL 时必须与已知 Agent 匹配
         const senderUrl = metadata?.sender?.url || metadata?.senderUrl || metadata?.from?.url || '';
-        if (senderUrl && agent.url && senderUrl !== agent.url) {
-          console.warn(`[A2A] ⚠️ 发送者 URL 不匹配，按未知处理: ${senderName} (${senderUrl} ≠ ${agent.url})`);
+        // [A 批 · 2026-11-21] 澄复审 P1-2 主入口：名字可伪造、URL 也可伪造，
+        //   但「只报名字、不报 URL」此前会**直接采信名字档位**（若兰=4/思源=4）。
+        //   单一条 metadata.sender = "明德" 就能拿到 trust 3 → message-guard 免检。
+        //   现改为：**无 URL ⇒ trustLevel=0**（名字只用于显示，不作信任凭据）。
+        //   代价：确实不带 url 的老客户端信任度下降；这是有意的降级，不是回归。
+        //   正向出口：AAT 验签（verified==='aat'）或五步握手会话。
+        // ⚠️ 边界：已知 Agent 的 url 若为空，**不能**落到 else 分支白给信任
+        //   （否则「上报任意 url + 该 Agent 配置无 url」= 直接拿到 trustLevel）。
+        if (!senderUrl) {
+          console.warn(`[A2A] ⚠️ 发送者 ${senderName} 未提供 URL，按不可信处理（trust=0）`);
+          trustLevel = 0;
+        } else if (!agent.url || senderUrl !== agent.url) {
+          console.warn(`[A2A] ⚠️ 发送者 URL 不匹配，按未知处理: ${senderName} (${senderUrl} ≠ ${agent.url || '<配置无 url>'})`);
           trustLevel = 0;
         } else {
           trustLevel = agent.trustLevel || 0;
@@ -1113,6 +1150,9 @@ class A2AStandardAPI {
       name: senderName,
       trustLevel,
       url,
+      // [A 批 · 2026-11-21] 信任来源显式标注：'aat' 才允许享用 override 快速通道。
+      //   该字段由 server_v5 入站中间件在**验签成功后**写入（客户端自带值会被剥掉）。
+      verified: (metadata && metadata[AAT_VERIFIED] === true) ? 'aat' : 'name',
     };
   }
 
