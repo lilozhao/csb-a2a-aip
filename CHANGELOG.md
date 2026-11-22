@@ -1,5 +1,51 @@
 # CHANGELOG · csb-a2a-aip
 
+## v5.3.20（2026-11-22）— 🔒 澄复审驱动的 A/B 批加固全量入库（信任根上锁）
+
+> 触发：澄《【复审】csb-a2a-aip v5.3.19：28 天后，真修了什么，还烧着什么》（2026-11-21）。
+> 本版**不含新设计**，只是把 11-21 19:2x 已落地但一直待在容器工作区里的改动提交进仓，
+> 并把「握手令牌」那一半与已提交的 `options` 修复配对，让 HEAD 自洽。
+
+### 为什么必须单发一版
+
+`security-handshake.js` 的 `options` ReferenceError 已在 b95343e 提交，而「握手只能凭会话令牌认人」
+那半（`a2a-trust-bridge.js` tokenIndex/resolveByToken）一直未提交 → HEAD 处于
+「握手通了、但只认 host 自述」的坏态，正是澄警告的「修一个洞开一个新洞」。**补洞代码不能比洞晚进仓。**
+
+### A 批（5 项）
+
+- **JSON-RPC 孪生通道上锁**：`tasks/list` · `tasks/get` · `tasks/cancel` · `RequestExpansion` 走
+  `POST /a2a/json-rpc` 此前仅 60/min 限流、零鉴权（实测 200 / 38,140B 全量任务+对话正文）；
+  SSE 两口（`GET /a2a/stream/:taskId`、`POST /tasks/:id/subscribe`）同型。一处收口 W-51 同类。
+- **`_resolveSenderInfo` 无 url 一律 trust=0**：此前只报 name 即采信 config 的 trustLevel。
+- **message-guard override 免检需 AAT**：verified 标志以 Symbol 键透传，`JSON.parse` 构造不出。
+- **`A2A_BIND` 可配**：默认 `0.0.0.0` 保互通，收窄时不破邻居。
+- 临时帖文件含公网 IP 已隔离至 `backups/`（未 rm）。
+
+### B 批（令牌那一半）
+
+- `a2a-trust-bridge`：`tokenIndex` + `resolveByToken`，令牌判定先于 host 锚定；`allowHostOnly` 默认关
+  （开 = 回到「知道对方 host:port 就能冒充」，仅调试）；重握手即换票，过期清索引。
+- `security-handshake`：complete 阶段校验 `access_token`（错票 401 且不回调 `onSession`）；
+  `/status` 只回条数不回 caller_id 列表。
+
+### 测试（本地实跑）
+
+`a-batch-security` 6/6 · `handshake-token` 5/5 · `trust-bridge-key` 19/19 · `api-critical-wiring` 15/15 ·
+四模块加载 + `server_v5.js` 语法检查通过。
+
+### ⚠️ 行为变更（邻居必读）
+
+1. 读 `/tasks`（REST 或 JSON-RPC）或 SSE 订阅需 `A2A_TASKS_TOKEN`；无 token = 401 + remediation。
+2. 非 AAT 验签的高信任邻居，消息重新走全文注入扫描；命中特征词会 block → 签 AAT 可恢复免检。
+3. 不带 `sender.url` 的老客户端 trust 降为 0（`cmd-guard minTrustLevel=3` 会拒其 CMD）。
+
+### 仍未做（B 批剩余，见 docs/a2a-local-attack-surface-2026-11-21.md §五）
+
+注册表写路由 Bearer + `saveRegistry` 原子写 + messageId 换 `crypto.randomBytes` ·
+`execSync('git pull '+source+' '+branch)` 改 `execFileSync` + 白名单 ·
+delegation `requireSignature` / 无 sender 即跳过 grantee 校验 · v2/v3/v4 归档进 `legacy/`。
+
 ## v5.3.19（2026-11-17）— 📏 公开 /health 补 e2e.status 三态（东三省 bot 反馈 · A+B 处置）
 
 ### 反馈原话
