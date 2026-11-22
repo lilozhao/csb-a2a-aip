@@ -8,6 +8,8 @@ const config = require('./config/loader');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+const { sendWarmReject, CODES } = require('./warm-reject');
 
 const DATA_DIR = process.env.A2A_DATA_DIR || path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -31,14 +33,50 @@ function loadRegistry() {
       return JSON.parse(fs.readFileSync(REGISTRY_FILE, 'utf8'));
     }
   } catch (e) {
-    console.error('加载注册表失败:', e.message);
+    // 解析失败不能静默变「空表」——那会在下一次 save 时把残骸固化成清零。
+    console.error('❌ 加载注册表失败（文件已损坏？）:', e.message);
+    try {
+      const bad = `${REGISTRY_FILE}.corrupt.${Date.now()}`;
+      fs.copyFileSync(REGISTRY_FILE, bad);
+      console.error(`   已将损坏文件另存为 ${path.basename(bad)}，供事后取证；本次按空表继续但**不覆盖**原文件需人工处理。`);
+    } catch {}
   }
-  return { agents: [], updatedAt: null };
+  return { agents: [], updatedAt: null, _loadFailed: true };
+}
+
+/**
+ * 原子写 JSON（2026-11-22 · 澄复审「注册表写非原子」）
+ *
+ * 为什么：原来是裸 writeFileSync —— 进程在写一半时被杀 / 磁盘满，文件被截断；
+ * 而 loadRegistry() 解析失败会**静默返回空表**，下一次写就把「截断的残骸」变成
+ * 「整表清零」。一次断电 = 21 个 agent 全部消失，且链路上没有任何一步报错。
+ *
+ * tmp + fsync + rename 是同一文件系统内的原子替换：读者要么看到旧整份，要么看到新整份。
+ * 顺手给解析失败留疤（.corrupt 副本 + 显式日志），不再假装「空表就是真相」。
+ */
+function writeJsonAtomic(file, data, label) {
+  const dir = path.dirname(file);
+  const tmp = path.join(dir, `.${path.basename(file)}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`);
+  const body = JSON.stringify(data, null, 2);
+  let fd;
+  try {
+    fd = fs.openSync(tmp, 'w');
+    fs.writeFileSync(fd, body);
+    fs.fsyncSync(fd);       // 确保内容落盘，再 rename
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
+    try { fs.unlinkSync(tmp); } catch {}
+    console.error(`[${label}] ❌ 原子写失败，原文件未改动: ${e.message}`);
+    throw e;
+  }
 }
 
 function saveRegistry(registry) {
   registry.updatedAt = new Date().toISOString();
-  fs.writeFileSync(REGISTRY_FILE, JSON.stringify(registry, null, 2));
+  writeJsonAtomic(REGISTRY_FILE, registry, 'registry');
 }
 
 // 清理过期的心跳
@@ -79,7 +117,7 @@ function loadSkillUpgrade() {
 
 function saveSkillUpgrade(data) {
   data.updatedAt = new Date().toISOString();
-  fs.writeFileSync(SKILL_UPGRADE_FILE, JSON.stringify(data, null, 2));
+  writeJsonAtomic(SKILL_UPGRADE_FILE, data, 'skill-upgrade');
 }
 
 // 注册技能新版本（技能发布者调用）
@@ -162,7 +200,7 @@ function loadMessageQueue() {
 
 function saveMessageQueue(queue) {
   queue.updatedAt = new Date().toISOString();
-  fs.writeFileSync(MESSAGE_QUEUE_FILE, JSON.stringify(queue, null, 2));
+  writeJsonAtomic(MESSAGE_QUEUE_FILE, queue, 'message-queue');
 }
 
 // 清理过期消息
@@ -184,7 +222,9 @@ function storeMessage(recipient, message, sender) {
   cleanupExpiredMessages(queue);
   
   const msgRecord = {
-    id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    // 2026-11-22：Math.random() 不是密码学随机，且 messageId 是 ack 的唯一凭据
+    // （见澄复审 P0-3：可预测 id → 冒名 ack 吞消息）。改 randomBytes。
+    id: `msg_${Date.now()}_${crypto.randomBytes(9).toString('hex')}`,
     recipient: recipient,
     sender: sender,
     message: message,
@@ -277,6 +317,60 @@ function getDeadLetters(sender = null) {
 const app = express();
 app.use(express.json());
 
+// ==================== 写路由鉴权（2026-11-22 · 澄复审 P0-B） ====================
+//
+// 问题：/register 同名覆盖、DELETE /agents、/skill-upgrade/* 全部零鉴权。
+// 「白名单子串匹配」修一处不修同类 —— 这里是那处的主入口。
+//
+// 为什么不直接一刀切 require token：21 个邻居正在用同一份代码心跳/注册，
+// 突然要求 token = 一夜之间全网掉线，比洞更糟。所以三档：
+//   REGISTRY_WRITE_AUTH=shadow  （默认）放行，但逐条记录「本来会拒谁」→ 可测量影响面
+//   REGISTRY_WRITE_AUTH=enforce 真拒，403 + remediation
+//   REGISTRY_WRITE_AUTH=off     完全关闭（仅回滚用）
+// 判据诚实：shadow 不算修好，只是「先测量再收紧」的第一步。
+const WRITE_AUTH_MODE = String(process.env.REGISTRY_WRITE_AUTH || 'shadow').toLowerCase();
+
+function adminTokenOk(req) {
+  const want = process.env.REGISTRY_ADMIN_TOKEN;
+  if (!want) return false;
+  const got = req.get('Authorization')?.replace(/^Bearer\s+/i, '')
+    || req.get('X-Admin-Token')
+    || (req.body && req.body.adminToken)
+    || '';
+  if (!got) return false;
+  // 定长比较，避免按字节提前返回泄露长度/前缀
+  const a = Buffer.from(String(got));
+  const b = Buffer.from(String(want));
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+function writeAuthGuard(scope, extra = {}) {
+  return (req, res, next) => {
+    if (WRITE_AUTH_MODE === 'off') return next();
+    if (adminTokenOk(req)) return next();
+
+    const from = req.get('X-Forwarded-For') || req.socket?.remoteAddress || '?';
+    const detail = `${scope} ${req.method} ${req.originalUrl} from=${from}`;
+
+    if (WRITE_AUTH_MODE === 'shadow') {
+      console.warn(`[write-auth][shadow] 本应拒绝: ${detail}${extra.why ? ' · ' + extra.why : ''}`);
+      res.setHeader('X-Write-Auth', 'shadow-denied');
+      return next();
+    }
+
+    console.warn(`[write-auth][enforce] 拒绝: ${detail}`);
+    return sendWarmReject(res, {
+      code: CODES.AUTH_REQUIRED,
+      httpStatus: 403, // 保持既有对外状态码不变
+      reason: `写操作 ${req.method} ${req.originalUrl} 需要管理员凭据（scope=${scope}）`,
+      next_step: '在 Authorization: Bearer <REGISTRY_ADMIN_TOKEN> 或 X-Admin-Token 头中带上管理员令牌；'
+        + '若你是普通 Agent，请改用你自己的 /register 与 /heartbeat（这两条不受此闸限制）。',
+      detail: { scope, method: req.method, url: req.originalUrl },
+    });
+  };
+}
+
 // 注册智能体
 app.post('/register', (req, res) => {
   const { name, host, port, description, skills, capabilities, version, platform, aliases, memory_topics } = req.body;
@@ -298,6 +392,43 @@ app.post('/register', (req, res) => {
 
   // [v5.0.3] host sanitize：去掉前端可能误带的 http:// 或 https:// 前缀
   const cleanHost = String(host).replace(/^https?:\/\//, '');
+
+  // ── 同名覆盖 = 地址劫持入口（2026-11-22 · 澄复审 P0-B）──
+  //
+  // /register 无鉴权：任何人 POST 一个已存在的 name + 自己的 host，
+  // 就能把「若兰」的地址改到攻击者机器 —— 邻居按名字查我，消息直接送进他家。
+  // 心跳端点 10-26 已按风险分级处理，这里当时漏了：一步绕过那道闸。
+  //
+  // 分级（与心跳同思路，不搞一刀切掉线）：
+  //   · 新名字 → 放行（引导期必须能自注册）
+  //   · 同名且 host+port 未变 → 放行（重启重注册是常态）
+  //   · 同名且地址变了 → 需 admin token；shadow 模式记录后放行
+  if (existingIndex >= 0) {
+    const prev = registry.agents[existingIndex];
+    const prevPort = prev.port === undefined || prev.port === null ? null : Number(prev.port);
+    const newPort = port === undefined || port === null ? null : Number(port);
+    const addressChanged = String(prev.host || '') !== cleanHost || prevPort !== newPort;
+
+    if (addressChanged && WRITE_AUTH_MODE !== 'off' && !adminTokenOk(req)) {
+      if (WRITE_AUTH_MODE === 'enforce') {
+        const from = req.get('X-Forwarded-For') || req.socket?.remoteAddress || '?';
+        console.warn(`[write-auth][enforce] 拒绝注册覆盖: ${name} ${prev.host}:${prevPort} → ${cleanHost}:${newPort} from=${from}`);
+        return sendWarmReject(res, {
+          code: CODES.SCOPE_VIOLATION,
+          httpStatus: 403,
+          reason: `已存在同名 Agent「${name}」，不允许无凭据改名 ${prev.host}:${prevPort} → ${cleanHost}:${newPort}`,
+          next_step: '地址确需变更时带 X-Admin-Token；若你只是重启，请用与上次相同的 host:port 注册。',
+          detail: {
+            agent: name,
+            current: { host: prev.host, port: prevPort },
+            requested: { host: cleanHost, port: newPort },
+          },
+        });
+      }
+      console.warn(`[write-auth][shadow] 本应拒绝注册覆盖: ${name} ${prev.host}:${prevPort} → ${cleanHost}:${newPort}`);
+      res.setHeader('X-Write-Auth', 'shadow-denied');
+    }
+  }
 
   // port=0 表示无公网地址：URL 字段省略端口（不生成 http://coze:0 这种）
   const url = (port && port > 0) ? `http://${cleanHost}:${port}` : `http://${cleanHost}`;
@@ -550,7 +681,7 @@ app.get('/memory_index', (req, res) => {
 });
 
 // 注销智能体
-app.delete('/agents/:name', (req, res) => {
+app.delete('/agents/:name', writeAuthGuard('registry.delete-agent'), (req, res) => {
   const registry = loadRegistry();
   const index = registry.agents.findIndex(a => a.name === req.params.name);
   
@@ -684,7 +815,7 @@ app.get('/messages/status', (req, res) => {
 // ==================== A2A-016 技能升级 API ====================
 
 // 注册技能新版本（技能发布者调用）
-app.post('/skill-upgrade/register', (req, res) => {
+app.post('/skill-upgrade/register', writeAuthGuard('registry.skill-publish'), (req, res) => {
   const { skillName, version, description, changelog, files, publishedBy } = req.body;
   
   if (!skillName || !version) {
@@ -764,7 +895,7 @@ app.get('/skill-upgrade/check', (req, res) => {
 });
 
 // 广播升级通知（方案1：注册表推送）
-app.post('/skill-upgrade/broadcast', (req, res) => {
+app.post('/skill-upgrade/broadcast', writeAuthGuard('registry.skill-broadcast'), (req, res) => {
   const { skillName, version, message } = req.body;
   
   if (!skillName || !version) {
