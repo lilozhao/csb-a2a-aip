@@ -423,6 +423,11 @@ function findPinnedKeyByIssuer(iss) {
   return { ok: true, key, agentId: picked.entry.id || null, name: stripEmojiSafe(picked.entry.name) || null };
 }
 
+/** [W-63] 公钥指纹（委托给信封模块，单一实现，避免两处算法漂移） */
+function _kp(key) {
+  try { return require('./a2a-aat-envelope.js').keyFingerprint(key); } catch { return null; }
+}
+
 function stripEmojiSafe(s) {
   return (s || '').replace(/\s*[🌸🔧💼📜🧙🚤🦐🌿✨💧🌊🌟🎋🌱]\s*/gu, '').trim();
 }
@@ -542,7 +547,13 @@ function verifyInbound(sender, { expectedAudience } = {}) {
     // §3.6：拒绝必须带可执行下一步（Security v1.1.1）。
     // remediation 与 reason 分开两个字段，而不是缝进 reason —— 缝进去的话
     // 「对方读没读到下一步」就无法机械判定了（§3.6.1 要求它是个独立字段）。
-    return _reflect(r.error, _explain(r.error), { detail: r.detail });
+    // [W-63 2026-11-23] 失败也带指纹：失败若不带钥匙指纹，事后无法区分
+    //   「他换了钥匙」与「同一把钥匙但我这边配置错了」。
+    return {
+      ..._reflect(r.error, _explain(r.error), { detail: r.detail }),
+      issuer: r.payload ? r.payload.iss : iss,
+      keyFingerprint: _kp(pinned.key),
+    };
   }
 
   // 交叉核对：sender.url 若指向**另一个已固定公钥的 Agent**，说明「签名主体 ≠ 声称来源」→ 拒绝
@@ -577,6 +588,7 @@ function verifyInbound(sender, { expectedAudience } = {}) {
     trustLevel: 2,          // AAT 已验证：高于「无」，低于握手会话（握手含双向挑战）
     source: 'aat',
     matchedBy: 'aat',
+    keyFingerprint: _kp(pinned.key),   // [W-63] 认钥匙不认票：同一把 pin 的钥指纹恒定
     issuer: r.payload.iss,
     agentId: pinned.agentId,
     expiresAt: r.payload.exp,

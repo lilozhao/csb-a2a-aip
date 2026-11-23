@@ -858,31 +858,67 @@ const inboundAuthHook = (req, res, next) => {
         req.body.session_token = sessToken;
       }
     }
-    if (inboundAuthMode === inboundAuth.MODE.OFF) return next();
     const sender = inboundAuth.extractSender(req.body, req.headers);
-    // AAT 验签（P0-5 第二段 · 「一次性重新握手续期」的凭据一侧）
-    //   B 类不是靠白名单放行，而是靠**一次真凭据**转正：对方重签 AAT 后，
-    //   后续调用带 X-CSB-AAT → 验过即 C（密码学身份，强于名称+出处）。
-    //   验不了（本实例 agent_id 缺失/库不可用）不算对方的错 → 标 aatUnverifiable，不判 B。
+    // ══════════════════════════════════════════════════════════════════
+    // [W-63 · 2026-11-23] 验签结论**无条件**落信封 —— 与 inbound-auth 灰度开关解耦。
+    //   为什么必须移到 OFF 早退之前：A2A_INBOUND_AUTH_MODE 默认 off，
+    //   若验签只在 shadow/enforce 下跑，就永远不会有 `aat:{valid,fingerprint}` 落账，
+    //   而 W-63 要治的正是「这条消息到底是谁发的」这件事 —— 它不该被灰度开关绑架。
+    //   本段只留痕，不参与放行/拦截判断。
+    // ══════════════════════════════════════════════════════════════════
+    const aatEnvelope = require('./a2a-aat-envelope.js');
     let aatVerified = false, aatVerifiable = null, aatError = null;
-    if (sender.aat) {
-      try {
-        const aat = require('./a2a-aat.js');
-        const self = aat.getSelf();
-        if (!self.ok) {
+    {
+      const mdCandidates = [
+        req.body?.params?.metadata,
+        req.body?.params?.message?.metadata,
+        req.body?.params?.configuration?.metadata,
+        req.body?.metadata,
+        // REST 入口（/message:send、/message:stream）是 **平铺 body**，没有 params 包一层
+        req.body?.message?.metadata,
+        req.body?.configuration?.metadata,
+      ].filter((md) => md && typeof md === 'object');
+      let verdict;
+      if (!sender.aat) {
+        verdict = aatEnvelope.makeVerdict({ valid: false, error: 'no_token' });
+      } else {
+        try {
+          const aat = require('./a2a-aat.js');
+          const self = aat.getSelf();
+          if (!self.ok) {
+            aatVerifiable = false;
+            aatError = self.reason || 'self_agent_id_unavailable';
+            verdict = aatEnvelope.makeVerdict({ valid: false, token: sender.aat, error: aatError });
+          } else {
+            const r = aat.verifyInbound({ ...sender, aat: sender.aat }, { expectedAudience: self.agentId });
+            aatVerifiable = true;
+            aatVerified = r.ok === true;
+            if (!r.ok) aatError = r.error || 'verify_failed';
+            verdict = aatEnvelope.makeVerdict({
+              valid: aatVerified,
+              token: sender.aat,
+              issuer: r.issuer || null,
+              agentId: r.agentId || null,
+              error: aatError,
+              // a2a-aat.js 返回的已是**指纹**，直接透传 —— 不可再当 key 二次哈希
+              fingerprint: r.keyFingerprint || null,
+            });
+          }
+        } catch (e) {
           aatVerifiable = false;
-          aatError = self.reason || 'self_agent_id_unavailable';
-        } else {
-          const r = aat.verifyInbound({ ...sender, aat: sender.aat }, { expectedAudience: self.agentId });
-          aatVerifiable = true;
-          aatVerified = r.ok === true;
-          if (!r.ok) aatError = r.error || 'verify_failed';
+          aatError = `aat_lib_error:${e.message}`;
+          verdict = aatEnvelope.makeVerdict({ valid: false, token: sender.aat, error: aatError });
         }
-      } catch (e) {
-        aatVerifiable = false;
-        aatError = `aat_lib_error:${e.message}`;
+      }
+      req.aatVerdict = verdict;
+      for (const md of mdCandidates) aatEnvelope.stamp(md, verdict);
+      // REST 入口会现拼 restMeta={sender:req.body.sender}（新对象，不继承 body 的 metadata），
+      // 故结论必须同时盖在 sender 对象上 —— 否则 REST 路径的信封里永远没有 aat。
+      if (req.body?.sender && typeof req.body.sender === 'object') {
+        aatEnvelope.stamp(req.body.sender, verdict);
       }
     }
+    if (inboundAuthMode === inboundAuth.MODE.OFF) return next();
     const c = inboundAuth.classify(sender, inboundKnown, { aatVerified, aatVerifiable, aatError, hasAat: !!sender.aat });
     // ══════════════════════════════════════════════════════════════════
     // [A 批 · 2026-11-21] 澄复审 P1-2：验签结论必须能传到下游（message-guard /

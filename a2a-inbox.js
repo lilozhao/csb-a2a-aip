@@ -47,11 +47,23 @@ function record({ taskId, msg, metadata } = {}) {
   try {
     const sender = _sender(metadata);
     const delegation = msg && msg.delegation ? msg.delegation : null;
+    // [W-63 · 2026-11-23] 验签结论落信封。
+    //   为什么必须有这一行：隧道把源 IP 抹成 127.0.0.1 后，`from` 只是自述，
+    //   事后翻日志无法机械回答「这条到底是不是它发的」。aat 字段给的是
+    //   **钥匙指纹**（认钥不认票），可与 config pin 的公钥逐字对账。
+    //   缺席 ≠ 正常：无票写 valid:false/error:no_token，绝不 omit。
+    let aat = null;
+    try {
+      aat = require('./a2a-aat-envelope.js').summarize(metadata);
+    } catch (e) {
+      aat = { valid: false, fingerprint: null, error: 'envelope_cli_error', token: null, issuer: null, agentId: null };
+    }
     const entry = {
       ts: new Date().toISOString(),
       taskId: taskId || null,
       messageId: (msg && msg.messageId) || null,
       from: sender,
+      aat,
       kind: delegation ? 'delegation' : 'chat',
       scope: delegation ? (delegation.scope || null) : null,
       text: _text(msg),
