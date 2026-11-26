@@ -386,23 +386,28 @@ Q7 游标   ❌  无位置，仅 seen 布尔
 | Q4 产物 | taskStore artifacts | 🟡 多为内联，引用弱 |
 | Q5 签名 | AAT + `keyFingerprint`（W-63 落信封，2026-11-23） | 🟢 刚补齐 |
 | Q6 判定 | inbound-auth 分类 + message-guard trust level | 🟢 |
-| Q7 游标 | `inbox.seen` 布尔 + task status | 🔴 **最弱** |
+| Q7 游标 | `seq` + `data/a2a-inbox-cursor.json` + `GET /a2a/inbox/cursor` | 🟢 **2026-11-26 落地** |
 
-**自评等级：A⁻**（可裁、可追溯；**不可续跑**——续跑靠全量重扫，不算真游标）
+**自评等级：`{ "level": "A-", "continuable": true }` —— 按 §3.3 此为自报矛盾，故不自封 A。**
 
-> v0.2 口径：`{ "level": "A-", "continuable": false }`。这不是「差一点到 A」，是**明确的可裁不可续**档。
+> Q7 位置已落盘、续跑已可机械验证（`scripts/inbox-cursor.js verify`），**但升 A 还差一件事**：
+> §5.3 的 **Q3→Q4 必备对账**仍弱（`taskStore.artifacts` 多为内联、`produced_by` 稀薄），
+> 按 §3.2 第 5 条「字段齐全但对账不过 → B」的逻辑，**等级要等 `conformance-probe` 实测后再定档**。
+> 不先自封 A，是因为「我说我能续跑」不构成证据 —— 与 §一「证据层不能自述」同一条。
 
-**补 Q7 的最小方案**（建议下一个试点）：
+**Q7 落地形态（2026-11-26，一澜 09:57 拍板 at-least-once）**：
 
 ```
 data/a2a-inbox-cursor.json   { "stream":"inbox", "position": N, "acked_at": "...", "semantics":"at-least-once" }
+GET /a2a/inbox/cursor[?verify=1]   # 与 /tasks、/v1/why、/a2a/introspect 同一把只读锁
+node scripts/inbox-cursor.js status|verify|from|ack|advance
 ```
 
-- 每条 inbox 记录带 `seq`（单调，从现有行数续接）
-- 消费后推进 `position`，重启从 `position+1` 读
-- 幂等：消费端按 `messageId` 去重（已有 `markSeen`，复用即可）
-
-成本估计：**半天**。收益：把"重放"变成"续跑"。
+- `seq` 唯一写入点是 `record()`：取现有最大 seq + 1（**不复用**）；历史 368 条无 seq 字段 → 按 1-based 行号派生，**不重写历史文件**
+- 游标只推进到「**连续已读**」的最高 seq：乱序 ack 不推进（宁重读，不跳过）
+- 重启从 `position+1` 读：`readFrom()` / `ack()` / `getCursor()`
+- 幂等：复用既有 `markSeen` + `messageId`；**持久去重表后置**（要 `exactly-once` 时再加）
+- 验收：`tests/inbox-cursor.test.js` 23 项（含重启续号、乱序不跳、轮转检测）· 真实收件箱 `verify` PASS
 
 ---
 
@@ -432,6 +437,7 @@ data/a2a-inbox-cursor.json   { "stream":"inbox", "position": N, "acked_at": "...
 |---|---|---|
 | 2026-11-23 | v0.1 | 初稿：七问轴、最小字段表、降级矩阵 A–E、探针设计、CSB 自评 |
 | 2026-11-24 | v0.2 | 协议组三轮评审（R1/R2/R3 各 8/8 · 期次 `runtime-seven-20261124`）后修订：① **降级矩阵改六档明文 A/A⁻/B/C/D/E**，A⁻ = A 档 + `continuable:false`（一澜指示，取消减号暗示）② Q4 `digest` 升必填（8:0）③ Q1 `context_id` 维持可选但跨会话场景 SHALL 填 ④ Q7 `semantics` 禁隐式推断、`exactly-once` 须附幂等证据 ⑤ 探针 Q4→Q7 与 **Q5→Q6 升必备**（R3 7 票）⑥ 新增假兼容四条硬校验（日志搬运工/seq 跳号/跨重启条件项/空体伪装）⑦ 效力分层：涉判定追责 SHALL 达 A·A⁻，其余 SHOULD 达 C ⑧ 允许 `200+problem+json` 但须含 `unsupported{reason}` |
+| 2026-11-26 | v0.2 落地① | **Q7 游标实现**（口径 at-least-once，一澜 09:57 拍板）：`seq` 唯一写入点 + `data/a2a-inbox-cursor.json` + `GET /a2a/inbox/cursor` + CLI `scripts/inbox-cursor.js`；老记录按行号派生 seq、不重写历史；游标只推进连续已读段；验收 `tests/inbox-cursor.test.js` 23/23。下一步：`conformance-probe`（§5.3 八对账 + §5.4 四校验）→ Q4 产物引用 |
 
 > 评审结论：**有效签字 8/8 · 反对 0 · 保留 1（已闭环）**。R3 当轮为 4/8（A×2 · B×2），其余四席 agent 依「自动应答不构成签字」转主人；四席主人（一澜）于 2026-11-25 08:01 在主会话签署，v0.2 定稿生效。
 > 详见 `docs/reviews/runtime-seven-R1-minutes.md` / `-R2-minutes.md` / `-R3-conclusion.md`。

@@ -1324,6 +1324,45 @@ try {
   console.warn('[A2A] ⚠️ introspect 加载失败:', e.message);
 }
 
+// [Q7 · 2026-11-26] 游标端点：让「处理到哪了」**能被问到**。
+//   规范依据 docs/RUNTIME-SEVEN-QUESTIONS.md §Q7 / §5.3 Q4→Q7 / §5.4 ③。
+//   鉴权与 /tasks、/v1/why、/a2a/introspect 同一把锁（a2aReadAuth）——
+//   游标暴露消费进度，等价于暴露消息处理量，不能裸奔。
+//   默认只回状态（便宜、无 IO 放大）；?verify=1 才跑 §5.4 ③ 的机器判据。
+app.get('/a2a/inbox/cursor', (req, res) => {
+  if (!a2aReadAuth(req)) {
+    try {
+      const { warmReject, CODES } = require('./warm-reject');
+      return res.status(401).json(warmReject({
+        code: CODES.AUTH_REQUIRED,
+        reason: '游标端点与 /tasks 同口径：一律需 Bearer 令牌，本请求未携带有效令牌（401）',
+        next_step: '请求头加 Authorization: Bearer <A2A_TASKS_TOKEN>（向本实例主人私下索取）后重试',
+        agent: req.headers['x-agent-id'] || 'unknown',
+        action: 'GET /a2a/inbox/cursor',
+        request_id: req.headers['x-request-id'] || null,
+      }));
+    } catch (e) {
+      return res.status(401).json({ ok: false, error: 'unauthorized', _warm: false, reason: '鉴权未通过', next_step: '加 Bearer 令牌后重试', action: 'GET /a2a/inbox/cursor' });
+    }
+  }
+  try {
+    const out = { ok: true, q7: { position: 'inbox-cursor', ...inbox.status() } };
+    if (req.query && (req.query.verify === '1' || req.query.verify === 'true')) {
+      const v = inbox.verify();
+      out.q7.verify = v;
+      out.ok = v.ok;
+    }
+    res.json(out);
+  } catch (e) {
+    // 缺位必须显式（§四）：不返回空体，也不冒充正常
+    res.status(500).json({
+      ok: false,
+      q7: { position: 'inbox-cursor', supported: false, reason: 'cursor_read_error' },
+      error: e.message,
+    });
+  }
+});
+
 // Agent 列表 (A2A-026 支持)
 app.get('/agents', async (req, res) => {
   const agents = await dhtManager.listAllAgents();

@@ -129,3 +129,6 @@ config/agents.local.json.bak-*
 
 # 测试产生的临时账本（bid-hook.test.js）
 /.tmp-bid-test-*.jsonl
+
+# 本地临时目录（OpenClaw 工具用）
+.openclaw/

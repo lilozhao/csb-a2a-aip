@@ -1,5 +1,34 @@
 # CHANGELOG · csb-a2a-aip
 
+## 未发版（2026-11-26）— Q7 游标落地（七问规范 v0.2 第一件）
+
+> 依据 `docs/RUNTIME-SEVEN-QUESTIONS.md` §Q7 / §5.3（Q4→Q7 必备）/ §5.4 ③（跨重启断裂）。
+> 一澜 09:57 定口径：**at-least-once**，复用既有 `markSeen`；`messageId` 持久去重表后置。
+
+### 变更
+
+- **`a2a-inbox.js`**：`record()` 赋 `seq`（现有最大 + 1，**不复用**）；老记录（368 条无 seq 字段）按 1-based 行号派生，
+  **不重写历史文件**。新增 `ack()` / `readFrom()` / `getCursor()` / `setCursor()` / `status()` / `verify()`。
+- **游标文件** `data/a2a-inbox-cursor.json`：`{stream, position, acked_at, semantics:"at-least-once"}`；写盘走 temp+rename 原子写。
+- **只增不减**：`setCursor` 拒绝倒退（告警返回 `rejected:'backwards'`），乱序 ack 不推进游标 —— 宁重读，不跳过。
+- **端点** `GET /a2a/inbox/cursor[?verify=1]`：与 `/tasks`、`/v1/why`、`/a2a/introspect` 同一把只读锁（`a2aReadAuth`）；
+  无令牌 401 且带 `next_step`；读失败返回 `supported:false`，不返回空体。
+- **`markSeen` 改原子写**：现与游标同源，半截文件会让位置对不上。
+- **CLI** `scripts/inbox-cursor.js`：`status|verify|from [pos]|ack <ids...>|advance <pos>`，`verify` 失败退出码 1。
+
+### 验收
+
+- `tests/inbox-cursor.test.js` **23/23**（含：重启后续号不复用、老记录派生、乱序不跳、连续推进、重启续跑、倒退拒绝、轮转检测）
+- 旧测回归：`tests/a2a-inbox.test.js` 24/24 · `tests/aat-envelope.test.js` 10/10
+- 真实收件箱：`scripts/inbox-cursor.js verify` → **PASS**（total 368 / lastSeq 368 / 无重号 / 无缺口）
+- 端点：临时实例 3399 实测 —— 有令牌 200、`?verify=1` ok:true、无令牌/错令牌 401
+
+### 诚实边界
+
+- `semantics` 为 `at-least-once` ⇒ 消费端**必须**幂等（当前靠 `markSeen` + `messageId`）；重启窗口内可能重读，不会漏读。
+- 收件箱轮转后 `status().rotation_detected=true`，`verify` 会报 `cursor_in_range:false` —— **不自动重置**，需人工决定。
+- 自评等级仍写 `A-`/`continuable:true`（§3.3 视为自报矛盾），**不升 A**：Q3→Q4 必备对账未过，等 `conformance-probe` 实测定档。
+
 ## v5.3.20（2026-11-22）— 🔒 澄复审驱动的 A/B 批加固全量入库（信任根上锁）
 
 > 触发：澄《【复审】csb-a2a-aip v5.3.19：28 天后，真修了什么，还烧着什么》（2026-11-21）。
