@@ -76,6 +76,18 @@ t('hasAat 透传（只记录，不改变分类）', () => {
   assert.strictEqual(r.cls, 'B');
   assert.strictEqual(r.hasAat, true);
 });
+t('[2026-11-28 回归] 冒名：包含已知名的字符串不得判 C', () => {
+  // 事故：原实现用 `lower.includes(k)` 子串匹配，「明德小号」命中「明德」→ C「注册表命中」。
+  assert.strictEqual(A.classify({ name: '阿轩小号', url: 'http://evil:1' }, known).cls, 'D');
+  assert.strictEqual(A.classify({ name: '假阿轩', url: 'http://evil:1' }, known).cls, 'D');
+  assert.strictEqual(A.classify({ name: '阿轩', url: 'http://evil:1' }, known).cls, 'C');
+});
+t('[2026-11-28 回归] 书写变体仍应命中（不因修冒名而失效）', () => {
+  // 带 emoji / 空白 / 连接符的同一名字，规范化后应全等
+  assert.strictEqual(A.classify({ name: '若兰 🌸', url: 'http://a:1' }, known).cls, 'C');
+  assert.strictEqual(A.classify({ name: '若 兰', url: 'http://a:1' }, known).cls, 'C');
+  assert.strictEqual(A.classify({ name: '若-兰', url: 'http://a:1' }, known).cls, 'C');
+});
 
 console.log('\n=== 3b. AAT 凭据（「一次性重新握手续期」的凭据一侧） ===');
 t('AAT 验过 → C，且标记 verified=aat（这才是真有签字的 C）', () => {

@@ -66,6 +66,19 @@ function extractSender(body, headers) {
  *   带了但我们验不了（自身 agent_id 缺失 / 库不可用）→ 不让「我们的故障」变成对方的错：
  *     保留原分类，只标记 aatUnverifiable —— 交给观察期数据说话
  */
+/**
+ * 名字规范化：只抹掉「书写变体」，不抹掉「谁是谁」的边界。
+ * 去掉：空白、零宽字符、emoji、连接符/间隔号。
+ * 不做：截断、前缀/后缀放宽 —— 那正是冒名漏洞的来源。
+ */
+function normName(v) {
+  return String(v || '')
+    .toLowerCase()
+    .replace(/[\uFEFF\u200B-\u200D\uFE0F]/g, '')
+    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '')
+    .replace(/[\s_·•\-—–]+/g, '');
+}
+
 function classify(sender, known, extra = {}) {
   const set = known instanceof Set ? known : new Set((known || []).map((x) => String(x).toLowerCase()));
   const s = sender || {};
@@ -74,7 +87,14 @@ function classify(sender, known, extra = {}) {
   const hasName = !!name && !['unknown', '?', 'undefined', 'null'].includes(name.toLowerCase());
   const hasUrl = !!url;
   const lower = name.toLowerCase();
-  const knownName = hasName && (set.has(lower) || [...set].some((k) => k && lower.includes(k)));
+  // [2026-11-28 修 · 事故：冒名绕过] 原为 `lower.includes(k)`（子串匹配）：
+  //   sender 报「明德小号」→ `'明德小号'.includes('明德')` 为 true → 判 C「注册表命中」。
+  //   任何以已知名开头/包含已知名的字符串都能白拿 C 类（未验签但显示自洽）。
+  //   改为「规范化后全等」：只容忍空白/emoji/连接符的差异（「若兰 🌸」≡「若兰」），
+  //   不再接受任意包含关系（「明德小号」≠「明德」）。
+  //   影响面：knownName 只区分 A↔B、C↔D；enforce 下 A/B 都拦、C/D 都放行，
+  //   故拦截行为不变，变的是**分类标签不再给冒名者亮假绿灯**。
+  const knownName = hasName && (set.has(lower) || [...set].some((k) => k && normName(k) === normName(name)));
   const hasAat = !!(s.aat || extra.hasAat === true);
 
   let cls, why;
