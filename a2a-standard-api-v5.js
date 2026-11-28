@@ -1115,14 +1115,29 @@ class A2AStandardAPI {
       // 从 config/loader.js 获取已知 Agent 列表
       const configLoader = require('./config/loader.js');
       const knownAgents = configLoader.getKnownAgents();
-      // 匹配发送者名称（getKnownAgents 已去除 emoji，这里也去除 senderName 的 emoji 以匹配）
-      const cleanSenderName = (senderName || '').replace(/\s*[🌸🔧💼📜🧙🚤🦐🌿✨💧🌊🌟]\s*/g, '');
+      // 匹配发送者名称：用 Unicode 属性去 emoji，而不是列举名单
+      //   （旧名单里没有 🎋，明德带 emoji 署名时会匹配不上，正好落进「未知」）
+      const cleanSenderName = (senderName || '')
+        .replace(/[\p{Extended_Pictographic}\uFE0F\u200D]/gu, '')
+        .trim();
+      const senderUrl = metadata?.sender?.url || metadata?.senderUrl || metadata?.from?.url || '';
+
+      // [2026-11-08 · 一澜口径] 一个地址只属于一个 Agent：47.121.28.125:3100 只有明德。
+      //   有人拿着别人登记过的地址进来，按「地址冒用」处理——不悄悄降成未知，要留痕。
+      const owner = senderUrl
+        ? knownAgents.find((x) => x.url === senderUrl
+            || (Array.isArray(x.hosts) && x.hosts.some((h) => `http://${h}:${x.port}` === senderUrl)))
+        : null;
+      if (owner && owner.name !== cleanSenderName && owner.name !== senderName) {
+        console.warn(`[A2A] 🚨 地址冒用：${senderUrl} 登记给「${owner.name}」，此条署名「${senderName}」→ 按未知处理`);
+        return { name: senderName, trustLevel: 0, url: '', trustSource: 'address_conflict' };
+      }
+
       const agent = knownAgents.find(a =>
         a.name === senderName || a.name === cleanSenderName
       );
       if (agent) {
         // [安全加固] URL 校验：消息提供了发送者 URL 时必须与已知 Agent 匹配
-        const senderUrl = metadata?.sender?.url || metadata?.senderUrl || metadata?.from?.url || '';
         // [A 批 · 2026-11-21] 澄复审 P1-2 主入口：名字可伪造、URL 也可伪造，
         //   但「只报名字、不报 URL」此前会**直接采信名字档位**（若兰=4/思源=4）。
         //   单一条 metadata.sender = "明德" 就能拿到 trust 3 → message-guard 免检。
@@ -1131,15 +1146,22 @@ class A2AStandardAPI {
         //   正向出口：AAT 验签（verified==='aat'）或五步握手会话。
         // ⚠️ 边界：已知 Agent 的 url 若为空，**不能**落到 else 分支白给信任
         //   （否则「上报任意 url + 该 Agent 配置无 url」= 直接拿到 trustLevel）。
+        // [2026-11-08 · 若琢本地] 同一个 Agent 的公网 IP 与域名是两个合法入口（明德：
+        //   47.121.28.125:3100 与 csbc.lilozkzy.top:3100），只认 agent.url 会把同一个人
+        //   判成未知。agent.hosts 显式列出等价入口，仍未列出的照旧降级。
+        const alts = Array.isArray(agent.hosts)
+          ? agent.hosts.map((h) => `http://${h}:${agent.port}`)
+          : [];
+        const urlMatches = senderUrl === agent.url || alts.includes(senderUrl);
         if (!senderUrl) {
           console.warn(`[A2A] ⚠️ 发送者 ${senderName} 未提供 URL，按不可信处理（trust=0）`);
           trustLevel = 0;
-        } else if (!agent.url || senderUrl !== agent.url) {
+        } else if (!agent.url || !urlMatches) {
           console.warn(`[A2A] ⚠️ 发送者 URL 不匹配，按未知处理: ${senderName} (${senderUrl} ≠ ${agent.url || '<配置无 url>'})`);
           trustLevel = 0;
         } else {
           trustLevel = agent.trustLevel || 0;
-          url = agent.url || '';
+          url = agent.url || senderUrl;
         }
       }
     } catch {
