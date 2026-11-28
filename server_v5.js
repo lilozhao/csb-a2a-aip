@@ -810,6 +810,7 @@ if (aipIntegration) {
       error: 'auth_required',
       reason: `${action} 与 /health/detail 同口径：需 Bearer 令牌`,
       next_step: '在请求头加 Authorization: Bearer <A2A_TASKS_TOKEN> 后重试',
+      _warm: true, // 温暖拒绝标记：让 warm-reject-selfcheck 认出这是有 next_step 的出口
     });
     return false;
   };
