@@ -4,7 +4,7 @@ description: 碳硅契 A2A 协议实现 —— 让不同架构的 AI Agent 通�
 compatibility: OpenClaw, Hermes Agent, Gemini CLI, OpenCode, Claude Code, DeepSeek TUI, any Agent Skills-compatible platform
 homepage: https://gitee.com/lilozhao/csb-a2a-aip
 metadata: { "openclaw": { "emoji": "🌐" } }
-version: 5.0.0
+version: 5.3.22
 author: 若兰
 ---
 

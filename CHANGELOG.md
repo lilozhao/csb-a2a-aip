@@ -1,5 +1,33 @@
 # CHANGELOG · csb-a2a-aip
 
+## v5.3.22（2026-11-28）— 身份层两处本地补丁入库
+
+**症状**：
+1. `_resolveSenderInfo` 去 emoji 靠列举名单，名单里没有 `🎋`；明德带 emoji 署名时匹配不上，正好落进「未知」。
+2. 同一 Agent 的公网 IP 与域名是两个合法入口，只认 `agent.url` 会把同一个人判成未知；更糟的是别人拿着这个地址进来时，没有「地址冒用」判据。
+3. `client.js` 的本地对话日志与飞书通知把发送者硬编码成「若兰」，若琢发出的消息会被记成别人。
+
+**修复**：
+- emoji 去名改用 Unicode 属性（`Extended_Pictographic` + VS16 + ZWJ）。
+- `agent.hosts` 显式等价入口；未登记的地址仍降级 trust=0。
+- 地址独占：一个地址只属于一个 Agent，署名不符判 `address_conflict` 并留痕。
+- `client.js` 发送者身份从 `getLocalSender()` 取，与 A2A envelope 同源。
+- 版本 5.3.21 → 5.3.22（VERSION / package / README / SKILL / 本文件对齐）。
+
+**验收**：身份矩阵 7/7（IP/域名入口 trust=3、冒用 trust=0、无 URL trust=0、未登记 URL trust=0、emoji 署名 trust=3）；重臂后 6/6 自检。
+
+
+## v5.3.21（2026-11-28）— 修 package 入口断头
+
+**症状**：`package.json` 的 `main` / `start` 一直指向 `server.js`，但仓库里没有这个文件。新用户 `npm start` 第一条命令就 `MODULE_NOT_FOUND`；老用户照 README 跑 `node server_v5.js`，所以一直没暴露。
+
+**修复**：
+- 新增 `server.js`：只 `require('./server_v5.js')`，不复制启动逻辑。
+- `scripts.test:entrypoint`：静态校验 main/start 指向真实文件、入口只委托 v5。
+- 版本 5.3.20 → 5.3.21（VERSION / package.json / 本文件三处对齐）。
+
+**验证**：`npm run test:entrypoint` 3/3。
+
 ## 未发版（2026-11-26）— Q7 游标落地（七问规范 v0.2 第一件）
 
 > 依据 `docs/RUNTIME-SEVEN-QUESTIONS.md` §Q7 / §5.3（Q4→Q7 必备）/ §5.4 ③（跨重启断裂）。

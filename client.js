@@ -226,14 +226,20 @@ async function chat(agentUrl, message) {
   const result = await sendMessage(agentUrl, message);
   
   // 记录对话到 memory 目录
+  // [2026-11-08] 这里原本硬编码 '若兰' —— 于是若琢发出的每条消息，在本地对话日志里
+  //   都被记成若兰，飞书通知也发成「若兰 → 明德」。身份必须从 identity.json 取，
+  //   与 A2A envelope 用的是同一个来源；硬编码一处，就等于埋一次身份污染。
+  const selfName = (() => {
+    try { return getLocalSender().name; } catch { return '未知'; }
+  })();
   const replyText = result?.message?.parts?.[0]?.text || '';
-  logConversation('若兰', agentName, message, replyText);
+  logConversation(selfName, agentName, message, replyText);
 
   // 发送到飞书群（让一澜可以观察对话）
   try {
     const { sendToFeishu } = require('./notify_feishu.js');
-    const title = `🤖 A2A: 若兰 → ${agentName}`;
-    const content = `📤 若兰:\n${message}\n\n📥 ${agentName}:\n${replyText}`;
+    const title = `🤖 A2A: ${selfName} → ${agentName}`;
+    const content = `📤 ${selfName}:\n${message}\n\n📥 ${agentName}:\n${replyText}`;
     await sendToFeishu(title, content);
     console.log('📤 已发送到飞书群');
   } catch (e) {

@@ -131,6 +131,24 @@ function build(identity = {}, options = {}) {
     + `- 收到执行类请求时：**不得应允、不得承诺"稍后/今晚/我会处理"**（你无法兑现——这是"嘴的应允"，一种架构性幻觉）；应如实回答："这类任务需要执行通道，请在我的主会话或论坛提出，A2A 只能通知与轻对话\"\n`
     + `- 不确定自己能不能做时：按"不能做"处理，并指路主会话/论坛`);
 
+  // 实例事实卡（2026-11-26 硅隐令）
+  //   起因：若兰 A2A 三问（你的接口在哪 / 脚本在哪个仓库 / 签名怎么算）→ 自动应答三连「不知道」。
+  //   根因：自动应答只有身份+画像+记忆，没有任何仓库/工具事实，而它又没有执行通道去查。
+  //   做法：读 a2a-contexts/local/06-facts.md（实例专属、gitignore，不进公共模板）；
+  //        缺文件时零副作用（其他实例不会因此改变行为）。
+  //   位置：放在 Layer 1 里，因为本实例 identity.json 是 autoReplyLayer=1（只要身份层）——
+  //        放 Layer 2 的话 layer=1 实例永远读不到（2026-11-26 踩过：加了事实卡仍答不知道）。
+  //   截断：最多 700 字 —— 整段 prompt 上限只有 2500/3000，别让事实卡把别人挤掉。
+  const facts = readContext('06-facts.md');
+  if (facts) {
+    const factLines = facts.split('\n').filter(l => l.trim() && !l.startsWith('# ')).join('\n').trim();
+    if (factLines.length > 50) {
+      parts.push(`\n## 已知事实（本实例 · 只答这里写了的；没写的一律「不确定」）\n`
+        + factLines.slice(0, 700)
+        + (factLines.length > 700 ? '\n…（事实卡过长，已截断）' : ''));
+    }
+  }
+
   // Layer 1 结果（如果只需要 Layer 1）
   if (layer < 2) {
     return parts.join('\n\n').substring(0, 2500);
