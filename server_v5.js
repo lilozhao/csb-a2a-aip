@@ -23,9 +23,10 @@ const fs = require('fs');
 const { logConversation }         = require('./log_conversation');
 const { TaskStore }               = require('./a2a-task-store.js');
 const { A2AStandardAPI }          = require('./a2a-standard-api-v5.js');
-const inbox                       = require('./a2a-inbox.js');
-const { makeChatNotifyHandler }   = require('./a2a-chat-notify.js');
+const inbox                       = require('./a2a-inbox.js');const { makeChatNotifyHandler }   = require('./a2a-chat-notify.js');
 const securityAdapter = require('./security-adapter.js');
+// [2026-11-28 修 P1] 余温入参守卫抽成纯函数：路由与测试共用同一份，避免「测的是副本」
+const { parseWarmthBody } = require('./aip-warmth.js');
 const { E2EEncryption, createEncryptionMiddleware } = securityAdapter;
 const { MetricsCollector, traceMiddleware, collectSystemMetrics } = require('./a2a-observability.js');
 const { DHTColdStartManager, DEGRADATION_LEVEL } = require('./a2a-dht-coldstart.js');
@@ -792,19 +793,43 @@ if (aipIntegration) {
   mountOnInboundPaths(aipMessageHook);
 
   // === 人类用户余温 API (v0.5.2) ===
+  // [2026-11-28 修 P1 · 秒悟评审第 1 条]
+  //   原实现：POST 无任何鉴权、`contribution` 不设上下限，谁都能给任意 userId
+  //   刷任意分（包括负数、1e9、字符串、NaN）——「余温」是信任度量的输入，
+  //   可被外部任意改写的度量不是度量，是许愿池。
+  //   处置：① 读写一律走本仓现有的 a2aReadAuth（与 /health/detail、/tasks、/v1/why 同一把锁），
+  //            **不另发明第二套鉴权口径** —— 两套口径一定会漂移；
+  //         ② contribution 强制整数并夹在 [1, WARMTH_MAX]（默认 100），非法值直接 400 而非静默纠正。
+  const WARMTH_MAX = (() => {
+    const n = Number(process.env.AIP_WARMTH_MAX);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 100;
+  })();
+  const warmthAuth = (req, res, action) => {
+    if (a2aReadAuth(req)) return true;
+    res.status(401).json({
+      error: 'auth_required',
+      reason: `${action} 与 /health/detail 同口径：需 Bearer 令牌`,
+      next_step: '在请求头加 Authorization: Bearer <A2A_TASKS_TOKEN> 后重试',
+    });
+    return false;
+  };
+
   app.post('/aip/human-warmth', (req, res) => {
-    const { userId, userName, contribution = 10 } = req.body || {};
-    if (!userId) return res.status(400).json({ error: 'userId required' });
-    aipIntegration.recordHumanInteraction(userId, userName || '', contribution);
-    res.json({ ok: true, userId, contribution });
+    if (!warmthAuth(req, res, 'POST /aip/human-warmth')) return;
+    const v = parseWarmthBody(req.body, { max: WARMTH_MAX });
+    if (!v.ok) return res.status(v.status).json({ error: v.error, got: v.got, max: v.max });
+    aipIntegration.recordHumanInteraction(v.userId, v.userName, v.contribution);
+    res.json({ ok: true, userId: v.userId, contribution: v.contribution });
   });
 
   app.get('/aip/human-warmth', (req, res) => {
+    if (!warmthAuth(req, res, 'GET /aip/human-warmth')) return;
     const records = aipIntegration.getHumanWarmthRecords();
     res.json({ records, config: {} });
   });
 
   app.get('/aip/human-warmth/:userId', (req, res) => {
+    if (!warmthAuth(req, res, 'GET /aip/human-warmth/:userId')) return;
     const key = `human:${req.params.userId}`;
     const adapter = aipIntegration.getAdapter();
     const record = adapter?.warmthTracker?.get(key);

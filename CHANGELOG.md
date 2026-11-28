@@ -1,5 +1,22 @@
 # CHANGELOG · csb-a2a-aip
 
+## 未发布（2026-11-28）— 余温 API 加鉴权与入参上界（秒悟评审 P1-1）
+
+**症状**：`POST /aip/human-warmth` 无任何鉴权，`contribution` 默认 10 但可传任意值（含负数、
+1e9、字符串、NaN）。余温是信任度量的输入，能被外部任意改写的度量不是度量 ——
+任何人都能给任意 `userId` 刷任意分。
+
+**修复**：
+- 读、写三个端点一律走本仓**现有的** `a2aReadAuth`（与 `/health/detail`、`/tasks`、`/v1/why` 同一把锁）。
+  不另发明第二套鉴权口径 —— 两套口径必然漂移，症状是「一处要令牌一处不用」。
+- 入参守卫抽成纯函数 `aip-warmth.js`（`parseWarmthBody`），路由与测试共用同一份，避免「测的是副本」。
+- `contribution` 必须是整数且落在 `[1, AIP_WARMTH_MAX]`（默认 100）；非法值 **400 拒绝**而非静默纠正。
+  越界错误一并回 `max`，让调用方知道边界在哪。
+
+**验证**：`tests/human-warmth-guard.test.js` 18 项全通过；用旧语义对照跑同一套测试 → 10 项红
+（确认这些判据真能逮到旧行为，不是恒绿）。相关回归：inbound-auth 37 · inbound-auth-topn 11 ·
+identity-source 10 · p2-identity-default 10 · entrypoint 3 · version-sync 4，均 0 失败。
+
 ## v5.3.22（2026-11-28）— 身份层两处本地补丁入库
 
 **症状**：
