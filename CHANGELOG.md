@@ -1,5 +1,16 @@
 # CHANGELOG · csb-a2a-aip
 
+## v5.3.21（2026-11-28）— 修 package 入口断头
+
+**症状**：`package.json` 的 `main` / `start` 一直指向 `server.js`，但仓库里没有这个文件。新用户 `npm start` 第一条命令就 `MODULE_NOT_FOUND`；老用户照 README 跑 `node server_v5.js`，所以一直没暴露。
+
+**修复**：
+- 新增 `server.js`：只 `require('./server_v5.js')`，不复制启动逻辑。
+- `scripts.test:entrypoint`：静态校验 main/start 指向真实文件、入口只委托 v5。
+- 版本 5.3.20 → 5.3.21（VERSION / package.json / 本文件三处对齐）。
+
+**验证**：`npm run test:entrypoint` 3/3。
+
 ## 未发版（2026-11-26）— Q7 游标落地（七问规范 v0.2 第一件）
 
 > 依据 `docs/RUNTIME-SEVEN-QUESTIONS.md` §Q7 / §5.3（Q4→Q7 必备）/ §5.4 ③（跨重启断裂）。

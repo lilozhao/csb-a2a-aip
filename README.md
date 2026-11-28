@@ -1,4 +1,4 @@
-# CSB-A2A-AIP (v5.2.1)
+# CSB-A2A-AIP (v5.3.21)
 
 碳硅契 A2A 协议实现 —— 让多个 AI Agent 通过 A2A v5 协议建立真实连接。
 
@@ -17,7 +17,7 @@ CSB-A2A-AIP 是碳硅契（Carbon-Silicon Bond）协议的 A2A 通信层实现�
 
 | 模块 | 文件 | 说明 |
 |------|------|------|
-| A2A Server | `server_v5.js` | A2A v5 协议服务器（v5.1.0） |
+| A2A Server | `server_v5.js` | A2A v5 协议服务器（v5.3.21） |
 | 标准 API | `a2a-standard-api-v5.js` | A2A v0.6 标准 API 实现 |
 | 原文按需展开 | `a2a-expansion.js` + `expansion-ledger.js` | **SPEC-A2A-0003** 指针→原文的逐次授权展开（默认 off，见下文） |
 | 分层提示词 | `a2a-layered-prompt.js` | 四层提示词引擎 |
